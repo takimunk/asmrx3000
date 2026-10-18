@@ -464,7 +464,14 @@ impl Engine {
 
     fn prompt_view(&self) -> prompt::View<'_> {
         let s = &self.shared;
-        prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels }
+        let mut sources = vec![SourceInfo::default(); MAX_SOURCES];
+        let n = self.sources(&mut sources);
+        sources.truncate(n);
+        let mut objects = vec![ObjectInfo::default(); MAX_OBJECTS];
+        let n = self.objects(&mut objects);
+        objects.truncate(n);
+        let live = prompt::Live { sources, objects, mix: self.mix_info() };
+        prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels, live }
     }
 
     /// Controls, environment readings and scene objects as JSON (docs/prompt-control.md).
@@ -475,7 +482,12 @@ impl Engine {
     /// Applies a JSON patch of control targets (gliding) and object moves; returns the
     /// result JSON with errors and an undo patch (docs/prompt-control.md).
     pub fn apply_patch_json(&self, patch: &str) -> String {
-        prompt::apply_patch(&self.prompt_view(), patch)
+        let (result, params) = prompt::apply_patch(&self.prompt_view(), patch);
+        // Switches (flight on/off) are engine parameters, set after the control transaction.
+        for (id, value) in params {
+            self.set_param(id, value);
+        }
+        result
     }
 
     /// System prompt, current-state context and tool schema for a language model.

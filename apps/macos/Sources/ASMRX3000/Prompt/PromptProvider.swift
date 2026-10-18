@@ -100,6 +100,12 @@ enum PromptError: LocalizedError {
 enum Keychain {
     static let service = "com.asmrx3000.prompt"
 
+    /// A key from the environment (wins over the keychain; handy for CLI runs).
+    static func env(_ name: String) -> String? {
+        guard let v = ProcessInfo.processInfo.environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else { return nil }
+        return v
+    }
+
     static func key(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -132,7 +138,7 @@ enum Providers {
     }
 
     /// Read once per run: the first read may show the keychain's "allow" dialog.
-    private static let typesafeKey: String? = Keychain.key(account: "typesafe")
+    private static let typesafeKey: String? = Keychain.env("TYPESAFE_API_KEY") ?? Keychain.key(account: "typesafe")
 }
 
 /// Offline stand-in: a handful of keyword rules that produce the same kind of patch a model
