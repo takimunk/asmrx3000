@@ -154,6 +154,8 @@ pub struct Meter {
     hist: Box<[u32; HIST_BINS]>,
     hist_energy: Box<[f64; HIST_BINS]>,
     pub momentary: f32,
+    /// Loudness of the newest 100 ms block (a faster detector for the comfort compressor).
+    pub fast: f32,
     pub short_term: f32,
     /// Robust 10 s energy mean: each 100 ms block counts at most 6 dB above the running mean,
     /// so a thunder clap does not hold a leveller down for ten seconds (what a leveller
@@ -181,6 +183,7 @@ impl Meter {
             hist: Box::new([0; HIST_BINS]),
             hist_energy: Box::new([0.0; HIST_BINS]),
             momentary: -70.0,
+            fast: -70.0,
             short_term: -70.0,
             long_term: -70.0,
             integrated: -70.0,
@@ -226,6 +229,7 @@ impl Meter {
         let lt: f32 = (0..self.filled).map(rb).sum::<f32>() / self.filled.max(1) as f32;
         self.lt_mean = lt;
         self.momentary = lufs(m).max(-70.0);
+        self.fast = lufs(ms).max(-70.0);
         self.short_term = lufs(s).max(-70.0);
         self.long_term = lufs(lt).max(-70.0);
         // Gating block = the momentary block (75 % overlap).

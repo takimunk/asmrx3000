@@ -924,6 +924,13 @@ impl Dsp {
         let mut peaks = [0.0f32; SCOPE_TRACKS];
 
         let listener = pose.offset;
+        // Scene focus: where the head points, and whether the listener travels (flight speed;
+        // the scene's listener stands still).
+        let travel = match self.flight.as_deref() {
+            Some(f) if self.flight_mix > 0.5 => f.pose().speed,
+            _ => 0.0,
+        };
+        self.mix.set_listener(&head, travel);
         for (idx, em) in self.world.emitters[..scene_emitters].iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
@@ -1337,7 +1344,7 @@ mod tests {
     fn controls_tree_and_macros() {
         use crate::controls::{flags, id, NO_PARENT};
         let engine = Engine::new(48_000.0);
-        let mut c = [ControlInfo::default(); 64];
+        let mut c = [ControlInfo::default(); 96];
         let n = engine.controls(&mut c);
         assert_eq!(n, crate::controls::COUNT);
         let ids: Vec<u32> = c[..n].iter().map(|x| x.id).collect();

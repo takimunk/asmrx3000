@@ -326,6 +326,79 @@ pub fn duck_targets(a: &Analysis, fg: &[f32], bed: &[bool], p: &DuckParams, out:
     }
 }
 
+/// Spectral niches of the background textures (acoustic niche partitioning, Krause 1993;
+/// the stream-segregation benefit of spectral separation, Bregman 1990): each texture track
+/// claims the bands that carry its loudness (specific loudness in quiet within `CLAIM` of
+/// its loudest band). Where several tracks claim a band, the one with the
+/// smallest share is the one that would be lost there: the others step aside, by what it
+/// needs to reach 0 dB signal-to-mask ratio, at most `depth_db`. A dominant texture (a
+/// brook) thus keeps most of the spectrum but leaves, e.g., the top octave to the leaves.
+/// Cuts (dB ≤ 0) are added to `out[t]` for the tracks in `tracks` flagged in `bed`.
+pub fn niche_targets(a: &Analysis, tracks: &[usize], bed: &[bool], depth_db: f32, out: &mut [Curve]) {
+    const CLAIM: f32 = 0.5;
+    if depth_db <= 0.0 {
+        return;
+    }
+    let m = &a.model;
+    let n = tracks.len().min(8);
+    let on = |k: usize| bed.get(tracks[k]).copied().unwrap_or(false);
+    // Shares of the texture excitation per band; each track's loudiest band (specific loudness).
+    let mut best = [0.0f32; 8];
+    let mut sum = [0.0f32; BANDS];
+    for (z, s) in sum.iter_mut().enumerate() {
+        *s = (0..n).filter(|&k| on(k)).map(|k| a.exc[tracks[k]][z]).sum();
+    }
+    let share = |k: usize, z: usize| if sum[z] > 0.0 { a.exc[tracks[k]][z] / sum[z] } else { 0.0 };
+    for (k, b) in best.iter_mut().enumerate().take(n) {
+        if !on(k) {
+            continue;
+        }
+        // Inaudible tracks claim nothing.
+        let loud: f32 = (0..BANDS).map(|z| m.specific(z, a.exc[tracks[k]][z], 0.0)).sum();
+        if loud < 0.05 {
+            continue;
+        }
+        *b = (0..BANDS).map(|z| m.specific(z, a.exc[tracks[k]][z], 0.0)).fold(0.0, f32::max);
+    }
+    for z in 0..BANDS {
+        if sum[z] < m.e_tq[z] {
+            continue;
+        }
+        // The weakest claimant of the band (a share below 3 % is beyond help).
+        let mut weak: Option<(usize, f32)> = None;
+        let mut claimants = 0;
+        for k in 0..n {
+            let s = share(k, z);
+            if best[k] > 0.0 && m.specific(z, a.exc[tracks[k]][z], 0.0) >= CLAIM * best[k] && s >= 0.03 {
+                claimants += 1;
+                if weak.map_or(true, |(_, w)| s < w) {
+                    weak = Some((k, s));
+                }
+            }
+        }
+        let Some((p, _)) = weak else { continue };
+        if claimants < 2 {
+            continue;
+        }
+        let tp = tracks[p];
+        let others = sum[z] - a.exc[tp][z];
+        let smr = 10.0 * (a.exc[tp][z] / (others * MASK_INDEX + m.e_tq[z])).max(1e-9).log10();
+        let need = (-smr).clamp(0.0, depth_db);
+        if need <= 0.0 || others <= 0.0 {
+            continue;
+        }
+        for k in 0..n {
+            let t = tracks[k];
+            if k == p || !on(k) {
+                continue;
+            }
+            // The main maskers take the cut.
+            let part = ((a.exc[t][z] / others - 0.1) / 0.4).clamp(0.0, 1.0);
+            out[t][z] -= need * part;
+        }
+    }
+}
+
 /// Bark-band curve -> the propagation's fit grid (`freqs`), dB, linear in band position.
 pub fn to_grid(c: &Curve, freqs: &[f64], out: &mut [f32]) {
     for (o, &f) in out.iter_mut().zip(freqs) {
