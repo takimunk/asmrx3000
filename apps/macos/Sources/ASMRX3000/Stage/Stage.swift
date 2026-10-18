@@ -79,6 +79,10 @@ final class Stage {
     let controls = ControlsModel()
     private var controlBuffer: [Control] = []
 
+    /// Keyboard focus hand-over between the scene (arrows move things) and the prompt.
+    var focusPrompt: (() -> Void)?
+    var focusScene: (() -> Void)?
+
     var camera = OrbitCamera()
     /// Views drawn in the scene view's frame (see StageView).
     let followers = NSHashTable<StageView>.weakObjects()

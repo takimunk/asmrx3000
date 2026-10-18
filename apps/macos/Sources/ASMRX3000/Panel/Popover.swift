@@ -7,209 +7,125 @@ struct StillFrames {
     var spectrogram: CGImage
     var tracks: CGImage
     var spectrogramHover: SIMD2<Float>?
+    /// What the snapshot shows (the live popover keeps these in its own state).
+    var drawer: UInt32?
+    var showAll = false
+    var spectrogramOpen = false
 }
 
-/// The popover: the engraved scene is the page; the spectrogram and the tracks sit under it.
+/// The popover, top to bottom: the scene (most of it), one transport row, the prompt, a few
+/// macro levers (or one group's drawer), and the spectrogram as a quiet strip.
 struct Popover: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
     @ObservedObject var head: HeadTracker
+    @ObservedObject var controls: ControlsModel
     var stills: StillFrames?
 
-    static let width: CGFloat = 560
-    static let sceneHeight: CGFloat = 356
-    static let spectrogramHeight: CGFloat = 104
-    static let rowHeight: CGFloat = 23
-    static let iconColumn: CGFloat = 34
-    static let maxTracksHeight: CGFloat = 300
+    static let width: CGFloat = 540
+    static let sceneHeight: CGFloat = 384
+    static let gutter: CGFloat = Grid.x4
+    static let leverHeight: CGFloat = 28
+    static let childHeight: CGFloat = 28
+    static let iconColumn: CGFloat = 36
+    static let chevronColumn: CGFloat = 28
+    static let spectrogramClosed: CGFloat = 24
+    static let spectrogramOpen: CGFloat = 96
+    /// The levers' slider width (the track scopes are drawn to it).
+    static var sliderWidth: CGFloat { width - 2 * gutter - iconColumn - chevronColumn }
+    static var stripWidth: CGFloat { width - 2 * gutter }
 
     init(model: AppModel, stills: StillFrames? = nil) {
         self.model = model
         audio = model.audio
         head = model.head
+        controls = model.stage.controls
         self.stills = stills
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                Group {
-                    if let stills {
-                        Image(decorative: stills.scene, scale: 2).resizable()
-                    } else {
-                        SceneSurface(stage: model.stage)
-                    }
-                }
-                .frame(width: Self.width, height: Self.sceneHeight)
-                .accessibilityLabel("Scene")
-
-                LinearGradient(colors: [Ink.black.opacity(0), Ink.black.opacity(0.9)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 70)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .allowsHitTesting(false)
-
-                RadialGradient(colors: [Ink.black.opacity(0.85), Ink.black.opacity(0)], center: .center, startRadius: 0, endRadius: 80)
-                    .frame(width: 220, height: 90)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .offset(x: 50, y: -20)
-                    .allowsHitTesting(false)
-
-                Transport(model: model, audio: audio, head: head, meters: model.stage.meters)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.top, 10)
-                    .padding(.trailing, 10)
-
-                OrientationLabels(labels: model.stage.labels)
-                    .allowsHitTesting(false)
-
-                SelectionReadout(readout: model.stage.readout, meters: model.stage.meters)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.leading, 18)
-                    .padding(.bottom, 12)
-                    .allowsHitTesting(false)
-            }
-            .frame(width: Self.width, height: Self.sceneHeight)
-
-            PromptField(prompt: model.prompt)
-                .padding(.horizontal, 18)
-                .padding(.top, 10)
-
-            Ornament()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-            SpectrogramPanel(stage: model.stage, stills: stills)
-                .padding(.horizontal, 16)
-
-            TracksPanel(model: model, controls: model.stage.controls, stills: stills)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 14)
+            SceneArea(model: model, stills: stills)
+            Transport(model: model, audio: audio, head: head, labels: model.stage.labels, meters: model.stage.meters,
+                      controls: controls)
+            PromptField(prompt: model.prompt, stage: model.stage)
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, Grid.x1)
+            LeverPanel(model: model, controls: controls, stills: stills)
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, Grid.x3)
+            SpectrogramStrip(stage: model.stage, stills: stills)
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, Grid.x3)
+                .padding(.bottom, Grid.x4)
         }
         .frame(width: Self.width)
-        .background(Ink.black)
+        .background(Ink.panel)
         .environment(\.colorScheme, .dark)
     }
 }
 
-/// A hairline with a small lozenge: the one ornament.
-private struct Ornament: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            Rectangle().fill(Ink.ash).frame(height: 0.5)
-            Rectangle().stroke(Ink.graphite, lineWidth: 0.75).frame(width: 4.5, height: 4.5).rotationEffect(.degrees(45))
-            Rectangle().fill(Ink.ash).frame(height: 0.5)
-        }
-        .frame(height: 6)
-        .accessibilityHidden(true)
-    }
-}
+// MARK: - Scene
 
-// MARK: - Transport
-
-private struct Transport: View {
-    @ObservedObject var model: AppModel
-    @ObservedObject var audio: AudioEngine
-    @ObservedObject var head: HeadTracker
-    @ObservedObject var meters: Meters
-
-    var body: some View {
-        HStack(spacing: 0) {
-            QuietButton(icon: audio.isPlaying ? .pause : .play, name: audio.isPlaying ? "Pause" : "Play",
-                        emphasised: !audio.isPlaying, live: meters.live) { model.togglePlay() }
-            QuietButton(icon: .flight, name: audio.flying ? "Land" : "Fly through the landscape",
-                        emphasised: audio.flying, live: meters.live) { audio.flying.toggle() }
-            QuietButton(icon: .recenter, name: "Recenter", live: meters.live) { head.recenter() }
-            QuietButton(icon: .headphones, name: head.enabled ? "Turn head tracking off" : "Turn head tracking on",
-                        struck: !head.enabled, live: meters.live) { head.enabled.toggle() }
-            QuietButton(icon: .quit, name: "Quit", live: meters.live) { NSApp.terminate(nil) }
-        }
-    }
-}
-
-private struct QuietButton: View {
-    let icon: Icon
-    let name: String
-    var struck = false
-    var emphasised = false
-    var live = false
-    let action: () -> Void
+private struct SceneArea: View {
+    let model: AppModel
+    var stills: StillFrames?
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            IconView(icon: icon, color: hovering || emphasised ? Ink.paper : Ink.graphite, size: 17,
-                     animating: hovering && live, struck: struck)
-                .frame(width: 30, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { hovering = $0 }
-        .accessibilityLabel(name)
-    }
-}
-
-// MARK: - Orientation
-
-/// The hour and where the head is turned, in the corner; the violet point is the listener's colour.
-private struct OrientationLabels: View {
-    @ObservedObject var labels: SceneLabels
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(labels.time)
-                    .font(Ink.text(11))
-                    .foregroundStyle(Ink.graphite)
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color(red: 0.62, green: 0.45, blue: 1.0).opacity(labels.gaze == nil ? 0.4 : 1))
-                        .frame(width: 5, height: 5)
-                        .shadow(color: Color(red: 0.56, green: 0.36, blue: 1.0), radius: labels.gaze == nil ? 0 : 3)
-                    Text(labels.gaze.map { "looking \($0)" } ?? "head tracking off")
-                        .font(Ink.text(11))
-                        .foregroundStyle(Ink.graphite)
+        ZStack(alignment: .bottomLeading) {
+            Group {
+                if let stills {
+                    Image(decorative: stills.scene, scale: 2).resizable()
+                } else {
+                    SceneSurface(stage: model.stage)
                 }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Ink.black.opacity(0.65))
-            .padding(.leading, 10)
-            .padding(.top, 9)
+            .frame(width: Popover.width, height: Popover.sceneHeight)
+            .accessibilityLabel("Scene")
+
+            SelectionChip(readout: model.stage.readout, meters: model.stage.meters, showHint: hovering || stills != nil)
+                .padding(Grid.x3)
         }
-        .frame(width: Popover.width, height: Popover.sceneHeight, alignment: .topLeading)
+        .frame(width: Popover.width, height: Popover.sceneHeight)
+        .clipped()
+        .onHover { hovering = $0 }
     }
 }
 
-// MARK: - Selection readout
-
-private struct SelectionReadout: View {
+/// The selected thing, where it is and how to move it; with nothing selected, how to select.
+private struct SelectionChip: View {
     @ObservedObject var readout: SceneReadout
     @ObservedObject var meters: Meters
+    let showHint: Bool
 
     var body: some View {
-        if let s = readout.selection {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    IconView(icon: s.kind == .tree ? .tree : s.kind == .bird ? .bird : .river, size: 16,
-                             animating: meters.live)
-                    Text(name(s.kind)).font(Ink.text(14)).foregroundStyle(Ink.paper)
-                    Text(coordinates(s.position, withHeight: s.kind == .bird))
-                        .font(Ink.italic(12.5))
+        Group {
+            if let s = readout.selection {
+                VStack(alignment: .leading, spacing: Grid.x1) {
+                    HStack(spacing: Grid.x2) {
+                        IconView(icon: s.kind == .tree ? .tree : s.kind == .bird ? .bird : .river, color: Ink.paper, size: 15)
+                        Text(name(s.kind)).font(Ink.text(Ink.Size.title)).foregroundStyle(Ink.paper)
+                        Text(coordinates(s.position, withHeight: s.kind == .bird))
+                            .font(Ink.text(Ink.Size.caption))
+                            .foregroundStyle(Ink.graphite)
+                    }
+                    Text(!s.movable ? "Flying on its own. Land to move it."
+                         : s.kind == .bird ? "← → ↑ ↓ move   ⇧↑ ⇧↓ height   esc let go"
+                         : "← → ↑ ↓ move   esc let go")
+                        .font(Ink.text(Ink.Size.caption))
                         .foregroundStyle(Ink.graphite)
                 }
-                Text(!s.movable ? "It is flying on its own; bring flight to rest to perch it."
-                     : s.kind == .bird ? "Arrows move it; with shift, ↑ and ↓ raise and lower it; esc lets go."
-                     : "Arrows move it along the ground; esc lets go.")
-                    .font(Ink.text(11.5))
+                .chip()
+            } else if showHint {
+                Text("Click a tree, a bird or the river to move it")
+                    .font(Ink.text(Ink.Size.caption))
                     .foregroundStyle(Ink.graphite)
+                    .chip()
             }
-        } else {
-            Text("Click a tree, a bird or the river to move it; drag to turn the view.")
-                .font(Ink.text(11.5))
-                .foregroundStyle(Ink.graphite)
         }
+        .allowsHitTesting(false)
+        .animation(Motion.reduced ? nil : .easeOut(duration: 0.15), value: readout.selection?.kind)
     }
 
     private func name(_ kind: Thing.Kind) -> String {
@@ -229,18 +145,214 @@ private struct SelectionReadout: View {
     }
 }
 
+private extension View {
+    /// A small dark plate that keeps text legible over the scene.
+    func chip() -> some View {
+        padding(.horizontal, Grid.x2 + 2)
+            .padding(.vertical, Grid.x1 + 2)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ink.panel.opacity(0.86)))
+    }
+}
+
+// MARK: - Transport
+
+/// Play, volume, flight, recenter, head tracking; the status text on the right names whatever
+/// the pointer is over, with its key.
+private struct Transport: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var audio: AudioEngine
+    @ObservedObject var head: HeadTracker
+    @ObservedObject var labels: SceneLabels
+    @ObservedObject var meters: Meters
+    @ObservedObject var controls: ControlsModel
+    @State private var hint: String?
+
+    var body: some View {
+        HStack(spacing: Grid.x1) {
+            ToolButton(icon: audio.isPlaying ? .pause : .play, name: audio.isPlaying ? "Pause" : "Play", key: "space",
+                       style: audio.isPlaying ? .plain : .primary, hint: $hint, action: act { model.togglePlay() })
+            if let volume = controls.macros.first(where: { Int($0.group) == ASMR_GROUP_MASTER }) {
+                VolumeSlider(control: volume, hint: $hint) { v in
+                    model.stage.poke()
+                    audio.setControl(volume.id, v)
+                    model.stage.refreshControls()
+                }
+                .padding(.trailing, Grid.x2)
+            }
+            ToolButton(icon: .flight, name: audio.flying ? "Land" : "Fly over the forest", key: "F",
+                       style: audio.flying ? .on : .plain, live: meters.live, hint: $hint, action: act { audio.flying.toggle() })
+            ToolButton(icon: .headphones, name: head.enabled ? "Turn head tracking off" : "Turn head tracking on", key: "H",
+                       style: head.enabled ? .on : .plain, hint: $hint, action: act { head.enabled.toggle() })
+            ToolButton(icon: .recenter, name: "Recenter: look ahead now", key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
+                .disabled(!head.enabled)
+            Spacer(minLength: Grid.x2)
+            status
+            ToolButton(icon: .power, name: "Quit ASMR X3000", key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
+                .padding(.leading, Grid.x1)
+        }
+        .padding(.horizontal, Grid.x3)
+        .frame(height: 48)
+    }
+
+    /// Runs a button's action and gives the keyboard back to the scene, so arrows keep moving things.
+    private func act(_ f: @escaping () -> Void) -> () -> Void {
+        { f(); model.stage.focusScene?() }
+    }
+
+    /// The hovered control's name, or the hour and where the head is turned.
+    private var status: some View {
+        HStack(spacing: Grid.x2) {
+            if let hint {
+                Text(hint).foregroundStyle(Ink.paper)
+            } else {
+                if head.enabled {
+                    Circle()
+                        .fill(Ink.violet.opacity(labels.gaze == nil ? 0.35 : 1))
+                        .frame(width: 5, height: 5)
+                    Text(labels.gaze.map { "looking \($0)" } ?? (head.connected ? "head tracking" : "no AirPods"))
+                        .foregroundStyle(Ink.graphite)
+                }
+                Text(labels.time).foregroundStyle(Ink.ash)
+            }
+        }
+        .font(Ink.text(Ink.Size.caption))
+        .lineLimit(1)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A 32 pt square button: visible hit area on hover, pressed and focus states; `.primary` is
+/// filled (the one thing to do when paused), `.on` marks a toggle that is on.
+private struct ToolButton: View {
+    enum Style { case plain, primary, on, quiet }
+    let icon: Icon
+    let name: String
+    var key: String?
+    var style: Style = .plain
+    var live = false
+    @Binding var hint: String?
+    let action: () -> Void
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            IconView(icon: icon, color: iconColor, size: 18, animating: hovering && live)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(ToolStyle(style: style, hovering: hovering && enabled, focused: focused))
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onHover { h in
+            hovering = h
+            hint = h ? (key.map { "\(name)   \($0)" } ?? name) : nil
+        }
+        .help(name)
+        .accessibilityLabel(name)
+    }
+
+    private var iconColor: Color {
+        if !enabled { return Ink.ash }
+        switch style {
+        case .primary: return Ink.panel
+        case .on: return Ink.paper
+        case .quiet: return hovering ? Ink.paper : Ink.ash
+        case .plain: return hovering ? Ink.paper : Ink.graphite
+        }
+    }
+}
+
+private struct ToolStyle: ButtonStyle {
+    let style: ToolButton.Style
+    let hovering: Bool
+    let focused: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(fill(configuration.isPressed)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(style == .on ? Ink.hairline.opacity(1.6) : .clear, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(focused ? Ink.paper.opacity(0.7) : .clear, lineWidth: 1.5)
+                .padding(-2))
+    }
+
+    private func fill(_ pressed: Bool) -> Color {
+        switch style {
+        case .primary: return pressed ? Ink.graphite : hovering ? Color(white: 1) : Ink.paper
+        case .on: return pressed ? Ink.pressed : hovering ? Ink.pressed : Ink.raised
+        case .plain, .quiet: return pressed ? Ink.pressed : hovering ? Ink.raised : .clear
+        }
+    }
+}
+
+/// The master level, small, next to play.
+private struct VolumeSlider: View {
+    let control: Control
+    @Binding var hint: String?
+    let set: (Float) -> Void
+    @State private var hovering = false
+    @State private var dragging = false
+
+    var body: some View {
+        HStack(spacing: Grid.x1) {
+            IconView(icon: .gain, color: hovering || dragging ? Ink.paper : Ink.graphite, size: 16)
+            GeometryReader { geo in
+                let w = geo.size.width, x = CGFloat(control.fraction) * w
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Ink.hairline).frame(height: 2)
+                    Capsule().fill(Ink.graphite).frame(width: x, height: 2)
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Ink.paper)
+                        .frame(width: hovering || dragging ? 3 : 2, height: 12)
+                        .offset(x: min(max(x - 1, 0), w - 2))
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        dragging = true
+                        set(control.value(atFraction: Float(g.location.x / w)))
+                        hint = "Volume   \(Int((control.fraction * 100).rounded())) %"
+                    }
+                    .onEnded { _ in dragging = false; if !hovering { hint = nil } })
+            }
+            .frame(width: 64, height: 32)
+        }
+        .onHover { h in
+            hovering = h
+            hint = h ? "Volume   \(Int((control.fraction * 100).rounded())) %" : (dragging ? hint : nil)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Volume")
+        .accessibilityValue("\(Int(control.fraction * 100)) %")
+        .accessibilityAdjustableAction { dir in
+            set(control.value(atFraction: control.fraction + (dir == .increment ? 0.05 : -0.05)))
+        }
+    }
+}
+
 // MARK: - Spectrogram
 
-private struct SpectrogramPanel: View {
+/// A thin live strip by default; click it to open the full spectrogram with its scale.
+private struct SpectrogramStrip: View {
     let stage: Stage
     var stills: StillFrames?
+    @AppStorage("spectrogram.open") private var openStored = false
     @State private var hover: SIMD2<Float>?
     @State private var zoom = SIMD2<Float>(0, 1)
     @State private var frozen = false
+    @State private var hovering = false
+
+    private var open: Bool { stills.map(\.spectrogramOpen) ?? openStored }
 
     var body: some View {
-        let h = Popover.spectrogramHeight
-        let w = Popover.width - 32
+        let h = open ? Popover.spectrogramOpen : Popover.spectrogramClosed
+        let w = Popover.stripWidth
         ZStack(alignment: .topLeading) {
             Group {
                 if let stills {
@@ -254,35 +366,55 @@ private struct SpectrogramPanel: View {
                 }
             }
             .frame(width: w, height: h)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .accessibilityLabel("Spectrogram")
 
-            ForEach([100, 1000, 10_000], id: \.self) { hz in
-                let y = yFor(Float(hz), h: h)
-                if y > 7 && y < h - 7 {
-                    Text(hz >= 1000 ? "\(hz / 1000) kHz" : "\(hz) Hz")
-                        .font(Ink.italic(10.5))
-                        .foregroundStyle(Ink.graphite)
-                        .padding(.horizontal, 4)
-                        .background(Ink.black)
-                        .fixedSize()
-                        .position(x: 24, y: CGFloat(y))
+            if open {
+                ForEach([100, 1000, 10_000], id: \.self) { hz in
+                    let y = yFor(Float(hz), h: h)
+                    if y > 7 && y < h - 7 {
+                        Text(hz >= 1000 ? "\(hz / 1000) kHz" : "\(hz) Hz")
+                            .font(Ink.text(Ink.Size.caption - 1))
+                            .foregroundStyle(Ink.ash)
+                            .fixedSize()
+                            .position(x: 26, y: CGFloat(y))
+                            .allowsHitTesting(false)
+                    }
                 }
+                if let p = hover ?? stills?.spectrogramHover {
+                    Text(readout(at: p, w: Float(w), h: Float(h)))
+                        .font(Ink.text(Ink.Size.caption))
+                        .foregroundStyle(Ink.paper)
+                        .padding(.horizontal, Grid.x1 + 2)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(Ink.panel.opacity(0.85)))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.top, Grid.x1)
+                        .padding(.trailing, 30)
+                        .allowsHitTesting(false)
+                }
+            } else {
+                // Closed, the whole strip is one button.
+                Button { openStored = true } label: { Color.clear.contentShape(Rectangle()) }
+                    .buttonStyle(.plain)
+                    .frame(width: w, height: h)
+                    .accessibilityLabel("Open the spectrogram")
             }
 
-            if let p = hover ?? stills?.spectrogramHover {
-                Text(readout(at: p, w: Float(w), h: Float(h)))
-                    .font(Ink.italic(12))
-                    .foregroundStyle(Ink.paper)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Ink.black)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.top, 2)
-                    .padding(.trailing, 14)
-                    .allowsHitTesting(false)
+            Button { openStored.toggle() } label: {
+                IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.ash, size: 14)
+                    .rotationEffect(.degrees(open ? -90 : 90))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.top, open ? 2 : 1)
+            .accessibilityLabel(open ? "Close the spectrogram" : "Open the spectrogram")
         }
         .frame(width: w, height: h)
+        .onHover { hovering = $0 }
+        .help(open ? "Click to hold, scroll to zoom, double-click to reset" : "Spectrogram")
         .onAppear { zoom = stage.zoom }
     }
 
@@ -299,341 +431,7 @@ private struct SpectrogramPanel: View {
         let v = stage.historyValue(column: back, band: frac)
         let db = Int((v * 70 - 90).rounded())
         let freq = hz >= 1000 ? String(format: "%.2f kHz", hz / 1000) : String(format: "%.0f Hz", hz)
-        let ago = String(format: "%.1f s ago", Double(back) / Stage.columnsPerSecond)
         let level = "\(db) dB".replacingOccurrences(of: "-", with: "−")
-        return "\(freq), \(level), \(ago)\(frozen ? ", held" : "")"
-    }
-}
-
-// MARK: - Tracks
-
-/// A long branch (water has nine parameters) scrolls rather than growing the popover.
-private struct TracksPanel: View {
-    let model: AppModel
-    @ObservedObject var controls: ControlsModel
-    var stills: StillFrames?
-
-    var body: some View {
-        let height = min(Tracks.contentHeight(controls), Popover.maxTracksHeight)
-        if stills != nil {
-            // ImageRenderer does not draw ScrollView content; a snapshot shows the top of the list.
-            Tracks(model: model, stills: stills)
-                .frame(height: height, alignment: .top)
-                .clipped()
-        } else {
-            ScrollView(.vertical, showsIndicators: false) {
-                Tracks(model: model, stills: stills)
-            }
-            .frame(height: height)
-        }
-    }
-}
-
-/// The engine's control tree as branching tracks. A macro row is its group's pictogram and the
-/// live waveform of that sound, developed up to the knob. Clicking the pictogram opens the
-/// branch: the physical parameters underneath as fine sliders, joined by hairlines.
-struct Tracks: View {
-    @ObservedObject var model: AppModel
-    @ObservedObject var controls: ControlsModel
-    var stills: StillFrames?
-
-    static let childHeight: CGFloat = 20
-
-    init(model: AppModel, stills: StillFrames?) {
-        self.model = model
-        controls = model.stage.controls
-        self.stills = stills
-    }
-
-    var body: some View {
-        let macros = controls.macros
-        let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
-        ZStack(alignment: .topLeading) {
-            Group {
-                if let stills {
-                    Image(decorative: stills.tracks, scale: 2).resizable()
-                } else {
-                    TracksSurface(stage: model.stage, rows: scopeRows(macros))
-                }
-            }
-            .padding(.leading, Popover.iconColumn)
-
-            VStack(spacing: 0) {
-                ForEach(macros, id: \.id) { m in
-                    let kids = controls.children(of: m.id)
-                    let open = controls.expanded == m.id && !kids.isEmpty
-                    MacroRow(control: m, hour: hour, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
-                             set: set, toggle: { toggle(m.id) })
-                        .frame(height: Popover.rowHeight)
-                    if open {
-                        ForEach(Array(kids.enumerated()), id: \.element.id) { i, c in
-                            ChildRow(control: c, hour: hour, last: i == kids.count - 1, set: set)
-                                .frame(height: Self.childHeight)
-                        }
-                    }
-                }
-            }
-        }
-        .frame(height: height(macros))
-    }
-
-    static func layout(_ macros: [Control], expanded: UInt32?, children: (UInt32) -> Int) -> [ScopeRow] {
-        var y: Float = 0
-        var rows: [ScopeRow] = []
-        for m in macros {
-            rows.append(ScopeRow(top: y, height: Float(Popover.rowHeight), track: Track(group: m.group), fraction: m.fraction))
-            y += Float(Popover.rowHeight)
-            if expanded == m.id { y += Float(childHeight) * Float(children(m.id)) }
-        }
-        return rows
-    }
-
-    private func scopeRows(_ macros: [Control]) -> [ScopeRow] {
-        Self.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
-    }
-
-    private func height(_ macros: [Control]) -> CGFloat { Self.contentHeight(controls) }
-
-    static func contentHeight(_ controls: ControlsModel) -> CGFloat {
-        let open = controls.expanded.map { controls.children(of: $0).count } ?? 0
-        return Popover.rowHeight * CGFloat(controls.macros.count) + childHeight * CGFloat(open)
-    }
-
-    private func set(_ id: UInt32, _ value: Float) {
-        model.stage.poke()
-        model.audio.setControl(id, value)
-        model.stage.refreshControls()
-    }
-
-    private func toggle(_ id: UInt32) {
-        controls.expanded = controls.expanded == id ? nil : id
-    }
-}
-
-extension Track {
-    init?(group: UInt32) {
-        switch Int(group) {
-        case ASMR_GROUP_WATER: self = .water
-        case ASMR_GROUP_WIND, ASMR_GROUP_FOLIAGE: self = .wind
-        case ASMR_GROUP_BIRDS: self = .birds
-        case ASMR_GROUP_MASTER: self = .volume
-        case ASMR_GROUP_RAIN: self = .rain
-        case ASMR_GROUP_INSECTS: self = .insects
-        case ASMR_GROUP_FIRE: self = .fire
-        default: return nil   // environment shapes every sound; it has no waveform of its own
-        }
-    }
-}
-
-private struct MacroRow: View {
-    let control: Control
-    var hour: Float?
-    let hasChildren: Bool
-    let open: Bool
-    @ObservedObject var meters: Meters
-    let set: (UInt32, Float) -> Void
-    let toggle: () -> Void
-    @State private var hovering = false
-    @State private var dragging = false
-
-    var body: some View {
-        let track = Track(group: control.group)
-        let audible = track.map { meters.audible.contains($0) } ?? false
-        HStack(spacing: 0) {
-            Button(action: toggle) {
-                ZStack(alignment: .bottomTrailing) {
-                    IconView(icon: Icon.forControl(control, hour: hour), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
-                             level: audible ? 0.6 : 0, animating: meters.live && audible)
-                        .frame(width: 22, height: 22)
-                    if hasChildren {
-                        // The branch mark: a small lozenge, filled while the branch is open.
-                        Rectangle()
-                            .fill(open ? Ink.paper : Ink.black)
-                            .overlay(Rectangle().stroke(Ink.graphite, lineWidth: 0.75))
-                            .frame(width: 3.5, height: 3.5)
-                            .rotationEffect(.degrees(45))
-                            .offset(x: 5, y: 1)
-                    }
-                }
-                .frame(width: Popover.iconColumn, height: Popover.rowHeight, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .disabled(!hasChildren)
-            .accessibilityLabel(hasChildren ? (open ? "Close \(control.key) details" : "Open \(control.key) details") : control.key)
-
-            GeometryReader { geo in
-                let x = CGFloat(control.fraction) * geo.size.width
-                ZStack(alignment: .topLeading) {
-                    Color.clear.contentShape(Rectangle())
-                    Rectangle()
-                        .fill(Ink.paper)
-                        .frame(width: 1, height: geo.size.height - 6)
-                        .position(x: x, y: geo.size.height / 2 + 2)
-                    Rectangle()
-                        .fill(hovering || dragging ? Ink.paper : Ink.black)
-                        .overlay(Rectangle().stroke(Ink.paper, lineWidth: 1))
-                        .frame(width: 5, height: 5)
-                        .rotationEffect(.degrees(45))
-                        .position(x: x, y: 3.5)
-                }
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        dragging = true
-                        set(control.id, control.value(atFraction: Float(g.location.x / geo.size.width)))
-                    }
-                    .onEnded { _ in dragging = false })
-            }
-            .onHover { hovering = $0 }
-            .accessibilityElement()
-            .accessibilityLabel(control.key)
-            .accessibilityValue("\(Int(control.fraction * 100)) %")
-            .accessibilityAdjustableAction { dir in
-                set(control.id, control.value(atFraction: control.fraction + (dir == .increment ? 0.05 : -0.05)))
-            }
-        }
-    }
-}
-
-/// A physical parameter under its macro: branch hairlines, a small pictogram, and a fine slider
-/// (or, for presets, a row of stops). Its name, value and unit appear only on hover.
-private struct ChildRow: View {
-    let control: Control
-    var hour: Float?
-    let last: Bool
-    let set: (UInt32, Float) -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ZStack(alignment: .leading) {
-                Canvas { ctx, size in
-                    // The branch: down from the macro's pictogram, then across to this child.
-                    let x: CGFloat = 10.5, mid = size.height / 2
-                    var p = Path()
-                    p.move(to: CGPoint(x: x, y: 0))
-                    p.addLine(to: CGPoint(x: x, y: last ? mid : size.height))
-                    p.move(to: CGPoint(x: x, y: mid))
-                    p.addQuadCurve(to: CGPoint(x: 17, y: mid), control: CGPoint(x: x, y: mid))
-                    ctx.stroke(p, with: .color(Ink.graphite.opacity(0.7)), lineWidth: 0.6)
-                }
-                IconView(icon: Icon.forControl(control, hour: hour), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
-                    .offset(x: 18)
-            }
-            .frame(width: Popover.iconColumn)
-
-            GeometryReader { geo in
-                ZStack(alignment: .trailing) {
-                    if control.isDiscrete {
-                        Stops(control: control, width: geo.size.width, set: set)
-                    } else {
-                        FineSlider(control: control, width: geo.size.width, hovering: hovering, set: set)
-                    }
-                    if hovering {
-                        Text(label)
-                            .font(Ink.italic(11.5))
-                            .foregroundStyle(Ink.paper)
-                            .padding(.horizontal, 5)
-                            .background(Ink.black)
-                            .allowsHitTesting(false)
-                    }
-                }
-            }
-        }
-        .onHover { hovering = $0 }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(control.key)
-        .accessibilityValue(label)
-        .accessibilityAdjustableAction { dir in
-            let step: Float = control.isDiscrete ? 1 / max(control.max - control.min, 1) : 0.05
-            set(control.id, control.value(atFraction: control.fraction + (dir == .increment ? step : -step)))
-        }
-    }
-
-    private var label: String {
-        let index = Int(control.value.rounded())
-        if control.isDiscrete, index >= 0, index < control.options.count, !control.options[index].isEmpty {
-            return "\(control.key) \(control.options[index])"
-        }
-        let v = control.isDiscrete ? String(index)
-            : abs(control.value) >= 10 ? String(format: "%.1f", control.value) : String(format: "%.2f", control.value)
-        return control.unit.isEmpty ? "\(control.key) \(v)" : "\(control.key) \(v) \(control.unit)"
-    }
-}
-
-/// A hairline scale with tenths ticked; the part up to the knob is drawn in ink.
-private struct FineSlider: View {
-    let control: Control
-    let width: CGFloat
-    let hovering: Bool
-    let set: (UInt32, Float) -> Void
-
-    var body: some View {
-        let x = CGFloat(control.fraction) * width
-        Canvas { ctx, size in
-            let mid = size.height / 2
-            var ticks = Path()
-            for i in 0...10 {
-                let tx = size.width * CGFloat(i) / 10
-                ticks.addRect(CGRect(x: tx - 0.25, y: mid - (i % 5 == 0 ? 2.5 : 1.5), width: 0.5, height: i % 5 == 0 ? 5 : 3))
-            }
-            ctx.fill(ticks, with: .color(Ink.ash))
-            ctx.fill(Path(CGRect(x: 0, y: mid - 0.25, width: size.width, height: 0.5)), with: .color(Ink.ash))
-            ctx.fill(Path(CGRect(x: 0, y: mid - 0.5, width: x, height: 1)), with: .color(Ink.paper.opacity(0.85)))
-            // Knob: a small lozenge on a short hairline.
-            ctx.fill(Path(CGRect(x: x - 0.5, y: mid - 5, width: 1, height: 10)), with: .color(Ink.paper))
-            var lz = Path()
-            lz.move(to: CGPoint(x: x, y: mid - 3))
-            lz.addLine(to: CGPoint(x: x + 3, y: mid))
-            lz.addLine(to: CGPoint(x: x, y: mid + 3))
-            lz.addLine(to: CGPoint(x: x - 3, y: mid))
-            lz.closeSubpath()
-            // Filled once the user has set it; hollow while it follows its macro.
-            ctx.fill(lz, with: .color(hovering || control.isOverridden ? Ink.paper : Ink.black))
-            ctx.stroke(lz, with: .color(Ink.paper), lineWidth: 0.8)
-        }
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-            set(control.id, control.value(atFraction: Float(g.location.x / width)))
-        })
-        // Double-click hands the parameter back to its macro.
-        .simultaneousGesture(TapGesture(count: 2).onEnded { set(control.id, .nan) })
-    }
-}
-
-/// Presets: a dotted rule with one stop per preset; the chosen one is filled.
-private struct Stops: View {
-    let control: Control
-    let width: CGFloat
-    let set: (UInt32, Float) -> Void
-
-    var body: some View {
-        let n = max(Int((control.max - control.min).rounded()) + 1, 2)
-        let chosen = Int((control.value - control.min).rounded())
-        ZStack(alignment: .leading) {
-            Canvas { ctx, size in
-                let mid = size.height / 2
-                var dots = Path()
-                var x: CGFloat = 0
-                while x < size.width { dots.addRect(CGRect(x: x, y: mid - 0.25, width: 1, height: 0.5)); x += 3 }
-                ctx.fill(dots, with: .color(Ink.ash))
-            }
-            ForEach(0..<n, id: \.self) { i in
-                let x = width * CGFloat(i) / CGFloat(n - 1)
-                Button { set(control.id, control.min + Float(i)) } label: {
-                    Rectangle()
-                        .fill(i == chosen ? Ink.paper : Ink.black)
-                        .overlay(Rectangle().stroke(i == chosen ? Ink.paper : Ink.graphite, lineWidth: 0.9))
-                        .frame(width: 6, height: 6)
-                        .rotationEffect(.degrees(45))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .position(x: min(max(x, 4), width - 4), y: Tracks.childHeight / 2)
-            }
-        }
+        return "\(freq)  \(level)\(frozen ? "  held" : "")"
     }
 }

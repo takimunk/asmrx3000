@@ -45,7 +45,7 @@ enum MenuBarFrames {
         for dark in [false, true] {
             let tag = dark ? "dark" : "light"
             render("menubar-states-\(tag).png", frames: [(MenuBarIcon.stopped, 0), (MenuBarIcon.playing, 0), (nil, 0.3)], dark: dark)
-            render("menubar-wave-\(tag).png", frames: (0..<10).map { (nil, CGFloat($0) / 10) }, dark: dark)
+            render("menubar-wave-\(tag).png", frames: (0..<12).map { (nil, CGFloat($0) / 12) }, dark: dark)
         }
         print("menubar frames → \(dir)")
     }

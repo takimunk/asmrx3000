@@ -100,6 +100,10 @@ final class SceneStageView: StageView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func windowBecameVisible() {
+        stage.focusScene = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self)
+        }
         // MenuBarExtra windows are key while open; take the keyboard so arrows reach us.
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window else { return }
@@ -174,8 +178,10 @@ final class SceneStageView: StageView {
 ///   ↑ ↓        move away from / towards the camera (along the ground)
 ///   ⇧↑ ⇧↓      raise / lower
 ///   ⌥ + any    fine steps (5 cm instead of 25 cm)
-///   tab        select the next object (⇧tab previous), esc releases the selection
+///   tab        select the next object (⇧tab previous), esc releases the selection (then closes a drawer)
 ///   space      play / pause
+///   F          fly / land       H   head tracking on / off       C   recenter
+///   return, /  write to the prompt
 enum Keys {
     static func handle(_ event: NSEvent, stage: Stage) -> Bool {
         let fine = event.modifierFlags.contains(.option)
@@ -187,9 +193,20 @@ enum Keys {
         case 126: stage.nudge(shift ? SIMD3(0, 0, step) : SIMD3(0, step, 0))
         case 125: stage.nudge(shift ? SIMD3(0, 0, -step) : SIMD3(0, -step, 0))
         case 48: stage.cycleSelection(backwards: shift)
-        case 53: stage.select(nil)
+        case 53:
+            // Esc lets go of the selection; with nothing selected it closes an open drawer.
+            if stage.selection != nil { stage.select(nil) } else if stage.controls.expanded != nil { stage.controls.expanded = nil } else { return false }
         case 49: stage.audio.isPlaying ? stage.audio.pause() : stage.audio.play()
-        default: return false
+        case 36, 76: stage.focusPrompt?()
+        default:
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "f": stage.audio.flying.toggle()
+            case "h": stage.head.enabled.toggle()
+            case "c": stage.head.recenter()
+            case "/": stage.focusPrompt?()
+            default: return false
+            }
         }
         return true
     }

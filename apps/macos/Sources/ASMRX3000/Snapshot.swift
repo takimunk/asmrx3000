@@ -4,7 +4,7 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1]
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--more] [--spectrogram] [--orbit 0..1]
 ///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
 ///  [--flight speed] [--seed n]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
@@ -86,20 +86,20 @@ enum Snapshot {
         let sceneSize = SIMD2(Float(Popover.width), Float(Popover.sceneHeight))
         stage.sceneSize = sceneSize
         stage.updateLabels()
-        let specSize = SIMD2(Float(Popover.width - 32), Float(Popover.spectrogramHeight))
+        let spectrogramOpen = args.contains("--spectrogram")
+        let specSize = SIMD2(Float(Popover.stripWidth), Float(spectrogramOpen ? Popover.spectrogramOpen : Popover.spectrogramClosed))
         let sceneRenderer = SceneRenderer(stage: stage)
         let specRenderer = SpectrogramRenderer(stage: stage)
         let tracksRenderer = TracksRenderer(stage: stage)
-        // The river's branch is open unless asked otherwise.
+        // --expand <group>: that group's drawer is open; --more: every lever is shown.
         let controls = stage.controls
-        let expand = value("--expand") ?? "water"
-        controls.expanded = controls.macros.first { $0.key == expand || $0.key.hasPrefix(expand + ".") }?.id
-        let macros = controls.macros
-        let rows = Tracks.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
-        let openCount = controls.expanded.map { controls.children(of: $0).count } ?? 0
-        let tracksHeight = Float(Popover.rowHeight) * Float(macros.count) + Float(Tracks.childHeight) * Float(openCount)
-        let tracksSize = SIMD2(Float(Popover.width - 32 - Popover.iconColumn), tracksHeight)
-        let hover = SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38)
+        let expand = value("--expand") ?? "none"
+        let drawer = controls.macros.first { $0.key == expand || $0.key.hasPrefix(expand + ".") }?.id
+        let showAll = args.contains("--more")
+        let levers = LeverPanel.visible(controls.macros, flying: model.audio.flying, showAll: showAll)
+        let rows = LeverPanel.layout(levers)
+        let tracksSize = SIMD2(Float(Popover.sliderWidth), Float(Popover.leverHeight) * Float(max(levers.count, 1)))
+        let hover: SIMD2<Float>? = spectrogramOpen ? SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38) : nil
         specRenderer.hover = hover
         guard let scene = GPU.shared.image(width: Int(sceneSize.x * scale), height: Int(sceneSize.y * scale), encode: {
                   sceneRenderer.encode($0, target: $1, size: sceneSize, scale: scale)
@@ -112,7 +112,9 @@ enum Snapshot {
               })
         else { return }
 
-        let renderer = ImageRenderer(content: Popover(model: model, stills: StillFrames(scene: scene, spectrogram: spec, tracks: tracks, spectrogramHover: hover)))
+        let stills = StillFrames(scene: scene, spectrogram: spec, tracks: tracks, spectrogramHover: hover,
+                                 drawer: drawer, showAll: showAll, spectrogramOpen: spectrogramOpen)
+        let renderer = ImageRenderer(content: Popover(model: model, stills: stills))
         renderer.scale = CGFloat(scale)
         guard let image = renderer.cgImage,
               let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)
