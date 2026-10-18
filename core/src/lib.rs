@@ -8,6 +8,7 @@ mod dsp;
 mod engine;
 mod fft;
 mod math;
+pub mod neural;
 mod rng;
 mod sources;
 mod windfield;

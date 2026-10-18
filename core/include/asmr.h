@@ -21,6 +21,7 @@ enum {
     ASMR_PARAM_HEAD_YAW = 6,   /* + = turned left */
     ASMR_PARAM_HEAD_PITCH = 7, /* + = looking up */
     ASMR_PARAM_HEAD_ROLL = 8,  /* + = right ear down */
+    ASMR_PARAM_NEURAL_BIRDS = 9, /* 0 = procedural birds, 1 = neural per-species voices */
 };
 
 /* Telemetry (asmr_get_telemetry). */

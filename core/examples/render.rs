@@ -3,6 +3,7 @@
 //!   cargo run --release --example render -- [seconds] [out.wav] [turn]
 //!
 //! `turn` slowly sweeps the head yaw +-90 deg so you can check that the scene stays put.
+//! `neural` switches the birds to the neural voices (any extra argument may be either word).
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -14,12 +15,14 @@ fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let seconds: f32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20.0);
     let path = args.get(2).cloned().unwrap_or_else(|| "render.wav".into());
-    let turn = args.get(3).is_some_and(|s| s == "turn");
+    let turn = args.iter().skip(3).any(|s| s == "turn");
+    let neural = args.iter().skip(3).any(|s| s == "neural");
 
     let sr = 48_000.0f32;
     let engine = Engine::new(sr);
     engine.set_param(param::PLAYING, 1.0);
     engine.set_param(param::VOLUME, 0.8);
+    engine.set_param(param::NEURAL_BIRDS, if neural { 1.0 } else { 0.0 });
 
     let block = 512usize;
     let blocks = (seconds * sr) as usize / block;

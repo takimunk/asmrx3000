@@ -16,6 +16,7 @@ use crate::dsp::soft_clip;
 use crate::fft::fft;
 use crate::math::{Mat3, Vec3};
 use crate::rng::Rng;
+use crate::neural::{self, BirdControls, NeuralBird};
 use crate::sources::{Bird, BubbleStream, WindSource};
 use crate::windfield::WindField;
 
@@ -44,7 +45,9 @@ pub mod param {
     pub const HEAD_YAW: u32 = 6;
     pub const HEAD_PITCH: u32 = 7;
     pub const HEAD_ROLL: u32 = 8;
-    pub const COUNT: usize = 9;
+    /// 0 = procedural placeholder birds, 1 = neural per-species voices (docs/neural-sound.md).
+    pub const NEURAL_BIRDS: u32 = 9;
+    pub const COUNT: usize = 10;
 }
 
 pub mod telemetry {
@@ -115,7 +118,14 @@ struct Shared {
 enum Generator {
     Water(BubbleStream),
     Wind(WindSource),
-    Bird(Bird),
+    /// Procedural voice plus, when a model is built in, its neural counterpart.
+    Bird(Bird, Option<NeuralBird>),
+}
+
+/// Neural voice for `species` (falls back to the first built-in model), if any is built in.
+fn neural_bird(species: &str, sr: f32, rng: &mut Rng) -> Option<NeuralBird> {
+    let model = neural::builtin(species).or_else(|| neural::BUILTIN.first().and_then(|(n, _)| neural::builtin(n)))?;
+    Some(NeuralBird::new(model, sr, rng.next_u64()))
 }
 
 struct Slot {
@@ -195,12 +205,12 @@ impl Engine {
         slots.push(Slot::new(
             SourceKind::Bird,
             Vec3::new(2.5, 3.0, 3.5),
-            Generator::Bird(Bird::new(sr, rng.next_u64(), 4200.0, 1.0)),
+            Generator::Bird(Bird::new(sr, rng.next_u64(), 4200.0, 1.0), neural_bird("chaffinch", sr, &mut rng)),
         ));
         slots.push(Slot::new(
             SourceKind::Bird,
             Vec3::new(5.0, -6.0, 5.0),
-            Generator::Bird(Bird::new(sr, rng.next_u64(), 3300.0, 0.85)),
+            Generator::Bird(Bird::new(sr, rng.next_u64(), 3300.0, 0.85), neural_bird("robin", sr, &mut rng)),
         ));
 
         let shared = Shared {
@@ -375,6 +385,7 @@ impl Dsp {
 
         let wind = p(param::WIND).clamp(0.0, 1.0);
         let birds = p(param::BIRDS).clamp(0.0, 1.0);
+        let neural = p(param::NEURAL_BIRDS) > 0.5;
         let water = p(param::WATER).clamp(0.0, 1.0);
         let orbit = p(param::ORBIT).clamp(0.0, 1.0);
         let volume = p(param::VOLUME).clamp(0.0, 1.5);
@@ -409,8 +420,11 @@ impl Dsp {
                     w.render(tmp, self.wind.local(slot.position.y));
                     WIND_GAIN
                 }
-                Generator::Bird(b) => {
-                    b.render(tmp, birds);
+                Generator::Bird(b, n) => {
+                    match n {
+                        Some(n) if neural => n.render(tmp, &BirdControls { activity: birds, ..Default::default() }),
+                        _ => b.render(tmp, birds),
+                    }
                     BIRD_GAIN
                 }
             };
@@ -474,7 +488,8 @@ impl Dsp {
         let count = self.slots.len().min(MAX_SOURCES);
         for (i, s) in self.slots.iter().take(count).enumerate() {
             let freq = match &s.generator {
-                Generator::Bird(b) => b.freq(),
+                Generator::Bird(_, Some(n)) if n.is_singing() => n.freq(),
+                Generator::Bird(b, _) => b.freq(),
                 _ => 0.0,
             };
             let fields = [
