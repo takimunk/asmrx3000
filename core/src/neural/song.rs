@@ -24,6 +24,8 @@ pub struct SongModel {
     count: Vec<f32>,
     mode_vec: Vec<f32>,
     coef_sd: Vec<f32>,
+    /// Probability of re-singing a token's earlier rendition within a song.
+    reuse: f32,
 }
 
 pub struct SongState {
@@ -65,6 +67,7 @@ impl SongModel {
             count: w.get("contour.count", &[k])?.to_vec(),
             mode_vec: w.get("contour.modes", &[k, modes, 2 * p])?.to_vec(),
             coef_sd: w.get("contour.coef_sd", &[k, modes])?.to_vec(),
+            reuse: w.scalar("cfg.reuse")?,
         };
         if m.out.n_out != k + 3 || m.gru.ih.n_in != m.embed {
             return Err(Error("song: layer sizes do not fit together".into()));
@@ -122,10 +125,19 @@ impl SongModel {
 
     /// Samples a contour for `tok`: one of its real exemplar syllables, nudged along the token's
     /// PCA modes; `variation` scales the nudge (0 = exact exemplar).
-    pub fn contour(&self, tok: usize, variation: f32, rng: &mut Rng, c: &mut Contour) {
+    ///
+    /// `chosen[tok]` remembers the exemplar a token used earlier in the same song (`u8::MAX` =
+    /// none yet). With the species' `reuse` probability the bird sings that same rendition
+    /// again: a chaffinch trill repeats one syllable, a robin rarely repeats itself.
+    pub fn contour(&self, tok: usize, variation: f32, chosen: &mut [u8], rng: &mut Rng, c: &mut Contour) {
         let p = self.p;
         let n = (self.count[tok] as usize).clamp(1, self.ex);
-        let e = (rng.next_u32() as usize) % n;
+        let repeat = chosen[tok] != u8::MAX && rng.uniform() < self.reuse;
+        if !repeat {
+            chosen[tok] = ((rng.next_u32() as usize) % n) as u8;
+        }
+        let e = chosen[tok] as usize;
+        let variation = if repeat { variation * 0.25 } else { variation };
         let base = (tok * self.ex + e) * p;
         c.f0.copy_from_slice(&self.f0[base..base + p]);
         c.loud.copy_from_slice(&self.loud[base..base + p]);

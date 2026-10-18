@@ -536,9 +536,19 @@ mod tests {
 
     #[test]
     fn renders_finite_audible_output() {
+        check_audible(false);
+    }
+
+    #[test]
+    fn renders_finite_audible_output_with_neural_birds() {
+        check_audible(true);
+    }
+
+    fn check_audible(neural: bool) {
         let engine = Engine::new(48_000.0);
         engine.set_param(param::PLAYING, 1.0);
         engine.set_param(param::BIRDS, 1.0);
+        engine.set_param(param::NEURAL_BIRDS, neural as u8 as f32);
         let mut l = vec![0.0f32; 512];
         let mut r = vec![0.0f32; 512];
         let mut energy = 0.0f64;

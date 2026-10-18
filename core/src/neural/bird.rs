@@ -47,6 +47,8 @@ struct Phrase {
     next: Contour,
     next_tok: Option<usize>,
     tok: usize,
+    /// Exemplar each token used so far in this song (u8::MAX = not yet).
+    chosen: Vec<u8>,
     seg: Seg,
     frame: u32,
     frames: u32,
@@ -82,6 +84,7 @@ impl NeuralBird {
             next: model.song.new_contour(),
             next_tok: None,
             tok: 0,
+            chosen: vec![u8::MAX; model.song.k],
             seg: Seg::Tail,
             frame: 0,
             frames: 0,
@@ -126,11 +129,12 @@ impl NeuralBird {
     fn start_song(&mut self) {
         let m = &self.model;
         let c = self.controls;
-        let temp = 0.6 + 0.4 * c.variation;
+        let temp = temperature(&c);
         let p = &mut self.phrase;
         m.song.reset(&mut p.song);
+        p.chosen.iter_mut().for_each(|e| *e = u8::MAX);
         let (tok, _) = m.song.next(&mut p.song, None, temp, &mut self.rng).unwrap_or((0, 0.0));
-        m.song.contour(tok, c.variation, &mut self.rng, &mut p.cur);
+        m.song.contour(tok, c.variation, &mut p.chosen, &mut self.rng, &mut p.cur);
         p.tok = tok;
         p.seg = Seg::Syllable;
         p.frame = 0;
@@ -149,7 +153,7 @@ impl NeuralBird {
         let mut i = 0;
         while i < out.len() {
             if !self.singing {
-                let n = (out.len() - i).min(self.timer.max(0.0).ceil() as usize).max(0);
+                let n = (out.len() - i).min(self.timer.max(0.0).ceil() as usize);
                 out[i..i + n].iter_mut().for_each(|o| *o = 0.0);
                 i += n;
                 self.timer -= n as f32;
@@ -182,6 +186,11 @@ impl NeuralBird {
     }
 }
 
+/// Song-model sampling temperature: below 1 keeps the species' typical phrase structure.
+fn temperature(c: &BirdControls) -> f32 {
+    0.65 + 0.2 * c.variation
+}
+
 fn frames_for(dur_s: f32, hop_s: f32, tempo: f32) -> u32 {
     ((dur_s / tempo.max(0.25)) / hop_s).round().max(2.0) as u32
 }
@@ -197,10 +206,24 @@ fn frame_of(p: &mut Phrase, c: &BirdControls, pitch_offset: f32, m: &NeuralModel
             effort: (at(&p.cur.effort, u) + c.effort).clamp(0.0, 1.0),
         },
         Seg::Gap => {
-            // Glide f0 from the end of this syllable to the start of the next one.
-            let a = p.cur.f0[p.cur.f0.len() - 1];
-            let b = p.next.f0[0];
-            Frame { f0: (a + (b - a) * u + shift).exp2(), loud: silence_db, effort: silence_effort }
+            // Glide f0 from the end of this syllable to the start of the next one. Loudness dips
+            // towards silence only as far as the gap is long (about 6 dB per 5 ms frame): short
+            // gaps never reach silence in real recordings (reverb), and a hard step to silence
+            // makes the voice click.
+            let (ce, nb) = (p.cur.f0.len() - 1, 0);
+            let a = p.cur.f0[ce];
+            let b = p.next.f0[nb];
+            let la = p.cur.loud[ce] + c.loudness;
+            let lb = p.next.loud[nb] + c.loudness;
+            let depth = (6.0 * p.frames as f32).min(60.0);
+            let dip = depth * (core::f32::consts::PI * u).sin();
+            let ea = p.cur.effort[ce];
+            let eb = p.next.effort[nb];
+            Frame {
+                f0: (a + (b - a) * u + shift).exp2(),
+                loud: (la + (lb - la) * u - dip).max(silence_db),
+                effort: (ea + (eb - ea) * u + (silence_effort - 0.5 * (ea + eb)) * (dip / 60.0)).clamp(0.0, 1.0),
+            }
         }
         Seg::Tail => {
             let a = p.cur.f0[p.cur.f0.len() - 1];
@@ -216,13 +239,13 @@ fn advance(m: &NeuralModel, p: &mut Phrase, rng: &mut Rng, c: &BirdControls, pit
     p.frame += 1;
     if p.frame >= p.frames {
         let tempo = c.tempo * tempo_scale;
-        let temp = 0.6 + 0.4 * c.variation;
+        let temp = temperature(c);
         match p.seg {
             Seg::Syllable => {
                 let next = if p.count < MAX_SYLLABLES { m.song.next(&mut p.song, Some(p.tok), temp, rng) } else { None };
                 match next {
                     Some((tok, gap)) => {
-                        m.song.contour(tok, c.variation, rng, &mut p.next);
+                        m.song.contour(tok, c.variation, &mut p.chosen, rng, &mut p.next);
                         p.next_tok = Some(tok);
                         p.seg = Seg::Gap;
                         p.frames = frames_for(gap, m.voice.hop_s, tempo);

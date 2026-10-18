@@ -174,7 +174,9 @@ def main() -> None:
     for j in range(k):
         mem = [s for s in train_syl if lab_of[id(s)] == j] or [min(all_syl, key=lambda s: ((features(s) - cent[j]) ** 2).sum())]
         dist = np.array([((features(s) - cent[j]) ** 2).sum() for s in mem])
-        typical = [m for m, d in zip(mem, dist) if d <= np.percentile(dist, 80)] or mem
+        # Exemplars must be typical and free of f0 tracking glitches (octave jumps).
+        smooth = [np.abs(np.diff(m["f0"])).max() < 0.4 for m in mem]
+        typical = [m for m, d, ok in zip(mem, dist, smooth) if d <= np.percentile(dist, 80) and ok] or mem
         pick = rng.choice(len(typical), min(EXEMPLARS, len(typical)), replace=False)
         for e, i in enumerate(pick):
             ex = typical[i]
@@ -211,7 +213,14 @@ def main() -> None:
             if vce.item() < best:
                 best, best_state = vce.item(), {n: v.clone() for n, v in model.state_dict().items()}
     model.load_state_dict(best_state)
+    # How repetitive the species is: share of syllables whose token already occurred in the same
+    # song. The engine re-sings the earlier rendition with this probability.
+    seen = [len(set(song_toks[:i])) == len(set(song_toks[:i + 1]))
+            for song_toks in ([lab_of[id(x)] for x in song] for r in recs for song in r["songs"])
+            for i in range(1, len(song_toks))]
+    reuse = float(np.mean(seen))
     metrics = {
+        "reuse": reuse,
         "tokens": k,
         "train_syllables": len(train_syl),
         "train_songs": int(tr[0].shape[0]),
@@ -225,7 +234,7 @@ def main() -> None:
     print(json.dumps(metrics, indent=1))
     out = RUNS / a.species
     out.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict(), "k": k, "bank": bank, "centroids": cent}, out / "song.pt")
+    torch.save({"model": model.state_dict(), "k": k, "bank": bank, "centroids": cent, "reuse": reuse}, out / "song.pt")
     (out / "song_metrics.json").write_text(json.dumps(metrics, indent=1))
 
 

@@ -97,6 +97,7 @@ def export(key: str, out_gain: float) -> Path:
     t["cfg.silence_effort"] = f32(silence_effort)
     t["cfg.out_gain"] = f32(out_gain)
     t["cfg.song_interval_s"] = f32(interval)
+    t["cfg.reuse"] = f32(s["reuse"])
     for name, p in voice.state_dict().items():
         if name != "norm":
             t[f"voice.{name}"] = (p.numpy(), 1)

@@ -48,7 +48,10 @@ impl NeuralModel {
 
 /// Species shipped inside the binary (`core/assets/neural/*.asnw`, exported by
 /// `ml/asmr_ml/export.py`).
-pub const BUILTIN: &[(&str, &[u8])] = &[("chaffinch", include_bytes!("../../assets/neural/chaffinch.asnw"))];
+pub const BUILTIN: &[(&str, &[u8])] = &[
+    ("chaffinch", include_bytes!("../../assets/neural/chaffinch.asnw")),
+    ("robin", include_bytes!("../../assets/neural/robin.asnw")),
+];
 
 /// Parsed built-in model, shared by all voices of that species. Parses on first use, so call
 /// it when building the scene, not from the audio thread.
