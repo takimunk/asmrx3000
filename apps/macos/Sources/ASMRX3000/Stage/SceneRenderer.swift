@@ -115,7 +115,7 @@ final class SceneRenderer {
         }
         guard let gA, let gB, let gDepth else { return }
 
-        let cam = stage.camera
+        let cam = stage.viewCamera
         let vp = cam.viewProjection(aspect: size.x / size.y)
         let proj = Projector(camera: cam, size: size)
         let time = Float(stage.time.truncatingRemainder(dividingBy: 3600))
@@ -241,7 +241,7 @@ final class SceneRenderer {
         }
 
         var treeIndex = 0, birds = 0
-        let focal = proj.size.y * 0.5 / tan(stage.camera.fovY / 2)
+        let focal = proj.size.y * 0.5 / tan(proj.camera.fovY / 2)
         for o in stage.objects {
             let p = SIMD3(o.x, o.y, o.z)
             if o.flags & UInt32(ASMR_OBJECT_FLAG_ABSENT) != 0 { continue }
@@ -252,25 +252,25 @@ final class SceneRenderer {
                 let name = names[(flying ? Int(o.id % 4) : treeIndex) % names.count]
                 treeIndex += 1
                 let r = simd_length(SIMD2(o.x, o.y))
-                if flying && r > Terrain.radius - 0.3 { continue }
+                if flying && r > FlightGround.reach { continue }
                 guard let mesh = lib[name] else { continue }
                 let g = ground(o.x, o.y)
                 let crown: Float = name.hasPrefix("spruce") ? 3.6 : 4.2
-                // Streamed trees rise out of the disc's rim and sink back into it behind.
-                let rim: Float = flying ? min(max((Terrain.radius - 0.3 - r) / 1.6, 0), 1) : 1
-                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown * (0.25 + 0.75 * rim)
+                // Streamed trees grow in from the edge of reach, already deep in the haze.
+                let grow: Float = flying ? min(max((FlightGround.reach - r) / 8, 0), 1) : 1
+                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown * (0.3 + 0.7 * grow)
                 let wind = localWind(o.y)
                 let m = Self.transform(SIMD3(o.x, o.y, g), yaw: Float(o.id) * 1.3, scale: s) * Self.slender
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id), flags(.object(o.id)), wind * 0.55, 6.6),
                                             anim: SIMD4(0, Float(o.id), wind, 1))))
             case UInt32(ASMR_OBJECT_ROCK) where flying:
                 let g = ground(o.x, o.y)
-                guard let boulder, simd_length(SIMD2(o.x, o.y)) < Terrain.radius - 0.8 else { continue }
+                guard let boulder, simd_length(SIMD2(o.x, o.y)) < FlightGround.reach else { continue }
                 let radius = min(max((o.z + flight.altitude) / 1.4, 0.4), 2.0)
                 let m = Self.transform(SIMD3(o.x, o.y, g - 0.15), yaw: Float(o.id % 7), scale: radius)
                 list.append((boulder, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
             case UInt32(ASMR_OBJECT_BIRD):
-                if flying && simd_length(SIMD2(o.x, o.y)) > Terrain.radius + 1 { continue }
+                if flying && simd_length(SIMD2(o.x, o.y)) > FlightGround.reach { continue }
                 // The bird's voice is the bird source closest to it.
                 let level = stage.sources.filter { $0.kind == .bird }
                     .min { simd_distance($0.world, p) < simd_distance($1.world, p) }?.level ?? 0
@@ -303,7 +303,7 @@ final class SceneRenderer {
                     let sx: Float = sp.point.x * scale, sy: Float = sp.point.y * scale
                     let perMetre: Float = focal / sp.w * scale
                     data[8 + birds] = SIMD4(sx, sy, perMetre, level)
-                    data[12 + birds] = SIMD4(simd_distance(stage.camera.eye, p), 0, 0, 0)
+                    data[12 + birds] = SIMD4(simd_distance(proj.camera.eye, p), 0, 0, 0)
                     birds += 1
                 }
             default:
@@ -317,7 +317,7 @@ final class SceneRenderer {
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, wind * 0.55, 6.6), anim: SIMD4(0, x + y, wind, 1))))
         }
         // The forest goes on beyond the play area, thinning out into the haze; none in the river.
-        for (x, y, s, name) in Self.distantForest {
+        for (x, y, s, name) in Self.distantForest where !flying {
             guard let mesh = lib[name], abs(x - Stage.riverAt(y, river).x) > 4 else { continue }
             let m = Self.transform(SIMD3(x, y, Terrain.farHeight(x, y) - 0.1), yaw: x + y * 0.3, scale: s) * Self.slender
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, 0, 6.6), anim: SIMD4(0, x, localWind(y), 1))))

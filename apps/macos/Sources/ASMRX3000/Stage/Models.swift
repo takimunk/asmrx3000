@@ -123,17 +123,20 @@ enum GroundMesh {
     static let outerRings = 44
     static let farRadius: Float = 220
 
-    static func radius(ring r: Int) -> Float {
-        if r <= innerRings { return Terrain.radius * Float(r) / Float(innerRings) }
+    static func radius(ring r: Int, inner: Int = innerRings, outer: Int = outerRings) -> Float {
+        if r <= inner { return Terrain.radius * Float(r) / Float(inner) }
         // Geometric: each ring a fixed ratio further, so screen-space spacing stays even.
-        let step = Terrain.radius / Float(innerRings)
-        let k = Float(r - innerRings) / Float(outerRings)
+        let step = Terrain.radius / Float(inner)
+        let k = Float(r - inner) / Float(outer)
         let ratio = farRadius / Terrain.radius
-        return max(Terrain.radius * pow(ratio, k), Terrain.radius + step * Float(r - innerRings))
+        return max(Terrain.radius * pow(ratio, k), Terrain.radius + step * Float(r - inner))
     }
 
-    static func build(segments: Int, surface: (Float, Float) -> (Float, Float)) -> Mesh? {
-        let rings = innerRings + outerRings
+    /// `inner`/`outer`: ring counts over and beyond the play area (coarser for ground rebuilt
+    /// every frame).
+    static func build(segments: Int, inner: Int = innerRings, outer: Int = outerRings,
+                      surface: (Float, Float) -> (Float, Float)) -> Mesh? {
+        let rings = inner + outer
         var verts: [MeshVertex] = []
         var idx: [UInt32] = []
         verts.reserveCapacity(rings * segments + 1)
@@ -145,8 +148,8 @@ enum GroundMesh {
         let (cz, cp) = surface(0, 0)
         verts.append(MeshVertex(SIMD3(0, 0, cz), normal(0, 0, 0.08), cp))
         for r in 1...rings {
-            let radius = Self.radius(ring: r)
-            let e = max(0.08, (radius - Self.radius(ring: r - 1)) * 0.5)
+            let radius = Self.radius(ring: r, inner: inner, outer: outer)
+            let e = max(0.08, (radius - Self.radius(ring: r - 1, inner: inner, outer: outer)) * 0.5)
             for s in 0..<segments {
                 let a = 2 * Float.pi * Float(s) / Float(segments)
                 let x = radius * cos(a), y = radius * sin(a)

@@ -72,9 +72,11 @@ struct OrbitCamera {
 struct Projector {
     let matrix: simd_float4x4
     let size: SIMD2<Float>
+    let camera: OrbitCamera
 
     init(camera: OrbitCamera, size: SIMD2<Float>) {
         self.size = size
+        self.camera = camera
         matrix = camera.viewProjection(aspect: size.x / max(size.y, 1))
     }
 
