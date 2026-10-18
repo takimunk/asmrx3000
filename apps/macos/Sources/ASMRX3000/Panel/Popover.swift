@@ -152,22 +152,12 @@ private struct QuietButton: View {
 
 // MARK: - Orientation
 
-/// "ahead" on the ground in front of the listener; the hour and where the head is turned in the
-/// corner. The gaze line carries a small violet point: the same colour as the gaze in the scene.
+/// The hour and where the head is turned, in the corner; the violet point is the listener's colour.
 private struct OrientationLabels: View {
     @ObservedObject var labels: SceneLabels
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let a = labels.ahead {
-                Text("ahead")
-                    .font(Ink.text(10))
-                    .foregroundStyle(Ink.graphite)
-                    .padding(.horizontal, 3)
-                    .background(Ink.black.opacity(0.7))
-                    .fixedSize()
-                    .position(x: a.x, y: a.y + 9)
-            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(labels.time)
                     .font(Ink.text(11))

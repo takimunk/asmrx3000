@@ -47,9 +47,11 @@ enum Shaders {
         float4 plumb;        // bird and ground point in px, for a selected bird
         float4 sun;          // direction to the sun xyz, plumb on
         float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
-        float4 gaze;         // gaze dot screen x, y px, px per metre, live 1 / resting 0
-        float4 gazeHead;     // head screen x, y px, dot distance from the eye, visible
+        float4 gaze;         // listener point screen x, y px, px per metre, live 1 / resting 0
+        float4 gazeHead;     // head forward direction xyz (world), visible
         float4 haze;         // horizon y px (where the level ground meets the sky), -, -, -
+        float4 listener;     // head position xyz, its distance from the eye
+        float4x4 invViewProj;
     };
 
     struct Inst {
@@ -556,29 +558,54 @@ enum Shaders {
         c += float3(0.8, 0.85, 1.0) * F.env.z * (0.1 + 0.25 * g);
         c = min(c, float3(1.0));
 
-        // The gaze: the one coloured thing on the plate. A violet point floating where the head
-        // looks, with a bloom around it and a dotted thread back to the listener.
+        // The listener: the one coloured thing on the plate. A violet point at the head, and a
+        // soft beam of light from it towards where the head looks, like a faint lamp in haze.
         if (F.gazeHead.w > 0.5) {
             float live = F.gaze.w;
-            float strength = mix(0.38, 1.0, live);
-            float2 dp = F.gaze.xy;
-            float ppm = F.gaze.z;
-            float hidden = (mat != M_VOID && dist < F.gazeHead.z - 0.4) ? 0.35 : 1.0;
-            float d = length(px - dp);
-            float core = max(0.11 * ppm, 2.6 * s);
-            float pulse = 0.92 + 0.08 * sin(time * 2.4);
+            float strength = mix(0.45, 1.0, live);
             float3 violet = float3(0.56, 0.36, 1.0);
-            float halo = exp(-pow(d / (core * 4.5), 2.0)) * 0.55 + exp(-d / (core * 9.0)) * 0.22;
+            float3 head = F.listener.xyz;
+            float3 dirB = normalize(F.gazeHead.xyz);
+            // The pixel's view ray, marched up to whatever it hits.
+            float2 ndc = float2(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+            float4 r0 = F.invViewProj * float4(ndc, 0.0, 1.0);
+            float4 r1 = F.invViewProj * float4(ndc, 1.0, 1.0);
+            float3 ro = F.cam.xyz;
+            float3 rd = normalize(r1.xyz / r1.w - r0.xyz / r0.w);
+            // Only the stretch of ray that passes near the beam matters.
+            float tc = max(dot(head - ro, rd), 0.0);
+            float tEnd = mat == M_VOID ? tc + 30.0 : dist;
+            float t0 = max(tc - 14.0, 0.0), t1 = min(tc + 30.0, tEnd);
+            float beam = 0.0;
+            float spread = 0.32;                       // tan of the cone's half angle
+            const int N = 28;
+            float dt = max(t1 - t0, 0.0) / float(N);
+            for (int k = 0; k < N; k++) {
+                float3 q = ro + rd * (t0 + (float(k) + 0.5) * dt);
+                float3 v = q - head;
+                float along = dot(v, dirB);
+                if (along <= 0.0) continue;
+                float radial = length(v - along * dirB);
+                float w = along * spread + 0.12;
+                float shimmer = 0.85 + 0.15 * sin(along * 1.7 - time * 1.6);
+                float fall = exp(-along / 11.0) * smoothstep(0.0, 0.6, along);
+                beam += exp(-(radial * radial) / (w * w)) * fall / (w * 1.6) * shimmer * dt;
+                // A brighter thread along the axis.
+                beam += exp(-(radial * radial) / (0.0225 + 0.0025 * along * along)) * fall * 0.9 * dt;
+            }
+            beam = 1.0 - exp(-beam * 0.9);
+            float3 glow = mix(violet, float3(0.75, 0.62, 1.0), beam * 0.5) * beam * 0.95;
+
+            // The point itself, with its bloom; dimmer where something stands in front of it.
+            float2 hp = F.gaze.xy;
+            float ppm = F.gaze.z;
+            float d = length(px - hp);
+            float core = max(0.12 * ppm, 2.8 * s);
+            float pulse = 0.92 + 0.08 * sin(time * 2.4);
+            float hidden = (mat != M_VOID && dist < F.listener.w - 0.3) ? 0.3 : 1.0;
+            float halo = exp(-pow(d / (core * 4.5), 2.0)) * 0.6 + exp(-d / (core * 10.0)) * 0.25;
             float disc = smoothstep(core + s, core - s, d);
-            float3 glow = violet * halo * pulse + mix(violet, float3(1.0, 0.94, 1.0), 0.65) * disc;
-            // The thread: dotted, fading towards the head.
-            float2 hp = F.gazeHead.xy;
-            float2 ab = dp - hp;
-            float hh = clamp(dot(px - hp, ab) / max(dot(ab, ab), 1.0), 0.0, 1.0);
-            float ld = length(px - (hp + ab * hh));
-            float dots = step(fract(hh * length(ab) / (5.0 * s)), 0.45);
-            glow *= hidden;
-            glow += violet * cut(ld, 1.2 * s) * dots * smoothstep(0.05, 0.6, hh) * 0.8 * step(hh, 0.96);
+            glow += (violet * halo * pulse + mix(violet, float3(1.0, 0.94, 1.0), 0.65) * disc) * hidden;
             c = 1.0 - (1.0 - c) * (1.0 - min(glow * strength, float3(1.0)));
         }
         return float4(c, 1.0);
