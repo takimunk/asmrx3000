@@ -30,6 +30,16 @@ final class SceneReadout: ObservableObject {
     @Published var selection: SelectionInfo?
 }
 
+/// The control tree as the panel shows it; published only when a value changes.
+final class ControlsModel: ObservableObject {
+    @Published var controls: [Control] = []
+    /// The macro whose branch is open (one at a time).
+    @Published var expanded: UInt32?
+
+    var macros: [Control] { controls.filter { $0.parent == nil } }
+    func children(of id: UInt32) -> [Control] { controls.filter { $0.parent == id } }
+}
+
 final class Meters: ObservableObject {
     /// Tracks that are audible right now; changes only when one starts or stops sounding.
     @Published var audible: Set<Track> = []
@@ -53,6 +63,8 @@ final class Stage {
     let head: HeadTracker
     let readout = SceneReadout()
     let meters = Meters()
+    let controls = ControlsModel()
+    private var controlBuffer: [Control] = []
 
     var camera = OrbitCamera()
     /// Views drawn in the scene view's frame (see StageView).
@@ -120,6 +132,8 @@ final class Stage {
         time += dt
         telemetry = audio.readTelemetry(spectrum: &spectrum, windField: &wind, sources: &sources)
         audio.readObjects(&objects)
+        audio.readControls(&controlBuffer)
+        if controlBuffer != controls.controls { controls.controls = controlBuffer }
         rebuildThings()
 
         columnClock += dt * Stage.columnsPerSecond
@@ -136,6 +150,12 @@ final class Stage {
         }
         readScopes()
         refreshReadout()
+    }
+
+    /// Re-reads the control tree right away (after the user moved a slider).
+    func refreshControls() {
+        audio.readControls(&controlBuffer)
+        if controlBuffer != controls.controls { controls.controls = controlBuffer }
     }
 
     func setLive(_ live: Bool) {

@@ -1,3 +1,4 @@
+import CAsmr
 import SwiftUI
 
 /// Pre-rendered Metal frames, used instead of live views when writing a snapshot.
@@ -72,7 +73,7 @@ struct Popover: View {
             SpectrogramPanel(stage: model.stage, stills: stills)
                 .padding(.horizontal, 16)
 
-            Tracks(model: model, audio: audio, stills: stills)
+            Tracks(model: model, stills: stills)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 14)
@@ -253,126 +254,296 @@ private struct SpectrogramPanel: View {
 
 // MARK: - Tracks
 
-/// One row per sound: its icon, then its live waveform. Up to the knob the waveform is
-/// developed; past it only a latent trace remains. Drag anywhere on a row to set it.
-private struct Tracks: View {
+/// The engine's control tree as branching tracks. A macro row is its group's pictogram and the
+/// live waveform of that sound, developed up to the knob. Clicking the pictogram opens the
+/// branch: the physical parameters underneath as fine sliders, joined by hairlines.
+struct Tracks: View {
     @ObservedObject var model: AppModel
-    @ObservedObject var audio: AudioEngine
+    @ObservedObject var controls: ControlsModel
     var stills: StillFrames?
 
-    private var values: [Float] { [audio.water, audio.wind, audio.birds, audio.orbit, audio.volume] }
+    static let childHeight: CGFloat = 22
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                ForEach(Track.allCases, id: \.self) { t in
-                    TrackIcon(track: t, meters: model.stage.meters)
-                        .frame(height: Popover.rowHeight)
-                }
-            }
-            .frame(width: Popover.iconColumn, alignment: .leading)
-
-            ZStack(alignment: .topLeading) {
-                Group {
-                    if let stills {
-                        Image(decorative: stills.tracks, scale: 2).resizable()
-                    } else {
-                        TracksSurface(stage: model.stage, values: values)
-                    }
-                }
-                VStack(spacing: 0) {
-                    ForEach(Track.allCases, id: \.self) { t in
-                        TrackRow(track: t, value: binding(t), poke: model.stage.poke)
-                            .frame(height: Popover.rowHeight)
-                    }
-                }
-            }
-            .frame(height: Popover.rowHeight * CGFloat(Track.allCases.count))
-        }
+    init(model: AppModel, stills: StillFrames?) {
+        self.model = model
+        controls = model.stage.controls
+        self.stills = stills
     }
 
-    private func binding(_ t: Track) -> Binding<Float> {
-        switch t {
-        case .water: return $audio.water
-        case .wind: return $audio.wind
-        case .birds: return $audio.birds
-        case .flight: return $audio.orbit
-        case .volume: return $audio.volume
+    var body: some View {
+        let macros = controls.macros
+        ZStack(alignment: .topLeading) {
+            Group {
+                if let stills {
+                    Image(decorative: stills.tracks, scale: 2).resizable()
+                } else {
+                    TracksSurface(stage: model.stage, rows: scopeRows(macros))
+                }
+            }
+            .padding(.leading, Popover.iconColumn)
+
+            VStack(spacing: 0) {
+                ForEach(macros, id: \.id) { m in
+                    let kids = controls.children(of: m.id)
+                    let open = controls.expanded == m.id && !kids.isEmpty
+                    MacroRow(control: m, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
+                             set: set, toggle: { toggle(m.id) })
+                        .frame(height: Popover.rowHeight)
+                    if open {
+                        ForEach(Array(kids.enumerated()), id: \.element.id) { i, c in
+                            ChildRow(control: c, last: i == kids.count - 1, set: set)
+                                .frame(height: Self.childHeight)
+                        }
+                    }
+                }
+            }
         }
+        .frame(height: height(macros))
+    }
+
+    static func layout(_ macros: [Control], expanded: UInt32?, children: (UInt32) -> Int) -> [ScopeRow] {
+        var y: Float = 0
+        var rows: [ScopeRow] = []
+        for m in macros {
+            rows.append(ScopeRow(top: y, height: Float(Popover.rowHeight), track: Track(group: m.group), fraction: m.fraction))
+            y += Float(Popover.rowHeight)
+            if expanded == m.id { y += Float(childHeight) * Float(children(m.id)) }
+        }
+        return rows
+    }
+
+    private func scopeRows(_ macros: [Control]) -> [ScopeRow] {
+        Self.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
+    }
+
+    private func height(_ macros: [Control]) -> CGFloat {
+        let open = controls.expanded.map { controls.children(of: $0).count } ?? 0
+        return Popover.rowHeight * CGFloat(macros.count) + Self.childHeight * CGFloat(open)
+    }
+
+    private func set(_ id: UInt32, _ value: Float) {
+        model.stage.poke()
+        model.audio.setControl(id, value)
+        model.stage.refreshControls()
+    }
+
+    private func toggle(_ id: UInt32) {
+        controls.expanded = controls.expanded == id ? nil : id
     }
 }
 
 extension Track {
-    var icon: Icon {
-        switch self {
-        case .water: return .water
-        case .wind: return .wind
-        case .birds: return .birds
-        case .flight: return .flight
-        case .volume: return .volume
-        }
-    }
-
-    var name: String {
-        switch self {
-        case .water: return "River"
-        case .wind: return "Wind"
-        case .birds: return "Birdsong"
-        case .flight: return "Bird flight"
-        case .volume: return "Volume"
+    init?(group: UInt32) {
+        switch Int(group) {
+        case ASMR_GROUP_WATER: self = .water
+        case ASMR_GROUP_WIND, ASMR_GROUP_FOLIAGE: self = .wind
+        case ASMR_GROUP_BIRDS: self = .birds
+        case ASMR_GROUP_MASTER: self = .volume
+        default: return nil
         }
     }
 }
 
-private struct TrackIcon: View {
-    let track: Track
+private struct MacroRow: View {
+    let control: Control
+    let hasChildren: Bool
+    let open: Bool
     @ObservedObject var meters: Meters
-
-    var body: some View {
-        let audible = meters.audible.contains(track)
-        IconView(icon: track.icon, color: audible ? Ink.paper : Ink.graphite, size: 18, level: audible ? 0.6 : 0,
-                 animating: meters.live && audible)
-    }
-}
-
-private struct TrackRow: View {
-    let track: Track
-    @Binding var value: Float
-    var poke: () -> Void = {}
+    let set: (UInt32, Float) -> Void
+    let toggle: () -> Void
     @State private var hovering = false
     @State private var dragging = false
 
     var body: some View {
-        GeometryReader { geo in
-            let x = CGFloat(value) * geo.size.width
-            ZStack(alignment: .topLeading) {
-                Color.clear.contentShape(Rectangle())
-                // The index: a hairline with a lozenge, as on an engraved scale.
-                Rectangle()
-                    .fill(Ink.paper)
-                    .frame(width: 1, height: geo.size.height - 6)
-                    .position(x: x, y: geo.size.height / 2 + 2)
-                Rectangle()
-                    .fill(hovering || dragging ? Ink.paper : Ink.black)
-                    .overlay(Rectangle().stroke(Ink.paper, lineWidth: 1))
-                    .frame(width: 5, height: 5)
-                    .rotationEffect(.degrees(45))
-                    .position(x: x, y: 3.5)
-            }
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { g in
-                    dragging = true
-                    poke()
-                    value = Float(min(max(g.location.x / geo.size.width, 0), 1))
+        let track = Track(group: control.group)
+        let audible = track.map { meters.audible.contains($0) } ?? false
+        HStack(spacing: 0) {
+            Button(action: toggle) {
+                ZStack(alignment: .bottomTrailing) {
+                    IconView(icon: Icon.forControl(control), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
+                             level: audible ? 0.6 : 0, animating: meters.live && audible)
+                        .frame(width: 22, height: 22)
+                    if hasChildren {
+                        // The branch mark: a small lozenge, filled while the branch is open.
+                        Rectangle()
+                            .fill(open ? Ink.paper : Ink.black)
+                            .overlay(Rectangle().stroke(Ink.graphite, lineWidth: 0.75))
+                            .frame(width: 3.5, height: 3.5)
+                            .rotationEffect(.degrees(45))
+                            .offset(x: 5, y: 1)
+                    }
                 }
-                .onEnded { _ in dragging = false })
+                .frame(width: Popover.iconColumn, height: Popover.rowHeight, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .disabled(!hasChildren)
+            .accessibilityLabel(hasChildren ? (open ? "Close \(control.key) details" : "Open \(control.key) details") : control.key)
+
+            GeometryReader { geo in
+                let x = CGFloat(control.fraction) * geo.size.width
+                ZStack(alignment: .topLeading) {
+                    Color.clear.contentShape(Rectangle())
+                    Rectangle()
+                        .fill(Ink.paper)
+                        .frame(width: 1, height: geo.size.height - 6)
+                        .position(x: x, y: geo.size.height / 2 + 2)
+                    Rectangle()
+                        .fill(hovering || dragging ? Ink.paper : Ink.black)
+                        .overlay(Rectangle().stroke(Ink.paper, lineWidth: 1))
+                        .frame(width: 5, height: 5)
+                        .rotationEffect(.degrees(45))
+                        .position(x: x, y: 3.5)
+                }
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        dragging = true
+                        set(control.id, control.value(atFraction: Float(g.location.x / geo.size.width)))
+                    }
+                    .onEnded { _ in dragging = false })
+            }
+            .onHover { hovering = $0 }
+            .accessibilityElement()
+            .accessibilityLabel(control.key)
+            .accessibilityValue("\(Int(control.fraction * 100)) %")
+            .accessibilityAdjustableAction { dir in
+                set(control.id, control.value(atFraction: control.fraction + (dir == .increment ? 0.05 : -0.05)))
+            }
+        }
+    }
+}
+
+/// A physical parameter under its macro: branch hairlines, a small pictogram, and a fine slider
+/// (or, for presets, a row of stops). Its name, value and unit appear only on hover.
+private struct ChildRow: View {
+    let control: Control
+    let last: Bool
+    let set: (UInt32, Float) -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ZStack(alignment: .leading) {
+                Canvas { ctx, size in
+                    // The branch: down from the macro's pictogram, then across to this child.
+                    let x: CGFloat = 10.5, mid = size.height / 2
+                    var p = Path()
+                    p.move(to: CGPoint(x: x, y: 0))
+                    p.addLine(to: CGPoint(x: x, y: last ? mid : size.height))
+                    p.move(to: CGPoint(x: x, y: mid))
+                    p.addQuadCurve(to: CGPoint(x: 17, y: mid), control: CGPoint(x: x, y: mid))
+                    ctx.stroke(p, with: .color(Ink.graphite.opacity(0.7)), lineWidth: 0.6)
+                }
+                IconView(icon: Icon.forControl(control), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
+                    .offset(x: 18)
+            }
+            .frame(width: Popover.iconColumn)
+
+            GeometryReader { geo in
+                ZStack(alignment: .trailing) {
+                    if control.isDiscrete {
+                        Stops(control: control, width: geo.size.width, set: set)
+                    } else {
+                        FineSlider(control: control, width: geo.size.width, hovering: hovering, set: set)
+                    }
+                    if hovering {
+                        Text(label)
+                            .font(Ink.italic(11.5))
+                            .foregroundStyle(Ink.paper)
+                            .padding(.horizontal, 5)
+                            .background(Ink.black)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
         }
         .onHover { hovering = $0 }
-        .accessibilityElement()
-        .accessibilityLabel(track.name)
-        .accessibilityValue("\(Int(value * 100)) %")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(control.key)
+        .accessibilityValue(label)
         .accessibilityAdjustableAction { dir in
-            value = min(max(value + (dir == .increment ? 0.05 : -0.05), 0), 1)
+            let step: Float = control.isDiscrete ? 1 / max(control.max - control.min, 1) : 0.05
+            set(control.id, control.value(atFraction: control.fraction + (dir == .increment ? step : -step)))
+        }
+    }
+
+    private var label: String {
+        let v = control.isDiscrete ? String(Int(control.value.rounded()))
+            : abs(control.value) >= 10 ? String(format: "%.1f", control.value) : String(format: "%.2f", control.value)
+        return control.unit.isEmpty ? "\(control.key) \(v)" : "\(control.key) \(v) \(control.unit)"
+    }
+}
+
+/// A hairline scale with tenths ticked; the part up to the knob is drawn in ink.
+private struct FineSlider: View {
+    let control: Control
+    let width: CGFloat
+    let hovering: Bool
+    let set: (UInt32, Float) -> Void
+
+    var body: some View {
+        let x = CGFloat(control.fraction) * width
+        Canvas { ctx, size in
+            let mid = size.height / 2
+            var ticks = Path()
+            for i in 0...10 {
+                let tx = size.width * CGFloat(i) / 10
+                ticks.addRect(CGRect(x: tx - 0.25, y: mid - (i % 5 == 0 ? 2.5 : 1.5), width: 0.5, height: i % 5 == 0 ? 5 : 3))
+            }
+            ctx.fill(ticks, with: .color(Ink.ash))
+            ctx.fill(Path(CGRect(x: 0, y: mid - 0.25, width: size.width, height: 0.5)), with: .color(Ink.ash))
+            ctx.fill(Path(CGRect(x: 0, y: mid - 0.5, width: x, height: 1)), with: .color(Ink.paper.opacity(0.85)))
+            // Knob: a small lozenge on a short hairline.
+            ctx.fill(Path(CGRect(x: x - 0.5, y: mid - 5, width: 1, height: 10)), with: .color(Ink.paper))
+            var lz = Path()
+            lz.move(to: CGPoint(x: x, y: mid - 3))
+            lz.addLine(to: CGPoint(x: x + 3, y: mid))
+            lz.addLine(to: CGPoint(x: x, y: mid + 3))
+            lz.addLine(to: CGPoint(x: x - 3, y: mid))
+            lz.closeSubpath()
+            ctx.fill(lz, with: .color(hovering ? Ink.paper : Ink.black))
+            ctx.stroke(lz, with: .color(Ink.paper), lineWidth: 0.8)
+        }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+            set(control.id, control.value(atFraction: Float(g.location.x / width)))
+        })
+    }
+}
+
+/// Presets: a dotted rule with one stop per preset; the chosen one is filled.
+private struct Stops: View {
+    let control: Control
+    let width: CGFloat
+    let set: (UInt32, Float) -> Void
+
+    var body: some View {
+        let n = max(Int((control.max - control.min).rounded()) + 1, 2)
+        let chosen = Int((control.value - control.min).rounded())
+        ZStack(alignment: .leading) {
+            Canvas { ctx, size in
+                let mid = size.height / 2
+                var dots = Path()
+                var x: CGFloat = 0
+                while x < size.width { dots.addRect(CGRect(x: x, y: mid - 0.25, width: 1, height: 0.5)); x += 3 }
+                ctx.fill(dots, with: .color(Ink.ash))
+            }
+            ForEach(0..<n, id: \.self) { i in
+                let x = width * CGFloat(i) / CGFloat(n - 1)
+                Button { set(control.id, control.min + Float(i)) } label: {
+                    Rectangle()
+                        .fill(i == chosen ? Ink.paper : Ink.black)
+                        .overlay(Rectangle().stroke(i == chosen ? Ink.paper : Ink.graphite, lineWidth: 0.9))
+                        .frame(width: 6, height: 6)
+                        .rotationEffect(.degrees(45))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .position(x: min(max(x, 4), width - 4), y: Tracks.childHeight / 2)
+            }
         }
     }
 }

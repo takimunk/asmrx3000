@@ -135,10 +135,17 @@ final class SpectrogramRenderer {
 
 // MARK: - Track scopes
 
+/// A macro row in the tracks view: where it is (points) and what it shows.
+struct ScopeRow: Equatable {
+    var top: Float
+    var height: Float
+    var track: Track?
+    var fraction: Float
+}
+
 private struct TrackUniforms {
     var size: SIMD4<Float>
-    var values: SIMD4<Float>
-    var values2: SIMD4<Float>
+    var rows: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 }
 
 final class TracksRenderer {
@@ -155,14 +162,17 @@ final class TracksRenderer {
         scope = GPU.shared.device.makeTexture(descriptor: d)!
     }
 
-    func encode(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float, values: [Float]) {
+    func encode(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float, rows: [ScopeRow]) {
         stage.scopes.withUnsafeBytes {
             scope.replace(region: MTLRegionMake2D(0, 0, Stage.scopeColumns, Track.allCases.count), mipmapLevel: 0,
                           withBytes: $0.baseAddress!, bytesPerRow: Stage.scopeColumns * 4)
         }
-        func v(_ i: Int) -> Float { i < values.count ? values[i] : 0 }
-        var u = TrackUniforms(size: SIMD4(Float(target.width), Float(target.height), scale, Float(Track.allCases.count)),
-                              values: SIMD4(v(0), v(1), v(2), v(3)), values2: SIMD4(v(4), 0, 0, 0))
+        var packed = [SIMD4<Float>](repeating: .zero, count: 8)
+        for (i, r) in rows.prefix(8).enumerated() {
+            packed[i] = SIMD4(r.top * scale, r.height * scale, Float(r.track?.rawValue ?? -1), r.fraction)
+        }
+        var u = TrackUniforms(size: SIMD4(Float(target.width), Float(target.height), scale, Float(min(rows.count, 8))),
+                              rows: (packed[0], packed[1], packed[2], packed[3], packed[4], packed[5], packed[6], packed[7]))
         GPU.fullscreenPass(cb, target: target, pipeline: pipeline) { enc in
             enc.setFragmentBytes(&u, length: MemoryLayout<TrackUniforms>.stride, index: 0)
             enc.setFragmentTexture(scope, index: 0)

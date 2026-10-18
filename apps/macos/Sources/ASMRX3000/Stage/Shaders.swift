@@ -503,35 +503,34 @@ enum Shaders {
     // ---- track scopes --------------------------------------------------------------------------
 
     struct TrackU {
-        float4 size;     // w px, h px, px per point, rows
-        float4 values;   // slider value per row (first four)
-        float4 values2;  // fifth row value, -, -, -
+        float4 size;      // w px, h px, px per point, row count
+        float4 rows[8];   // per macro row: top px, height px, scope row (-1 none), slider fraction
     };
 
-    // Each row shows its sound's live waveform as engraved vertical strokes. Up to the slider
-    // value the image is developed; beyond it only a faint latent trace remains.
+    // Each macro row shows its sound's live waveform as engraved vertical strokes. Up to the
+    // slider value the image is developed; beyond it only a faint latent trace remains.
     fragment float4 tracks(VOut in [[stage_in]], constant TrackU& u [[buffer(0)]],
                            texture2d<float> scope [[texture(0)]]) {
         constexpr sampler smp(filter::linear, address::clamp_to_edge);
         float2 px = in.pos.xy;
         float s = u.size.z;
-        float rows = u.size.w;
-        float rowH = u.size.y / rows;
-        float row = floor(px.y / rowH);
-        float mid = (row + 0.5) * rowH;
-        float value = row < 4.0 ? u.values[int(row)] : u.values2.x;
-        float cutX = value * u.size.x;
+        float4 r = float4(0, 0, -2, 0);
+        for (int i = 0; i < int(u.size.w); i++) {
+            if (px.y >= u.rows[i].x && px.y < u.rows[i].x + u.rows[i].y) r = u.rows[i];
+        }
+        if (r.z < -1.5) return float4(0, 0, 0, 1);
+        float mid = r.x + r.y * 0.5;
+        float cutX = r.w * u.size.x;
 
         float P = 2.0 * s;
         float colX = (floor(px.x / P) + 0.5) * P;
-        float amp = scope.sample(smp, float2(colX / u.size.x, (row + 0.5) / rows)).r;
-        float half_ = max(amp * rowH * 0.4, 0.5 * s);
+        float amp = r.z >= 0.0 ? scope.sample(smp, float2(colX / u.size.x, (r.z + 0.5) / 5.0)).r : 0.0;
+        float half_ = max(amp * r.y * 0.4, 0.5 * s);
         float stroke = cut(abs(px.x - colX), 0.95 * s) * step(abs(px.y - mid), half_);
 
         float developed = smoothstep(cutX + 10.0 * s, cutX - 10.0 * s, px.x);
         float latent = 0.13 + 0.05 * hash21(floor(px / s));
         float g = stroke * mix(latent, 0.92, developed);
-        // A hairline baseline, the length of the whole range.
         g = max(g, cut(abs(px.y - mid), 1.0) * (developed > 0.5 ? 0.0 : 0.16));
         return float4(g, g, g, 1.0);
     }

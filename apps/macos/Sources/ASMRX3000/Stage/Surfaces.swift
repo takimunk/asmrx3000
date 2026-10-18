@@ -254,7 +254,7 @@ final class SpectrogramStageView: StageView {
 /// The live waveforms behind the sliders. Input goes to the SwiftUI controls above it.
 final class TracksStageView: StageView {
     private lazy var renderer = TracksRenderer(stage: stage)
-    var values: [Float] = []
+    var rows: [ScopeRow] = []
 
     override var drivesItself: Bool { false }
 
@@ -266,19 +266,19 @@ final class TracksStageView: StageView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func render(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float) {
-        renderer.encode(cb, target: target, size: size, scale: scale, values: values)
+        renderer.encode(cb, target: target, size: size, scale: scale, rows: rows)
     }
 }
 
 struct TracksSurface: NSViewRepresentable {
     let stage: Stage
-    var values: [Float]
+    var rows: [ScopeRow]
     func makeNSView(context: Context) -> TracksStageView {
         let v = TracksStageView(stage: stage)
-        v.values = values
+        v.rows = rows
         return v
     }
-    func updateNSView(_ view: TracksStageView, context: Context) { view.values = values }
+    func updateNSView(_ view: TracksStageView, context: Context) { view.rows = rows }
 }
 
 // MARK: - SwiftUI

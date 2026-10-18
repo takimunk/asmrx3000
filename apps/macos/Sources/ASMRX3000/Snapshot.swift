@@ -3,7 +3,7 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--orbit 0..1] [--azimuth rad]`
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1] [--azimuth rad]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -53,9 +53,15 @@ enum Snapshot {
         let sceneRenderer = SceneRenderer(stage: stage)
         let specRenderer = SpectrogramRenderer(stage: stage)
         let tracksRenderer = TracksRenderer(stage: stage)
-        let tracksSize = SIMD2(Float(Popover.width - 32 - Popover.iconColumn), Float(Popover.rowHeight) * Float(Track.allCases.count))
-        let a = model.audio
-        let values = [a.water, a.wind, a.birds, a.orbit, a.volume]
+        // The river's branch is open unless asked otherwise.
+        let controls = stage.controls
+        let expand = value("--expand") ?? "water"
+        controls.expanded = controls.macros.first { $0.key == expand }?.id
+        let macros = controls.macros
+        let rows = Tracks.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
+        let openCount = controls.expanded.map { controls.children(of: $0).count } ?? 0
+        let tracksHeight = Float(Popover.rowHeight) * Float(macros.count) + Float(Tracks.childHeight) * Float(openCount)
+        let tracksSize = SIMD2(Float(Popover.width - 32 - Popover.iconColumn), tracksHeight)
         let hover = SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38)
         specRenderer.hover = hover
         guard let scene = GPU.shared.image(width: Int(sceneSize.x * scale), height: Int(sceneSize.y * scale), encode: {
@@ -65,7 +71,7 @@ enum Snapshot {
                   specRenderer.encode($0, target: $1, size: specSize, scale: scale)
               }),
               let tracks = GPU.shared.image(width: Int(tracksSize.x * scale), height: Int(tracksSize.y * scale), encode: {
-                  tracksRenderer.encode($0, target: $1, size: tracksSize, scale: scale, values: values)
+                  tracksRenderer.encode($0, target: $1, size: tracksSize, scale: scale, rows: rows)
               })
         else { return }
 

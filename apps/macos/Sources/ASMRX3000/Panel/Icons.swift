@@ -1,3 +1,4 @@
+import CAsmr
 import SwiftUI
 
 /// Minimal SVG path data parser (M L H V C S Q T Z, absolute and relative) → SwiftUI Path.
@@ -73,6 +74,33 @@ enum Icon: Hashable {
     case water, wind, birds, flight, volume
     case play, pause, recenter, headphones, quit
     case tree, bird, river
+    // Child parameters.
+    case flow, depth, character, speed, gust, rain, dot
+
+    /// The pictogram for a control: its group for a macro, its key for a child.
+    static func forControl(_ c: Control) -> Icon {
+        if c.isMacro {
+            switch Int(c.group) {
+            case ASMR_GROUP_WATER: return .water
+            case ASMR_GROUP_WIND: return .wind
+            case ASMR_GROUP_FOLIAGE: return .tree
+            case ASMR_GROUP_RAIN: return .rain
+            case ASMR_GROUP_BIRDS: return .birds
+            default: return .volume
+            }
+        }
+        let leaf = c.key.split(separator: ".").last.map(String.init) ?? c.key
+        switch leaf {
+        case "flow", "current": return .flow
+        case "depth", "level": return .depth
+        case "character", "preset", "texture": return .character
+        case "speed", "strength": return .speed
+        case "gust", "gustiness", "turbulence": return .gust
+        case "flight", "orbit": return .flight
+        case "rate", "intensity": return .rain
+        default: return .dot
+        }
+    }
 
     struct Stroke {
         var d: String
@@ -158,6 +186,35 @@ enum Icon: Hashable {
             ]
         case .quit:
             return [Stroke(d: "M7 7 L17 17 M17 7 L7 17")]
+        case .flow:
+            return [Stroke(d: "M3 13 C6.5 10 9.5 16 13 13 C15 11.3 17 11.6 20 13 M17 10 L20.5 13 L17 16")]
+        case .depth:
+            return [
+                Stroke(d: "M3 7 C5.5 5.5 8 8.5 12 7 C15 5.8 17.5 8.2 21 7"),
+                Stroke(d: "M12 10 V20 M9.5 17.5 L12 20 L14.5 17.5", opacity: 0.85),
+            ]
+        case .character:
+            return [
+                Stroke(d: "M4 18 Q12 4 20 18"),
+                Stroke(d: "M8 18 Q12 10 16 18", opacity: 0.75),
+                Stroke(d: "M11 18 Q12 15.5 13 18", opacity: 0.55),
+            ]
+        case .speed:
+            return [Stroke(d: "M5 3 V21 M5 5 L19 7.5 L19 11.5 L5 13 M10 5.9 V12.4 M14.5 6.7 V12")]
+        case .gust:
+            return [
+                Stroke(d: "M3 9 H13 C17 9 17 4 14 4.5"),
+                Stroke(d: "M3 14 H18 C21 14 21 19 18 18.5", opacity: 0.8),
+                Stroke(d: "M3 19 H9", opacity: 0.55),
+            ]
+        case .rain:
+            let y = (t / 0.8).truncatingRemainder(dividingBy: 1) * 3
+            return [
+                Stroke(d: "M8 \(f(3 + y)) L6.5 \(f(7 + y)) M13 \(f(3 + y)) L11.5 \(f(7 + y)) M18 \(f(3 + y)) L16.5 \(f(7 + y))"),
+                Stroke(d: "M10.5 \(f(11 + y)) L9 \(f(15 + y)) M15.5 \(f(11 + y)) L14 \(f(15 + y))", opacity: 0.7),
+            ]
+        case .dot:
+            return [Stroke(d: "M12 9 C13.7 9 15 10.3 15 12 C15 13.7 13.7 15 12 15 C10.3 15 9 13.7 9 12 C9 10.3 10.3 9 12 9 Z")]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -179,7 +236,8 @@ extension Icon {
         case .recenter: return 2 * .pi / 3
         case .tree: return 2 * .pi / 1.5
         case .wind: return 4.0 / 3.0
-        case .play, .pause, .headphones, .quit: return nil
+        case .rain: return 0.8
+        case .play, .pause, .headphones, .quit, .flow, .depth, .character, .speed, .gust, .dot: return nil
         }
     }
 }
