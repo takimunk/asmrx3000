@@ -2,17 +2,31 @@
 //!
 //! The C ABI below (mirrored in `include/asmr.h`) is the only surface the platform shells use.
 
+pub mod acoustics;
 mod ambisonics;
 mod binaural;
 mod dsp;
 mod engine;
 mod fft;
-mod math;
+mod fftconv;
+mod hrtf;
+mod delay;
+mod nearfield;
+mod rotation;
+pub mod math;
+mod num;
+mod physics;
 mod rng;
+mod propagation;
+mod reverb;
+mod shaping;
+mod simd;
 mod sources;
 mod windfield;
 
 pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, MAX_SOURCES};
+pub use engine::BLOCK;
+pub use ambisonics::CHANNELS;
 
 use std::slice;
 

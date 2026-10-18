@@ -11,17 +11,17 @@
 
 use core::f32::consts::{FRAC_PI_2, PI};
 
-use crate::ambisonics::{self, CHANNELS};
-use crate::dsp::dot;
+use crate::ambisonics::CHANNELS;
+use crate::fftconv::PartitionedDecoder;
 use crate::engine::BLOCK;
 use crate::math::Vec3;
+use crate::hrtf::{magls_filters, HrirSet, DECODER_TAPS};
 
 pub const TAPS: usize = 128;
 
 const HEAD_RADIUS: f32 = 0.0875;
 const SPEED_OF_SOUND: f32 = 343.0;
 const SINC_HALF: f32 = 8.0;
-const VIRTUAL_SPEAKERS: usize = 50;
 
 // Brown & Duda head-shadow parameters.
 const ALPHA_MIN: f32 = 0.1;
@@ -113,96 +113,43 @@ pub fn hrir(dir: Vec3, left: bool, sample_rate: f32) -> [f32; TAPS] {
     h
 }
 
-fn invert(mut a: Vec<Vec<f64>>) -> Vec<Vec<f64>> {
-    let n = a.len();
-    let mut inv: Vec<Vec<f64>> = (0..n).map(|i| (0..n).map(|j| (i == j) as u8 as f64).collect()).collect();
-    for col in 0..n {
-        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs())).unwrap();
-        a.swap(col, pivot);
-        inv.swap(col, pivot);
-        let p = a[col][col];
-        for j in 0..n {
-            a[col][j] /= p;
-            inv[col][j] /= p;
-        }
-        for row in 0..n {
-            if row != col {
-                let f = a[row][col];
-                if f != 0.0 {
-                    for j in 0..n {
-                        a[row][j] -= f * a[col][j];
-                        inv[row][j] -= f * inv[col][j];
-                    }
-                }
-            }
-        }
-    }
-    inv
-}
-
 pub struct BinauralDecoder {
-    /// Index `ch * 2 + ear` (0 = left), time-reversed so convolution is a plain dot product.
-    filters: Vec<[f32; TAPS]>,
-    /// Doubled history per channel so the last TAPS samples are always one contiguous slice.
-    history: Vec<[f32; 2 * TAPS]>,
-    pos: usize,
+    conv: PartitionedDecoder,
 }
 
 impl BinauralDecoder {
+    /// Analytic Brown & Duda spherical-head decoder (fallback when no measured set is used).
     pub fn new(sample_rate: f32) -> Self {
-        let speakers = fibonacci_sphere(VIRTUAL_SPEAKERS);
-        let l = speakers.len();
+        Self::from_filters(analytic_filters(sample_rate), DECODER_TAPS)
+    }
+}
 
-        // Y: per speaker, its SH vector.
-        let y: Vec<[f64; CHANNELS]> = speakers
-            .iter()
-            .map(|d| {
-                let mut sh = [0.0f32; CHANNELS];
-                ambisonics::encode(*d, &mut sh);
-                sh.map(|v| v as f64)
-            })
-            .collect();
+/// SH-domain filters of the analytic decoder, layout [ch][ear][t]: the Brown & Duda model
+/// sampled on a dense grid and decoded with the same MagLS method as measured sets (plain
+/// mode matching with max-rE, as in M0, loses 7-13 dB above 3 kHz at order 3).
+pub fn analytic_filters(sample_rate: f32) -> Vec<f32> {
+    let dirs = fibonacci_sphere(600);
+    let mut data = Vec::with_capacity(dirs.len() * 2 * TAPS);
+    for d in &dirs {
+        data.extend_from_slice(&hrir(*d, true, sample_rate));
+        data.extend_from_slice(&hrir(*d, false, sample_rate));
+    }
+    let set = HrirSet { sample_rate, name: "Brown-Duda spherical head".into(), dirs, taps: TAPS, data };
+    magls_filters(&set, sample_rate)
+}
 
-        // Mode-matching decoder D = Y^T (Y Y^T)^-1.
-        let mut g = vec![vec![0.0f64; CHANNELS]; CHANNELS];
-        for row in &y {
-            for i in 0..CHANNELS {
-                for j in 0..CHANNELS {
-                    g[i][j] += row[i] * row[j];
-                }
-            }
-        }
-        let ginv = invert(g);
-        let weights = ambisonics::max_re_weights();
-
-        let mut acc = vec![[0.0f64; TAPS]; CHANNELS * 2];
-        for s in 0..l {
-            let hl = hrir(speakers[s], true, sample_rate);
-            let hr = hrir(speakers[s], false, sample_rate);
-            for ch in 0..CHANNELS {
-                let d: f64 = (0..CHANNELS).map(|j| y[s][j] * ginv[j][ch]).sum::<f64>()
-                    * weights[ambisonics::order_of(ch)] as f64;
-                for t in 0..TAPS {
-                    acc[ch * 2][t] += d * hl[t] as f64;
-                    acc[ch * 2 + 1][t] += d * hr[t] as f64;
-                }
-            }
-        }
-
-        let filters = acc
-            .iter()
-            .map(|h| {
-                let mut rev = [0.0f32; TAPS];
-                for j in 0..TAPS {
-                    rev[j] = h[TAPS - 1 - j] as f32;
-                }
-                rev
-            })
-            .collect();
-
-        Self { filters, history: vec![[0.0; 2 * TAPS]; CHANNELS], pos: 0 }
+impl BinauralDecoder {
+    /// Decoder from SH-domain filters, layout `[ch][ear][t]`, forward time.
+    pub fn from_filters(filters: Vec<f32>, taps: usize) -> Self {
+        assert!(filters.len() == CHANNELS * 2 * taps);
+        Self { conv: PartitionedDecoder::new(&filters, taps) }
     }
 
+    pub fn reset(&mut self) {
+        self.conv.reset();
+    }
+
+    /// Decodes `len` samples of the head-frame bus. Adds a fixed latency of one BLOCK.
     pub fn process(
         &mut self,
         bus: &[[f32; BLOCK]; CHANNELS],
@@ -210,28 +157,14 @@ impl BinauralDecoder {
         left: &mut [f32],
         right: &mut [f32],
     ) {
-        for i in 0..len {
-            self.pos = (self.pos + 1) % TAPS;
-            let p = self.pos;
-            let (mut l, mut r) = (0.0f32, 0.0f32);
-            for ch in 0..CHANNELS {
-                let h = &mut self.history[ch];
-                let x = bus[ch][i];
-                h[p] = x;
-                h[p + TAPS] = x;
-                let window = &h[p + 1..p + 1 + TAPS];
-                l += dot(window, &self.filters[ch * 2]);
-                r += dot(window, &self.filters[ch * 2 + 1]);
-            }
-            left[i] = l;
-            right[i] = r;
-        }
+        self.conv.process(bus, len, left, right);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ambisonics;
 
     /// Energy reaching (left, right) ear for an impulse from `dir`.
     fn ear_energy(dir: Vec3) -> (f64, f64) {

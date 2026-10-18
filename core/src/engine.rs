@@ -10,11 +10,12 @@ use std::time::Instant;
 
 use core::f32::consts::TAU;
 
-use crate::ambisonics::{self, CHANNELS};
-use crate::binaural::BinauralDecoder;
+use crate::ambisonics::CHANNELS;
+use crate::acoustics::{Acoustics, Emitter, Environment, HrtfModel};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
 use crate::math::{Mat3, Vec3};
+use crate::physics::ground::GroundType;
 use crate::rng::Rng;
 use crate::sources::{Bird, BubbleStream, WindSource};
 use crate::windfield::WindField;
@@ -44,7 +45,17 @@ pub mod param {
     pub const HEAD_YAW: u32 = 6;
     pub const HEAD_PITCH: u32 = 7;
     pub const HEAD_ROLL: u32 = 8;
-    pub const COUNT: usize = 9;
+    // Acoustic environment (asmr.h). A separate range so scene/UI params can grow from 9.
+    pub const TEMPERATURE: u32 = 32;
+    pub const HUMIDITY: u32 = 33;
+    pub const PRESSURE: u32 = 34;
+    pub const GROUND: u32 = 35;
+    pub const TREE_DENSITY: u32 = 36;
+    pub const FOLIAGE: u32 = 37;
+    pub const REVERB: u32 = 38;
+    pub const EAR_HEIGHT: u32 = 39;
+    pub const HRTF: u32 = 40;
+    pub const COUNT: usize = 41;
 }
 
 pub mod telemetry {
@@ -123,14 +134,13 @@ struct Slot {
     home: Vec3,
     position: Vec3,
     generator: Generator,
-    sh: [f32; CHANNELS],
     level: f32,
     rel: Vec3,
 }
 
 impl Slot {
     fn new(kind: SourceKind, position: Vec3, generator: Generator) -> Self {
-        Self { kind, home: position, position, generator, sh: [0.0; CHANNELS], level: 0.0, rel: position }
+        Self { kind, home: position, position, generator, level: 0.0, rel: position }
     }
 }
 
@@ -138,7 +148,7 @@ struct Dsp {
     sample_rate: f32,
     slots: Vec<Slot>,
     orbit_slot: usize,
-    decoder: BinauralDecoder,
+    acoustics: Acoustics,
     wind: WindField,
     rng: Rng,
     bus: [[f32; BLOCK]; CHANNELS],
@@ -217,12 +227,27 @@ impl Engine {
         shared.params[param::BIRDS as usize].store(0.6);
         shared.params[param::WATER as usize].store(0.6);
         shared.telemetry[telemetry::SAMPLE_RATE as usize].store(sr);
+        let env = Environment::default();
+        for (id, v) in [
+            (param::TEMPERATURE, env.temperature_c),
+            (param::HUMIDITY, env.humidity_pct),
+            (param::PRESSURE, env.pressure_kpa),
+            (param::GROUND, env.ground as u32 as f32),
+            (param::TREE_DENSITY, env.tree_density_per_ha),
+            (param::FOLIAGE, env.foliage),
+            (param::REVERB, env.reverb),
+            (param::EAR_HEIGHT, env.ear_height),
+            (param::HRTF, env.hrtf as u32 as f32),
+        ] {
+            shared.params[id as usize].store(v);
+        }
 
+        let acoustics = Acoustics::new(sr, slots.len());
         let dsp = Dsp {
             sample_rate: sr,
             slots,
             orbit_slot,
-            decoder: BinauralDecoder::new(sr),
+            acoustics,
             wind: WindField::new(sr),
             rng,
             bus: [[0.0; BLOCK]; CHANNELS],
@@ -381,6 +406,17 @@ impl Dsp {
         let head = Mat3::from_head(p(param::HEAD_YAW), p(param::HEAD_PITCH), p(param::HEAD_ROLL));
 
         self.wind.step(wind, dt, &mut self.rng);
+        self.acoustics.set_environment(&Environment {
+            temperature_c: p(param::TEMPERATURE),
+            humidity_pct: p(param::HUMIDITY),
+            pressure_kpa: p(param::PRESSURE),
+            ground: GroundType::from_index(p(param::GROUND).max(0.0) as u32),
+            tree_density_per_ha: p(param::TREE_DENSITY),
+            foliage: p(param::FOLIAGE),
+            reverb: p(param::REVERB),
+            ear_height: p(param::EAR_HEIGHT),
+            hrtf: if p(param::HRTF) > 0.5 { HrtfModel::Analytic } else { HrtfModel::Measured },
+        });
         if orbit > 1e-3 {
             self.orbit_phase = (self.orbit_phase + TAU * orbit * 0.3 * dt) % TAU;
         }
@@ -418,37 +454,17 @@ impl Dsp {
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             slot.level = slot.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
 
-            // Propagation (M0): direction + spherical spreading. M1 adds delay/Doppler,
-            // air absorption and ground effect here.
-            let rel = head.apply_transposed(slot.position);
-            let dist = rel.length().max(0.3);
-            let dir = rel * (1.0 / dist);
-            let gain = kind_gain / dist.max(0.7);
-            slot.rel = rel;
-
-            let mut target = [0.0f32; CHANNELS];
-            ambisonics::encode(dir, &mut target);
-            if energy == 0.0 {
-                for ch in 0..CHANNELS {
-                    slot.sh[ch] = target[ch] * gain;
-                }
-                continue;
+            // Propagation: delay/Doppler, spreading, air, ground, directivity, occlusion,
+            // forest scattering, near field and reverb sends (propagation.rs).
+            slot.rel = head.apply_transposed(slot.position);
+            let mut em = Emitter::at(slot.position, kind_gain);
+            if slot.kind == SourceKind::Water {
+                em.ground = Some(GroundType::Water);
             }
-            for ch in 0..CHANNELS {
-                let a = slot.sh[ch];
-                let b = target[ch] * gain;
-                let step = (b - a) * inv_len;
-                let mut g = a;
-                let out = &mut self.bus[ch];
-                for i in 0..len {
-                    g += step;
-                    out[i] += tmp[i] * g;
-                }
-                slot.sh[ch] = b;
-            }
+            self.acoustics.propagate(idx, &em, tmp, &mut self.bus);
         }
 
-        self.decoder.process(&self.bus, len, &mut self.left[..len], &mut self.right[..len]);
+        self.acoustics.render(&mut self.bus, &head, len, &mut self.left[..len], &mut self.right[..len]);
 
         let target_fade = if playing { 1.0 } else { 0.0 };
         let fade_coef = 1.0 - (-1.0 / (0.06 * sr)).exp();
