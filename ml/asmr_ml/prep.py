@@ -19,6 +19,8 @@ dominant-frequency tracker with sub-harmonic check, which suits near-tonal songb
 import argparse
 import json
 import re
+import tempfile
+from uuid import uuid4
 from pathlib import Path
 
 import librosa
@@ -28,6 +30,7 @@ from scipy.ndimage import median_filter, uniform_filter
 from scipy.signal import butter, find_peaks, sosfiltfilt
 
 from .data import manifest
+from .dataset import prepared_files, publish_prepared
 from .dsp import HOP, SR
 from .species import SPECIES
 
@@ -156,55 +159,59 @@ def process(key: str, min_snr: float, kinds: tuple[str, ...]) -> None:
     sp = SPECIES[key]
     out = CLEAN / key
     out.mkdir(parents=True, exist_ok=True)
-    report = []
-    recs = sorted(manifest.usable(key), key=lambda r: r.id)
-    for n, r in enumerate(recs):
-        if r.extra.get("species_in_file", 1) > 1 or SOUNDSCAPE.search(r.id):
-            report.append({"id": r.id, "skip": "multi-species soundscape"})
-            continue
-        if r.kind and not any(k in r.kind.lower() for k in kinds):
-            report.append({"id": r.id, "skip": f"kind '{r.kind}'"})
-            continue
-        try:
-            x = load(manifest.RAW / r.path)
-        except Exception as e:  # noqa: BLE001 - corrupt or unsupported file
-            report.append({"id": r.id, "skip": f"decode: {e}"})
-            continue
-        if len(x) < SR:
-            report.append({"id": r.id, "skip": "too short"})
-            continue
-        x = highpass(x, sp.f0_min * 0.7)
-        y, floor_db = spectral_gate(x)
-        f0, conf, loud, effort = features(y, sp.f0_min, sp.f0_max)
-        _, _, loud_raw, _ = features(x, sp.f0_min, sp.f0_max)
-        floor_raw = float(np.percentile(loud_raw, 20))
-        syl, song, thr = segment(loud, f0, conf, float(np.percentile(loud, 20)))
-        if len(syl) == 0:
-            report.append({"id": r.id, "skip": "no syllables"})
-            continue
-        on = np.zeros(len(loud), bool)
-        for a, b in syl:
-            on[a:b] = True
-        snr = float(np.percentile(loud_raw[on], 75) - floor_raw)
-        if snr < min_snr:
-            report.append({"id": r.id, "skip": f"snr {snr:.1f} dB"})
-            continue
-        voiced = on & (conf > 0.4)
-        f0 = fill_f0(f0, voiced)
-        # Silence outside syllables so the model is not trained on residual noise.
-        gate = np.repeat(median_filter(on.astype(np.float32), 5), HOP)[: len(y)]
-        gate = np.pad(gate, (0, len(y) - len(gate)), mode="edge")
-        gate = np.convolve(gate, np.hanning(481) / np.hanning(481).sum(), mode="same")
-        y = y * np.maximum(gate, 0.03)
-        peak = np.abs(y).max() + 1e-9
-        y = (y / peak * 0.5).astype(np.float32)
-        loud = loud + 20 * np.log10(0.5 / peak)
-        np.savez(out / f"{n:04d}.npz", audio=y, f0=f0, conf=conf, loud=loud.astype(np.float32),
-                 effort=effort, syl=syl, song=song, voiced=voiced, id=r.id)
-        report.append({"id": r.id, "file": f"{n:04d}.npz", "snr": round(snr, 1), "syllables": len(syl),
-                       "songs": int(song[-1]) + 1, "seconds": round(len(y) / SR, 1)})
-        print(f"{key} {n:04d}: snr {snr:5.1f} dB, {len(syl):4d} syllables, {int(song[-1]) + 1:3d} songs, {r.id}")
-    (out / "prep.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
+    generation = uuid4().hex
+    with tempfile.TemporaryDirectory(prefix=".prep-", dir=out) as temporary:
+        stage = Path(temporary)
+        report = []
+        recs = sorted(manifest.usable(key), key=lambda r: r.id)
+        for n, r in enumerate(recs):
+            if r.extra.get("species_in_file", 1) > 1 or SOUNDSCAPE.search(r.id):
+                report.append({"id": r.id, "skip": "multi-species soundscape"})
+                continue
+            if r.kind and not any(k in r.kind.lower() for k in kinds):
+                report.append({"id": r.id, "skip": f"kind '{r.kind}'"})
+                continue
+            try:
+                x = load(manifest.RAW / r.path)
+            except Exception as e:  # noqa: BLE001 - corrupt or unsupported file
+                report.append({"id": r.id, "skip": f"decode: {e}"})
+                continue
+            if len(x) < SR:
+                report.append({"id": r.id, "skip": "too short"})
+                continue
+            x = highpass(x, sp.f0_min * 0.7)
+            y, floor_db = spectral_gate(x)
+            f0, conf, loud, effort = features(y, sp.f0_min, sp.f0_max)
+            _, _, loud_raw, _ = features(x, sp.f0_min, sp.f0_max)
+            floor_raw = float(np.percentile(loud_raw, 20))
+            syl, song, thr = segment(loud, f0, conf, float(np.percentile(loud, 20)))
+            if len(syl) == 0:
+                report.append({"id": r.id, "skip": "no syllables"})
+                continue
+            on = np.zeros(len(loud), bool)
+            for a, b in syl:
+                on[a:b] = True
+            snr = float(np.percentile(loud_raw[on], 75) - floor_raw)
+            if snr < min_snr:
+                report.append({"id": r.id, "skip": f"snr {snr:.1f} dB"})
+                continue
+            voiced = on & (conf > 0.4)
+            f0 = fill_f0(f0, voiced)
+            # Silence outside syllables so the model is not trained on residual noise.
+            gate = np.repeat(median_filter(on.astype(np.float32), 5), HOP)[: len(y)]
+            gate = np.pad(gate, (0, len(y) - len(gate)), mode="edge")
+            gate = np.convolve(gate, np.hanning(481) / np.hanning(481).sum(), mode="same")
+            y = y * np.maximum(gate, 0.03)
+            peak = np.abs(y).max() + 1e-9
+            y = (y / peak * 0.5).astype(np.float32)
+            loud = loud + 20 * np.log10(0.5 / peak)
+            np.savez(stage / f"{generation}-{n:04d}.npz", audio=y, f0=f0, conf=conf, loud=loud.astype(np.float32),
+                     effort=effort, syl=syl, song=song, voiced=voiced, id=r.id)
+            report.append({"id": r.id, "file": f"{generation}-{n:04d}.npz", "snr": round(snr, 1), "syllables": len(syl),
+                           "songs": int(song[-1]) + 1, "seconds": round(len(y) / SR, 1)})
+            print(f"{key} {n:04d}: snr {snr:5.1f} dB, {len(syl):4d} syllables, {int(song[-1]) + 1:3d} songs, {r.id}")
+        (stage / "prep.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
+        publish_prepared(stage, out)
     kept = [x for x in report if "file" in x]
     print(f"{key}: kept {len(kept)}/{len(report)}, {sum(x['seconds'] for x in kept) / 60:.1f} min, "
           f"{sum(x['syllables'] for x in kept)} syllables")

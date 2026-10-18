@@ -122,14 +122,39 @@ $('m-spatial').onclick = () => setMode(true);
 function send(type, value, name) { node?.port.postMessage({ type, value, name }); }
 
 async function start() {
-  ctx = new AudioContext({ latencyHint: 'interactive' });
-  const wasm = await (await fetch('asmr_core.wasm')).arrayBuffer();
-  await ctx.audioWorklet.addModule('engine-worklet.js');
-  node = new AudioWorkletNode(ctx, 'asmr', { outputChannelCount: [2], processorOptions: { wasm } });
-  node.port.onmessage = ({ data }) => { radarState = data; };
-  node.connect(ctx.destination);
-  node.port.postMessage({ type: 'mode', spatial });
-  for (const n of ['wind', 'birds', 'water', 'orbit', 'volume']) pushParam(n);
+  const candidate = new AudioContext({ latencyHint: 'interactive' });
+  try {
+    const response = await fetch('asmr_core.wasm');
+    if (!response.ok) throw new Error(`Engine download failed (${response.status})`);
+    const wasm = await response.arrayBuffer();
+    await candidate.audioWorklet.addModule('engine-worklet.js');
+    const source = new AudioWorkletNode(candidate, 'asmr', { outputChannelCount: [2], processorOptions: { wasm } });
+    // Worklet initialization happens on another thread. Wait for the WASM engine to exist.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Audio engine startup timed out')), 10000);
+      source.onprocessorerror = () => { clearTimeout(timer); reject(new Error('Audio engine initialization failed')); };
+      source.port.onmessage = ({ data }) => {
+        if (data.type === 'ready') { clearTimeout(timer); resolve(); }
+        else radarState = data;
+      };
+    });
+    source.onprocessorerror = () => {
+      source.disconnect();
+      ctx = null; node = null; playing = false;
+      $('play').textContent = '[ ▶ PLAY ]';
+      $('note').textContent = 'Audio engine stopped. Press Play to retry.';
+      candidate.close().catch(() => {});
+    };
+    source.connect(candidate.destination);
+    ctx = candidate;
+    node = source;
+    node.port.postMessage({ type: 'mode', spatial });
+    send('yaw', yaw);
+    for (const n of ['wind', 'birds', 'water', 'orbit', 'volume']) pushParam(n);
+  } catch (error) {
+    await candidate.close().catch(() => {});
+    throw error;
+  }
 }
 function pushParam(n) {
   const v = +$(n).value;
@@ -139,10 +164,20 @@ function pushParam(n) {
 for (const n of ['wind', 'birds', 'water', 'orbit', 'volume']) { $(n).oninput = () => pushParam(n); $('v-' + n).textContent = Math.round(+$(n).value * 100) + '%'; }
 
 $('play').onclick = async () => {
-  if (!ctx) { try { await start(); } catch (e) { $('note').textContent = 'Audio failed to start: ' + e.message; return; } }
-  playing = !playing;
-  playing ? await ctx.resume() : await ctx.suspend();
-  $('play').textContent = playing ? '[ ❚❚ PAUSE ]' : '[ ▶ PLAY ]';
+  if ($('play').disabled) return;
+  $('play').disabled = true;
+  try {
+    if (!ctx) await start();
+    const next = !playing;
+    next ? await ctx.resume() : await ctx.suspend();
+    playing = next;
+    $('play').textContent = playing ? '[ ❚❚ PAUSE ]' : '[ ▶ PLAY ]';
+    $('note').textContent = NOTES[spatial ? 'spatial' : 'flat'];
+  } catch (e) {
+    $('note').textContent = 'Audio failed to start: ' + e.message;
+  } finally {
+    $('play').disabled = false;
+  }
 };
 
 // Head turning: drag on the radar or use arrow keys. Positive yaw = turned left (engine convention).
@@ -152,6 +187,7 @@ const turn = d => { if (!spatial) setMode(true); yaw = Math.max(-Math.PI, Math.m
 radar.addEventListener('pointerdown', e => { dragX = e.clientX; radar.setPointerCapture(e.pointerId); });
 radar.addEventListener('pointermove', e => { if (dragX == null) return; turn(-(e.clientX - dragX) * 0.012); dragX = e.clientX; });
 radar.addEventListener('pointerup', () => dragX = null);
+radar.addEventListener('pointercancel', () => dragX = null);
 addEventListener('keydown', e => { if (e.key === 'ArrowLeft') turn(0.08); if (e.key === 'ArrowRight') turn(-0.08); });
 
 function draw() {

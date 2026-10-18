@@ -32,6 +32,21 @@ scripts/build-macos.sh
 cargo test --manifest-path core/Cargo.toml
 ```
 
+Регрессионные проверки оболочки (без аудиоустройства), веб-запуска и отбора ML-данных:
+
+```bash
+scripts/check-macos.sh
+node --test site/tests/*.test.cjs
+PYTHONPATH=ml python3 -m unittest discover -s ml/tests
+```
+
+Веб-движок после изменений Rust пересобирается отдельно:
+
+```bash
+cargo build --release --manifest-path core/Cargo.toml --target wasm32-unknown-unknown
+cp core/target/wasm32-unknown-unknown/release/asmr_core.wasm site/asmr_core.wasm
+```
+
 ```bash
 cargo run --release --manifest-path core/Cargo.toml --example render -- 30 forest.wav turn
 ```

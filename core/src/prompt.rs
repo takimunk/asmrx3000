@@ -11,11 +11,12 @@
 //!   few-shot examples), the dynamic context (current values) and the tool schema generated
 //!   from the control tree, so a provider adapter only has to transport them.
 //!
-//! Glides live in [`Glides`]: lock-free slots, one per control, advanced by the audio thread
+//! Glides live in [`Glides`]: atomic slots, one per control, advanced by the audio thread
 //! every block and by readers (so they land even while nothing renders). Wall-clock based.
+//! Writers serialize control transactions; audio/read ticks skip a busy transaction.
 
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
@@ -44,6 +45,7 @@ struct Slot {
 
 /// In-flight glides, one slot per control.
 pub(crate) struct Glides {
+    editing: AtomicBool,
     slots: Box<[Slot]>,
     #[cfg(not(target_arch = "wasm32"))]
     epoch: Instant,
@@ -55,6 +57,7 @@ pub(crate) struct Glides {
 impl Glides {
     pub(crate) fn new() -> Self {
         Self {
+            editing: AtomicBool::new(false),
             slots: (0..COUNT)
                 .map(|_| Slot { state: AtomicU32::new(0), from: AtomicF32::new(0.0), to: AtomicF32::new(0.0), start: AtomicU64::new(0), dur: AtomicF32::new(0.0) })
                 .collect(),
@@ -75,6 +78,19 @@ impl Glides {
     pub(crate) fn advance(&self, dt: f32) {
         let t = f64::from_bits(self.rendered.load(Ordering::Relaxed)) + dt as f64;
         self.rendered.store(t.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Control writers may wait; the audio thread only ever uses `try_edit`.
+    pub(crate) fn edit(&self) -> EditGuard<'_> {
+        loop {
+            if let Some(guard) = self.try_edit() { return guard; }
+            std::thread::yield_now();
+        }
+    }
+
+    pub(crate) fn try_edit(&self) -> Option<EditGuard<'_>> {
+        self.editing.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok().map(|_| EditGuard(&self.editing))
     }
 
     fn start(&self, i: usize, kind: u32, from: f32, to: f32, dur: f32) {
@@ -99,8 +115,22 @@ impl Glides {
         self.slots.iter().filter(|s| s.state.load(Ordering::Relaxed) & 3 != IDLE).count()
     }
 
+    fn target(&self, i: usize) -> Option<Value> {
+        let slot = &self.slots[i];
+        match slot.state.load(Ordering::Acquire) & 3 {
+            VALUE => Some(json!(wrap(i, slot.to.load()))),
+            RESET => Some(json!("reset")),
+            _ => None,
+        }
+    }
+
     /// Moves every gliding control to its current eased value. Any thread, real-time safe.
     pub(crate) fn tick(&self, bank: &ControlBank, params: &[AtomicF32]) {
+        let Some(_guard) = self.try_edit() else { return };
+        self.tick_locked(bank, params);
+    }
+
+    pub(crate) fn tick_locked(&self, bank: &ControlBank, params: &[AtomicF32]) {
         let now = self.now();
         for (i, s) in self.slots.iter().enumerate() {
             let st = s.state.load(Ordering::Acquire);
@@ -123,6 +153,12 @@ impl Glides {
             bank.set(id, wrap(i, from + (to - from) * e), params);
         }
     }
+}
+
+pub(crate) struct EditGuard<'a>(&'a AtomicBool);
+
+impl Drop for EditGuard<'_> {
+    fn drop(&mut self) { self.0.store(false, Ordering::Release); }
 }
 
 fn is_time(i: usize) -> bool {
@@ -154,7 +190,7 @@ impl View<'_> {
 
     fn objects(&self) -> Vec<ObjectInfo> {
         let mut out = vec![ObjectInfo::default(); MAX_OBJECTS];
-        let n = self.objects.read(&mut out);
+        let n = self.objects.read_requested(&mut out);
         out.truncate(n);
         out
     }
@@ -204,6 +240,9 @@ pub(crate) fn state_json(v: &View) -> String {
             o.insert("parent".into(), json!(controls::meta(p).key));
         }
         o.insert("value".into(), r3(value));
+        if let Some(target) = v.glides.target(i) {
+            o.insert("target".into(), target);
+        }
         if m.flags & flags::DISCRETE != 0 {
             o.insert("option".into(), json!(option_of(m.id, value)));
             o.insert("options".into(), json!(controls::options(m.id)));
@@ -339,8 +378,10 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> String {
         }
     }
 
+    // Serialize the entire control transaction with other writers and glide ticks.
+    let _guard = v.glides.edit();
     // Undo restores what is there now.
-    v.glides.tick(v.bank, v.params);
+    v.glides.tick_locked(v.bank, v.params);
     let before = v.values();
     let mut undo = Vec::new();
     for c in &list {
@@ -461,7 +502,7 @@ fn start_value(v: &View, i: usize, from: f32, mut to: f32, glide: f32) {
     }
     v.glides.start(i, VALUE, from, to, glide);
     // The first step lands now (latency), the rest follows the clock.
-    v.glides.tick(v.bank, v.params);
+    v.glides.tick_locked(v.bank, v.params);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -752,6 +793,22 @@ mod tests {
         assert_eq!(depth["unit"], "m");
         assert!(!s["objects"].as_array().unwrap().is_empty());
         assert!(s["objects"].as_array().unwrap().iter().any(|o| o["kind"] == "tree"));
+    }
+
+    #[test]
+    fn snapshots_include_glide_targets_and_pending_moves() {
+        let e = engine();
+        let before = parse(&e.state_json());
+        let tree = before["objects"].as_array().unwrap().iter()
+            .find(|o| o["kind"] == "tree" && o["movable"] == true).unwrap();
+        let id = tree["id"].as_u64().unwrap() as u32;
+        e.set_object_position(id, 12.0, -9.0, -1.7);
+        e.apply_patch_json(r#"{"glide_s":120,"changes":[{"key":"master.volume","value":0.2}]}"#);
+        let state = parse(&e.state_json());
+        let volume = state["controls"].as_array().unwrap().iter().find(|c| c["key"] == "master.volume").unwrap();
+        assert!((volume["target"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        let moved = state["objects"].as_array().unwrap().iter().find(|o| o["id"] == id).unwrap();
+        assert_eq!(moved["pos"], json!([12.0, -9.0, -1.7]));
     }
 
     #[test]

@@ -277,10 +277,11 @@ uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t
    without a shape and outside flight mode. `out` holds 3 * max_points floats. Any thread. */
 uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out, uint32_t max_points);
 
-/* Prompt control (docs/prompt-control.md). Any thread. JSON strings, UTF-8. Each call writes
-   its NUL-terminated result into `out` only if `max` > its length, and returns the length in
-   bytes either way: call with out = NULL to size the buffer.
-   - state: {"controls": [{key, group, macro | parent, value, option?, options?, min, max, log?,
+/* Prompt control (docs/prompt-control.md). Control thread. JSON strings, UTF-8. Read-only
+   state/prompt calls write their NUL-terminated result into `out` only if `max` > its length,
+   and return the length in bytes either way: call with out = NULL to size those buffers.
+   Applying a patch is a mutation; use asmr_apply_patch_json_alloc to obtain its result once.
+   - state: {"controls": [{key, group, macro | parent, value, target?, option?, options?, min, max, log?,
      unit?, default, overridden?}], "environment": {...}, "objects": [{id, kind, pos, movable?,
      moving?}], "frame", "gliding"}.
    - patch: {"glide_s": 4, "changes": [{"key": "water.flow", "value": 0.3},
@@ -296,7 +297,13 @@ uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out,
      "tool": {"name": "set_scene", "description", "input_schema"}}; the model's tool input is a
      patch plus "explanation". */
 uint32_t asmr_get_state_json(const AsmrEngine *engine, char *out, uint32_t max);
+/* Every call applies the patch, even with out=NULL. Use the allocated variant below to
+   obtain the full result and correct undo without repeating the operation. */
 uint32_t asmr_apply_patch_json(const AsmrEngine *engine, const char *patch, char *out, uint32_t max);
+/* Applies once; returns NULL on NULL inputs. Free the returned JSON with asmr_string_free.
+   These allocation APIs belong on the control thread. */
+char *asmr_apply_patch_json_alloc(const AsmrEngine *engine, const char *patch);
+void asmr_string_free(char *text);
 uint32_t asmr_get_prompt_json(const AsmrEngine *engine, char *out, uint32_t max);
 
 /* Live per-track peak waveform (asmr_get_scope): one point per 64-sample block, oldest first. */

@@ -876,6 +876,19 @@ impl ObjectBridge {
         }
         n
     }
+
+    /// Control snapshots include moves queued while audio is stopped.
+    pub(crate) fn read_requested(&self, out: &mut [ObjectInfo]) -> usize {
+        let n = self.read(out);
+        for (i, object) in out[..n].iter_mut().enumerate() {
+            if object.flags & object_flags::MOVABLE != 0 && self.pending[i].load(Ordering::Acquire) != 0 {
+                object.x = self.moves[i * 3].load();
+                object.y = self.moves[i * 3 + 1].load();
+                object.z = self.moves[i * 3 + 2].load();
+            }
+        }
+        n
+    }
 }
 
 #[cfg(test)]

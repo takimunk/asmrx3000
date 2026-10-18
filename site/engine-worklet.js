@@ -1,6 +1,6 @@
 // AudioWorklet shell around asmr-core (wasm). Mirrors what the macOS shell does through the C ABI.
 const P = { VOLUME: 0, WIND: 1, BIRDS: 2, WATER: 3, ORBIT: 4, PLAYING: 5, YAW: 6, PITCH: 7, ROLL: 8 };
-const FRAMES = 128, MAX_SRC = 16, SRC_BYTES = 36, BANDS = 32;
+const FRAMES = 128, MAX_SRC = 64, SRC_BYTES = 36, BANDS = 32;
 
 class AsmrProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -16,12 +16,15 @@ class AsmrProcessor extends AudioWorkletProcessor {
     this.yaw = 0; this.yawTarget = 0;
     this.pitch = 0;
     this.tick = 0;
+    this.reportEvery = Math.max(1, Math.round(sampleRate / FRAMES / 20));
+    this.memory = null;
     this.x.asmr_set_param(this.eng, P.PLAYING, 1);
     this.port.onmessage = ({ data }) => {
       if (data.type === 'param') this.x.asmr_set_param(this.eng, P[data.name], data.value);
       else if (data.type === 'mode') this.spatial = data.spatial;
       else if (data.type === 'yaw') this.yawTarget = data.value;
     };
+    this.port.postMessage({ type: 'ready' });
   }
 
   process(_in, outputs) {
@@ -33,7 +36,12 @@ class AsmrProcessor extends AudioWorkletProcessor {
     x.asmr_set_param(this.eng, P.YAW, this.yaw);
     x.asmr_render(this.eng, this.pL, this.pR, FRAMES);
     const mem = x.memory.buffer;
-    const L = new Float32Array(mem, this.pL, FRAMES), R = new Float32Array(mem, this.pR, FRAMES);
+    if (this.memory !== mem) {
+      this.memory = mem;
+      this.left = new Float32Array(mem, this.pL, FRAMES);
+      this.right = new Float32Array(mem, this.pR, FRAMES);
+    }
+    const L = this.left, R = this.right;
     if (this.spatial) {
       l.set(L); r.set(R);
     } else {
@@ -43,14 +51,14 @@ class AsmrProcessor extends AudioWorkletProcessor {
         l[i] = m + s; r[i] = m - s;
       }
     }
-    if ((this.tick++ & 7) === 0) this.report();
+    if (this.tick++ % this.reportEvery === 0) this.report();
     return true;
   }
 
   report() {
-    const x = this.x, mem = x.memory.buffer;
+    const x = this.x;
     const n = x.asmr_get_sources(this.eng, this.pSrc, MAX_SRC);
-    const dv = new DataView(mem, this.pSrc, MAX_SRC * SRC_BYTES);
+    const dv = new DataView(x.memory.buffer, this.pSrc, MAX_SRC * SRC_BYTES);
     const sources = [];
     for (let i = 0; i < n; i++) {
       const o = i * SRC_BYTES;
@@ -63,7 +71,7 @@ class AsmrProcessor extends AudioWorkletProcessor {
     x.asmr_get_spectrum(this.eng, this.pSpec, BANDS);
     this.port.postMessage({
       sources,
-      spectrum: Array.from(new Float32Array(mem, this.pSpec, BANDS)),
+      spectrum: new Float32Array(x.memory.buffer, this.pSpec, BANDS).slice(),
       gust: x.asmr_get_telemetry(this.eng, 1),
       bubbles: x.asmr_get_telemetry(this.eng, 3),
     });

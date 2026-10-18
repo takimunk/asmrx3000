@@ -88,10 +88,6 @@ final class AudioEngine: ObservableObject {
     private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 256)
     private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
     private var controlNames: [UInt32: (String, String)] = [:]
-    /// Control values the user set, in order, re-applied when the core is rebuilt.
-    private var setControls: [(UInt32, Float)] = []
-    /// Positions the user gave objects; re-applied when the core is rebuilt for a new sample rate.
-    private var placed: [UInt32: SIMD3<Float>] = [:]
 
     /// Binaural renderer. `core`: our MagLS decoder of the measured SADIE II HRTF (default).
     /// `apple`: the engine renders a 7.1.4 bed and Apple's AUSpatialMixer makes it binaural
@@ -304,8 +300,6 @@ final class AudioEngine: ObservableObject {
     }
 
     func setControl(_ id: UInt32, _ value: Float) {
-        setControls.removeAll { $0.0 == id }
-        if !value.isNaN { setControls.append((id, value)) }
         asmr_set_control(core, id, value)
     }
 
@@ -318,14 +312,10 @@ final class AudioEngine: ObservableObject {
     }
 
     func setObjectPosition(id: UInt32, _ p: SIMD3<Float>) {
-        placed[id] = p
         asmr_set_object_position(core, id, p.x, p.y, p.z)
     }
 
     // MARK: Prompt control (docs/prompt-control.md)
-
-    /// Patches applied so far, replayed (without glides) if the core is rebuilt.
-    private var patches: [String] = []
 
     /// System prompt, current-state context and tool schema (asmr_get_prompt_json).
     func promptJSON() -> Data { Data(readString { asmr_get_prompt_json(core, $0, $1) }.utf8) }
@@ -337,9 +327,9 @@ final class AudioEngine: ObservableObject {
     @discardableResult
     func applyPatch(_ patch: Data) -> [String: Any] {
         let text = String(decoding: patch, as: UTF8.self)
-        patches.append(text)
-        if patches.count > 64 { patches.removeFirst() }
-        let result = readString { asmr_apply_patch_json(core, text, $0, $1) }
+        guard let resultPointer = asmr_apply_patch_json_alloc(core, text) else { return [:] }
+        defer { asmr_string_free(resultPointer) }
+        let result = String(cString: resultPointer)
         return (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] ?? [:]
     }
 
@@ -354,12 +344,36 @@ final class AudioEngine: ObservableObject {
         }
     }
 
-    private func replayPatches() {
-        for p in patches {
-            guard var o = (try? JSONSerialization.jsonObject(with: Data(p.utf8))) as? [String: Any] else { continue }
-            o["glide_s"] = 0
-            guard let d = try? JSONSerialization.data(withJSONObject: o) else { continue }
-            _ = readString { asmr_apply_patch_json(core, String(decoding: d, as: UTF8.self), $0, $1) }
+    /// Restore actual values and override flags, independent of how they were edited.
+    /// Macros precede children so a reset resumes following the restored macro.
+    func restoreState(_ state: Data) {
+        guard let root = (try? JSONSerialization.jsonObject(with: state)) as? [String: Any],
+              let controls = root["controls"] as? [[String: Any]] else { return }
+        let ordered = controls.filter { $0["macro"] as? Bool == true }
+            + controls.filter { $0["macro"] as? Bool != true }
+        let changes: [[String: Any]] = ordered.compactMap { c in
+            guard let key = c["key"] as? String, let value = c["target"] ?? c["value"] else { return nil }
+            return ["key": key, "value": value]
+        }
+        for object in root["objects"] as? [[String: Any]] ?? [] {
+            guard object["movable"] as? Bool == true, let id = object["id"] as? NSNumber,
+                  let pos = object["pos"] as? [NSNumber], pos.count == 3 else { continue }
+            // Restoring a scene position must not apply the prompt's on-stage clamps.
+            asmr_set_object_position(core, id.uint32Value, pos[0].floatValue, pos[1].floatValue, pos[2].floatValue)
+        }
+        guard let patch = try? JSONSerialization.data(withJSONObject: ["glide_s": 0, "changes": changes]) else { return }
+        applyPatch(patch)
+        // Clear override flags without changing stored values of children that have no
+        // macro curve (e.g. a released gain control). A JSON preset reset also resets value.
+        let followers = controls.filter {
+            $0["target"] as? String == "reset"
+                || ($0["target"] == nil && $0["overridden"] as? Bool == false)
+        }
+        var tree: [Control] = []
+        readControls(&tree)
+        for follower in followers {
+            guard let control = tree.first(where: { $0.key == follower["key"] as? String }) else { continue }
+            asmr_set_control(core, control.id, .nan)
         }
     }
 
@@ -390,13 +404,6 @@ final class AudioEngine: ObservableObject {
         let d = UserDefaults.standard
         if d.object(forKey: "headPrediction") != nil { set(ASMR_PARAM_HEAD_PREDICTION, d.float(forKey: "headPrediction")) }
         if d.object(forKey: "headParallax") != nil { set(ASMR_PARAM_HEAD_PARALLAX, d.float(forKey: "headParallax")) }
-        for (id, p) in placed {
-            asmr_set_object_position(core, id, p.x, p.y, p.z)
-        }
-        replayPatches()
-        for (id, v) in setControls {
-            asmr_set_control(core, id, v)
-        }
     }
 
     /// Must only run while the AVAudioEngine is stopped.
@@ -407,12 +414,14 @@ final class AudioEngine: ObservableObject {
         }
         if rate != coreRate {
             coreLock.lock()
+            let state = stateJSON()
             let old = core
             core = Self.makeCore(Float(rate))
             coreRate = rate
-            coreLock.unlock()
             applyParams()
+            restoreState(state)
             asmr_engine_free(old)
+            coreLock.unlock()
         }
         if let mixer = spatialMixer, engine.attachedNodes.contains(mixer) {
             engine.detach(mixer)

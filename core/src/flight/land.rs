@@ -760,7 +760,7 @@ impl Land {
             };
             let th = r.range(0.0, core::f32::consts::TAU) as f64;
             let (dx, dy) = (th.cos(), th.sin());
-            let (amp, wl, ph) = (r.range(3.0, 12.0) as f64, r.range(60.0, 130.0) as f64, r.range(0.0, 6.283) as f64);
+            let (amp, wl, ph) = (r.range(3.0, 12.0) as f64, r.range(60.0, 130.0) as f64, r.range(0.0, core::f32::consts::TAU) as f64);
             let half = 215.0;
             let mut f = Feature { kind: FeatureKind::River, x: cx, y: cy, z: 0.1, a: 0.5 * width, preset, size: width, ..Default::default() };
             for k in 0..PATH_POINTS {
@@ -973,7 +973,7 @@ impl Land {
                 if r.uniform() < b.birds * 2.0 && nb < BIRDS_PER_TILE {
                     let bw = bird_weights(SPECIES[sp], c < 0.6);
                     let species = pick(&bw, r.uniform()) as u8;
-                    let a = r.range(0.0, 6.283);
+                    let a = r.range(0.0, core::f32::consts::TAU);
                     let rr = r.range(0.2, 0.8) * crown_r;
                     let z = crown_z + r.range(-0.4, 0.9) * crown_r;
                     let pos = [x + (rr * a.cos()) as f64, y + (rr * a.sin()) as f64, z as f64];

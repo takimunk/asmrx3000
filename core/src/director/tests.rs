@@ -232,7 +232,7 @@ fn thunder_proxy_points_at_the_strike() {
             let p = world.entities[thunder].position;
             assert!((p.length() - super::THUNDER_PROXY_M).abs() < 0.01);
             let (bearing, _) = dir.weather().strike_position();
-            assert!((p.y.atan2(p.x) - bearing).abs() < 1e-3 || (p.y.atan2(p.x) - bearing).abs() > 6.28);
+            assert!((p.y.atan2(p.x) - bearing).abs() < 1e-3 || (p.y.atan2(p.x) - bearing).abs() > core::f32::consts::TAU - 1e-3);
             let em = &world.emitters[world.entities[thunder].emitters.start];
             assert!(em.controls.env.strike > 0 && em.controls.env.strike_distance_m >= 300.0);
         }

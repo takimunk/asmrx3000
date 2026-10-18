@@ -37,7 +37,7 @@ pub use controls::ControlInfo;
 pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, BLOCK, MAX_SOURCES};
 pub use scene::{object_flags, ObjectInfo, ObjectKind, SceneDesc, MAX_OBJECTS};
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{c_char, CStr, CString};
 use std::slice;
 
 /// Creates an engine. Free it with `asmr_engine_free`.
@@ -300,6 +300,8 @@ pub unsafe extern "C" fn asmr_get_state_json(engine: *const Engine, out: *mut c_
 /// "position"}]}`: values are clamped, presets may be names, "reset" hands a child back to its
 /// macro, unknown keys are reported. Continuous controls glide. The result JSON (`ok`,
 /// `applied`, `moved`, `errors`, `undo`) is written into `out` if it fits; returns its length.
+/// Every call applies the patch, including size queries. Prefer `asmr_apply_patch_json_alloc`
+/// when the result size is unknown, so applying and obtaining undo is one operation.
 ///
 /// # Safety
 /// `patch` must be a NUL-terminated string; `out` NULL or `max` writable bytes.
@@ -313,6 +315,28 @@ pub unsafe extern "C" fn asmr_apply_patch_json(engine: *const Engine, patch: *co
     prompt::write_c(&result, out, max)
 }
 
+/// Applies a patch exactly once and returns its complete result. Free with `asmr_string_free`.
+/// Returns NULL for a NULL engine/patch. Not for the audio thread.
+///
+/// # Safety
+/// `engine` must be live; `patch` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_apply_patch_json_alloc(engine: *const Engine, patch: *const c_char) -> *mut c_char {
+    let (Some(e), false) = (engine.as_ref(), patch.is_null()) else { return std::ptr::null_mut() };
+    let result = match CStr::from_ptr(patch).to_str() {
+        Ok(p) => e.apply_patch_json(p),
+        Err(_) => r#"{"ok":false,"applied":[],"moved":[],"errors":["patch is not UTF-8"],"undo":{"changes":[]}}"#.to_string(),
+    };
+    CString::new(result).expect("JSON escapes NUL bytes").into_raw()
+}
+
+/// # Safety
+/// `text` must be NULL or an unfreed pointer returned by `asmr_apply_patch_json_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_string_free(text: *mut c_char) {
+    if !text.is_null() { drop(CString::from_raw(text)); }
+}
+
 /// `{"system", "context", "tool": {"name", "description", "input_schema"}}` for a language
 /// model: static system prompt, the current values as text, the tool schema generated from
 /// the control tree. Same buffer convention as `asmr_get_state_json`.
@@ -324,5 +348,25 @@ pub unsafe extern "C" fn asmr_get_prompt_json(engine: *const Engine, out: *mut c
     match engine.as_ref() {
         Some(e) => prompt::write_c(&e.prompt_json(), out, max),
         None => 0,
+    }
+}
+
+#[cfg(test)]
+mod abi_tests {
+    use super::*;
+
+    #[test]
+    fn allocated_patch_result_preserves_original_undo() {
+        let engine = Engine::new(48_000.0);
+        let patch = CString::new(r#"{"glide_s":0,"changes":[{"key":"master.volume","value":0.2},{"key":"water.depth","value":0.3}]}"#).unwrap();
+        unsafe {
+            let result = asmr_apply_patch_json_alloc(&engine, patch.as_ptr());
+            let json: serde_json::Value = serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()).unwrap();
+            asmr_string_free(result);
+            assert_eq!(json["undo"]["changes"][0]["value"], 0.7);
+            assert_eq!(json["undo"]["changes"][1]["value"], "reset");
+            engine.apply_patch_json(&json["undo"].to_string());
+            assert!(engine.control(controls::id::MASTER_VOLUME) > 0.69);
+        }
     }
 }

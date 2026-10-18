@@ -28,7 +28,7 @@ OUT = ROOT / "ml" / "out" / "listen"
 
 
 def held_out(key: str, val_every: int = 6) -> Path:
-    files = sorted((prep.CLEAN / key).glob("*.npz"))
+    files = prep.prepared_files(prep.CLEAN / key)
     val = [p for i, p in enumerate(files) if i % val_every == val_every - 1]
     # The held-out recording with the most syllables per second (densest song).
     return max(val, key=lambda p: len(np.load(p)["syl"]) / len(np.load(p)["loud"]))

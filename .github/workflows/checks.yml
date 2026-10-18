@@ -1,0 +1,32 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - run: cargo test --locked --manifest-path core/Cargo.toml
+      - run: cargo clippy --locked --manifest-path core/Cargo.toml --all-targets
+      - run: cargo build --locked --release --manifest-path core/Cargo.toml --target wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test site/tests/*.test.cjs
+      - run: PYTHONPATH=ml python3 -m unittest discover -s ml/tests
+      - run: python3 -m compileall -q ml/asmr_ml
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release --manifest-path core/Cargo.toml
+      - run: scripts/check-macos.sh
+      - run: swift build --package-path apps/macos -c release
