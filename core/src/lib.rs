@@ -240,6 +240,60 @@ pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32
     n as u32
 }
 
+/// Where the listener is in the flight landscape (world position, heading, absolute heights)
+/// and what the landscape is (seed, biome, relief, ground look). Returns 1 and fills `out`
+/// once flight mode has been built, else 0. Any thread.
+///
+/// # Safety
+/// `out` must point to a writable `AsmrFlightFrame`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_flight_frame(engine: *const Engine, out: *mut flight::bridge::Frame) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => match e.flight_frame() {
+            Some(f) => {
+                *out = f;
+                1
+            }
+            None => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// A sampler of the flight relief for the UI (allocates a few MB; not for the audio thread).
+#[no_mangle]
+pub extern "C" fn asmr_terrain_new(seed: u64, biome: u32, relief: f32) -> *mut flight::terrain::Sampler {
+    Box::into_raw(Box::new(flight::terrain::Sampler::new(seed, biome, relief)))
+}
+
+/// # Safety
+/// `t` must come from `asmr_terrain_new` (or be null) and is invalid afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_terrain_free(t: *mut flight::terrain::Sampler) {
+    if !t.is_null() {
+        drop(Box::from_raw(t));
+    }
+}
+
+/// Samples `nx` × `ny` points of the relief on a world grid from (x0, y0), `step` m apart,
+/// row by row (index j·nx + i), 6 floats each: ground height, water level (−1e9 where dry),
+/// flow x, flow y (m/s, world frame), height above the nearest water, water kind (0 none,
+/// 1 lake, 2 river, 3 sea). Returns the number of samples written.
+///
+/// # Safety
+/// `t` from `asmr_terrain_new`; `out` must hold `6 * nx * ny` floats.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_terrain_sample(t: *mut flight::terrain::Sampler, x0: f64, y0: f64, step: f32, nx: u32, ny: u32, out: *mut f32) -> u32 {
+    match (t.as_mut(), out.is_null()) {
+        (Some(t), false) => {
+            let n = nx as usize * ny as usize;
+            let out = slice::from_raw_parts_mut(out, flight::terrain::SAMPLE_FLOATS * n);
+            t.grid(x0, y0, step as f64, nx as usize, ny as usize, out) as u32
+        }
+        _ => 0,
+    }
+}
+
 /// Shape of a streamed (flight mode) object: river bed, lake shore or ridge line, as
 /// listener-relative (x, y, z) triples written to `out`; returns the number of points
 /// (0 for objects without a shape and outside flight mode).

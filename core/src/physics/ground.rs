@@ -17,9 +17,13 @@ pub enum GroundType {
     CompactSoil = 3,
     Snow = 4,
     Asphalt = 5,
+    /// Loose dry sand (dunes, beaches).
+    Sand = 6,
+    /// Bare rock (cliffs, crags, scree faces).
+    Rock = 7,
 }
 
-pub const GROUND_TYPES: usize = 6;
+pub const GROUND_TYPES: usize = 8;
 
 impl GroundType {
     pub fn from_index(i: u32) -> Self {
@@ -29,6 +33,8 @@ impl GroundType {
             3 => GroundType::CompactSoil,
             4 => GroundType::Snow,
             5 => GroundType::Asphalt,
+            6 => GroundType::Sand,
+            7 => GroundType::Rock,
             _ => GroundType::ForestFloor,
         }
     }
@@ -43,6 +49,8 @@ impl GroundType {
             GroundType::CompactSoil => Some(2000e3), // hard-packed dirt / sandy silt
             GroundType::Snow => Some(20e3),         // fresh snow 10-30
             GroundType::Asphalt => None,            // 20 MPa s/m^2 and up: rigid in practice
+            GroundType::Sand => Some(250e3),        // loose dry sand 100-500 (dunes, beaches)
+            GroundType::Rock => Some(3000e3),       // exposed rock 2000-4000: nearly rigid
         }
     }
 }

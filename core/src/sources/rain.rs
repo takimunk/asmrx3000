@@ -157,6 +157,16 @@ fn mix(a: Tone, b: Tone, w: f32) -> Tone {
     }
 }
 
+/// A snowflake landing: a soft, dull touch (flakes fall at ~1 m/s and crumple instead of
+/// splashing).
+const FLAKE: Tone = Tone { fc: 1500.0, q: 0.7, decay: 0.004, level: 0.35, mode: (0.0, 0.0, 0.0), splash: (0.0, 0.0, 0.0) };
+
+/// Impact amplitude of snow relative to rain: (v_flake / v_drop)^1.5 with v_flake ≈ 1 m/s
+/// against ~6 m/s for the drops that make most of the sound.
+fn flake_gain(snow: f32) -> f32 {
+    1.0 - 0.93 * snow.clamp(0.0, 1.0)
+}
+
 /// Linear amplitude of an impact by drop diameter (mm) and speed (m/s).
 #[inline]
 fn impact_amp(d: f32, v: f32) -> f32 {
@@ -188,9 +198,12 @@ pub struct RainLayer {
     bins_w: [f32; BINS],
     drops_per_s: f32,
     resolved_rate: f32,
-    key: [f32; 8],
+    key: [f32; 9],
     key_surface: Option<Surface>,
     bed_target: [f32; 2],
+    /// Share of the precipitation falling as snow (0..1): flakes land at ~1 m/s with a
+    /// soft, dull touch instead of a drop's splash.
+    pub snow: f32,
 }
 
 impl RainLayer {
@@ -226,9 +239,10 @@ impl RainLayer {
             bins_w,
             drops_per_s: 0.0,
             resolved_rate: 0.0,
-            key: [-1.0; 8],
+            key: [-1.0; 9],
             key_surface: None,
             bed_target: [0.0; 2],
+            snow: 0.0,
         }
     }
 
@@ -250,7 +264,7 @@ impl RainLayer {
         let puddles = if self.surface.puddles_form() { puddles.clamp(0.0, 0.9) } else { 0.0 };
         // The distribution maths is the expensive part; inputs move slowly (smoothed weather),
         // so recompute only when something changed by more than a couple of percent.
-        let key = [rain, drips, drip_height, wet, puddles, self.area, self.leaf_size, self.resolved_per_s];
+        let key = [rain, drips, drip_height, wet, puddles, self.area, self.leaf_size, self.resolved_per_s, self.snow];
         let rel = |a: f32, b: f32, tol: f32| (a - b).abs() <= tol * a.abs().max(b.abs()) + 1e-6;
         let same = self.key_surface == Some(self.surface)
             && rel(key[0], self.key[0], 0.03)
@@ -268,6 +282,9 @@ impl RainLayer {
         self.key_surface = Some(self.surface);
 
         self.tone = mix(tone(self.surface, false), tone(self.surface, true), wet);
+        if self.snow > 0.0 {
+            self.tone = mix(self.tone, FLAKE, self.snow.min(1.0));
+        }
         if self.surface.is_canopy() || self.surface == Surface::Litter {
             self.tone.fc *= (0.06 / self.leaf_size.clamp(0.005, 0.3)).powf(0.35);
             self.tone.mode.0 *= (0.06 / self.leaf_size.clamp(0.005, 0.3)).powf(0.5);
@@ -303,8 +320,9 @@ impl RainLayer {
         self.resolved_rate = if rain > 0.0 { flux_above(rain, self.split) * self.area / sr } else { 0.0 };
 
         // Campbell bed: all drops below the split, plus the drips beyond the budget.
+        let flake = flake_gain(self.snow);
         let energy = |d: f32, v: f32, tone: &Tone| {
-            let a = impact_amp(d, v) * tone.level;
+            let a = impact_amp(d, v) * tone.level * flake;
             let mut lo = a * a * 0.5 * tone.decay * sr * (1.0 + tone.splash.0 * tone.splash.0);
             let mut hi = 0.0;
             if water > 0.0 {
@@ -354,7 +372,7 @@ impl RainLayer {
     fn impact(&mut self, d: f32, v: f32, at: u32, rng: &mut Rng, sr: f32) {
         let on_water = self.surface.is_water() || rng.uniform() < self.puddles;
         let base = if on_water && !self.surface.is_water() { tone(Surface::Puddle, false) } else { self.tone };
-        let a = impact_amp(d, v) * base.level * rng.range(0.6, 1.3);
+        let a = impact_amp(d, v) * base.level * rng.range(0.6, 1.3) * flake_gain(self.snow);
         let size = (2.0 / d).powf(0.25);
         let mut spec = GrainSpec {
             amp: a,
@@ -467,6 +485,8 @@ pub struct RainConfig {
     pub wetness: f32,
     /// Budget of individually synthesised drops per second (20..2000); the rest is bed.
     pub resolved_per_s: f32,
+    /// Share of the precipitation that falls as snow (0..1).
+    pub snow: f32,
     /// Linear output gain (0..8).
     pub gain: f32,
 }
@@ -483,6 +503,7 @@ impl Default for RainConfig {
             rate_mm_h: -1.0,
             wetness: -1.0,
             resolved_per_s: 150.0,
+            snow: 0.0,
             gain: 1.0,
         }
     }
@@ -498,6 +519,7 @@ impl RainConfig {
         check("rate_mm_h", self.rate_mm_h, -1.0, 200.0)?;
         check("wetness", self.wetness, -1.0, 1.0)?;
         check("resolved_per_s", self.resolved_per_s, 20.0, 2000.0)?;
+        check("snow", self.snow, 0.0, 1.0)?;
         check("gain", self.gain, 0.0, 8.0)
     }
 }
@@ -525,6 +547,7 @@ impl Rain {
         let mut layer = RainLayer::new(cfg.surface, cfg.area_m2, sample_rate, &mut rng);
         layer.leaf_size = cfg.leaf_size_m;
         layer.resolved_per_s = cfg.resolved_per_s;
+        layer.snow = cfg.snow;
         Self { sample_rate, rng, out: Ramp::new(cfg.gain), cfg, layer }
     }
 
@@ -537,6 +560,7 @@ impl Rain {
         self.layer.surface = cfg.surface;
         self.layer.area = cfg.area_m2.max(0.01);
         self.layer.leaf_size = cfg.leaf_size_m;
+        self.layer.snow = cfg.snow;
         self.layer.resolved_per_s = cfg.resolved_per_s;
         self.cfg = cfg;
     }
@@ -584,6 +608,11 @@ impl Rain {
         RainConfig { surface: Surface::Soil, area_m2: 12.0, exposure: 0.15, canopy_drip: 0.8, drip_height_m: 7.0, resolved_per_s: 150.0, ..Default::default() }
     }
 
+    /// Snow falling on snow: flakes settling, a hush rather than a patter.
+    pub fn snowfall() -> RainConfig {
+        RainConfig { surface: Surface::Snow, area_m2: 80.0, snow: 1.0, resolved_per_s: 80.0, ..Default::default() }
+    }
+
     pub fn preset(name: &str) -> Option<RainConfig> {
         Some(match name {
             "light_drizzle" => Self::light_drizzle(),
@@ -599,6 +628,7 @@ impl Rain {
             "meadow" => Self::meadow(),
             "under_canopy" => Self::under_canopy(),
             "under_conifer" => Self::under_conifer(),
+            "snowfall" => Self::snowfall(),
             _ => return None,
         })
     }
@@ -617,6 +647,7 @@ impl Rain {
         "meadow",
         "under_canopy",
         "under_conifer",
+        "snowfall",
     ];
 
     /// Drops per second on this patch (telemetry).

@@ -64,6 +64,8 @@ enum {
     ASMR_GROUND_COMPACT_SOIL = 3, /* 2000 kPa s/m^2 */
     ASMR_GROUND_SNOW = 4,         /* 20 kPa s/m^2 */
     ASMR_GROUND_ASPHALT = 5,      /* acoustically rigid */
+    ASMR_GROUND_SAND = 6,         /* loose dry sand, 250 kPa s/m^2 */
+    ASMR_GROUND_ROCK = 7,         /* bare rock, 3000 kPa s/m^2 */
 };
 
 /* Telemetry (asmr_get_telemetry). */
@@ -218,7 +220,9 @@ enum {
     ASMR_CONTROL_FLIGHT_SPEED = 1000,     /* macro, m/s 0..25 [6]: walk 1.5, run 5, glide 12, fast flight 25 */
     ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
     ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* wandering of the course when not steered by head: 0 straight .. 1 (turn radius 250 m) [0.35] */
-    ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands [mixed]; option names via asmr_get_control_option */
+    ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands, desert,
+                                             snowy_mountains, lake_shore, sea_coast, big_river [mixed]; option names via
+                                             asmr_get_control_option (docs/world.md) */
     ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
     ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
     ASMR_CONTROL_FLIGHT_AIRFLOW = 1006,   /* wind noise of motion at the ears x 0..3 [1 = physical, subtle below ~10 m/s] */
@@ -228,6 +232,9 @@ enum {
                                              Live only while asmr_set_head_pose samples arrive; otherwise (and with off) the
                                              course wanders by flight.curviness and turning the head only looks around. */
     ASMR_CONTROL_FLIGHT_TURN_RATE = 1008, /* "flight.turn_rate", deg/s 5..90 [30]: fastest turn, reached with the head ~43 deg off course */
+    ASMR_CONTROL_FLIGHT_RELIEF = 1009,    /* "flight.relief", relief scale 0 (flat) .. 2 [1 = as the biome]; regenerates like a new seed */
+    ASMR_CONTROL_FLIGHT_STOPS = 1010,     /* "flight.stops", 0..1 [0.5]: how often and how long the flight eases down and lingers at
+                                             places (lake shore, waterfall, surf, the big river, a viewpoint); 0 = never */
     /* Mix intent (docs/sound-director.md): art direction for the real-time sound director, never
      * per-block levels. Focus: -1 background .. 0 neutral .. +1 foreground. */
     ASMR_CONTROL_MIX_CLARITY = 1100,       /* macro 0..1 [0.6]: 0 = raw physical mix, 1 = strongest separation */

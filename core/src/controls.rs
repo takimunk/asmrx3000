@@ -124,6 +124,8 @@ pub mod id {
     pub const FLIGHT_AIRFLOW: u32 = 1006;
     pub const FLIGHT_STEER: u32 = 1007;
     pub const FLIGHT_TURN_RATE: u32 = 1008;
+    pub const FLIGHT_RELIEF: u32 = 1009;
+    pub const FLIGHT_STOPS: u32 = 1010;
     pub const MIX_CLARITY: u32 = 1100;
     pub const MIX_DENSITY: u32 = 1101;
     pub const MIX_SOLOISTS: u32 = 1102;
@@ -171,7 +173,7 @@ use flags::{DISCRETE as D, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 56;
+const N: usize = 58;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -219,6 +221,8 @@ static DEFS: [Def; N] = [
     def(FLIGHT_AIRFLOW, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 3.0, "flight.airflow", "", Store::Local),
     def(FLIGHT_STEER, g::FLIGHT, FLIGHT_SPEED, D, 0.0, 2.0, "flight.steer_by_head", "", Store::Local),
     def(FLIGHT_TURN_RATE, g::FLIGHT, FLIGHT_SPEED, 0, 5.0, 90.0, "flight.turn_rate", "\u{b0}/s", Store::Local),
+    def(FLIGHT_RELIEF, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 2.0, "flight.relief", "", Store::Local),
+    def(FLIGHT_STOPS, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 1.0, "flight.stops", "", Store::Local),
     def(MIX_CLARITY, g::MIX, NO_PARENT, M, 0.0, 1.0, "mix.clarity", "", Store::Local),
     def(MIX_DENSITY, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.density", "", Store::Local),
     def(MIX_SOLOISTS, g::MIX, MIX_CLARITY, 0, 1.0, 4.0, "mix.soloists", "", Store::Local),
@@ -418,6 +422,8 @@ impl ControlBank {
             FLIGHT_BIOME | FLIGHT_SEED => 0.0,
             FLIGHT_DENSITY | FLIGHT_AIRFLOW | FLIGHT_STEER => 1.0,
             FLIGHT_TURN_RATE => 30.0,
+            FLIGHT_RELIEF => 1.0,
+            FLIGHT_STOPS => 0.5,
             MIX_CLARITY => 0.6,
             MIX_DENSITY => mix_density(0.6),
             MIX_SOLOISTS => mix_soloists(0.6),

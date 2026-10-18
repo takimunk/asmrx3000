@@ -200,7 +200,12 @@ impl Propagator {
 
         let l = ctx.listener;
         let c = ctx.speed_of_sound;
-        let gz = ctx.ground_z;
+        // The reflecting ground: the scene's plane, or the emitter's own (terrain), always
+        // under both ends of the path.
+        let gz = match em.ground_z {
+            Some(z) => z.min(l.z.min(s.z) - 0.05),
+            None => ctx.ground_z,
+        };
         let d1 = s - l;
         let r1 = d1.length().max(0.05);
         let sz = s.z.max(gz + 0.02);
@@ -225,7 +230,7 @@ impl Propagator {
             || (em.directivity != Directivity::Omni && forward.dot(k.forward) < 0.995)
             || eq_moved(&em.eq_db, &k.eq);
         if need && (!k.valid || phase % 2 == 0) {
-            let obstructed = self.refit(ctx, em, s, r1, r2, img, sin_psi);
+            let obstructed = self.refit(ctx, em, s, r1, r2, img, sin_psi, gz);
             self.key = SpecKey { pos: s, forward, r1, r2, sin_psi, obstructed, epoch: ctx.epoch, valid: true, eq: em.eq_db };
         }
 
@@ -282,7 +287,7 @@ impl Propagator {
         if ctx.features.early_reflections {
             let mut taps = [(0.0f64, 0.0f32); ER_TRUNKS];
             for (j, t) in ctx.er_trunks.iter().enumerate().take(ER_TRUNKS) {
-                let (delay, gain) = trunk_reflection(t, s, l, gz, c, fs);
+                let (delay, gain) = trunk_reflection(t, s, l, ctx.ground_z, c, fs);
                 taps[j] = (delay, gain * em.gain);
             }
             let mut sorted: [f32; ER_TRUNKS] = core::array::from_fn(|j| taps[j].1);
@@ -334,10 +339,9 @@ impl Propagator {
 
     #[allow(clippy::too_many_arguments)]
     /// Refits both path filters. Returns whether an obstacle affected the path.
-    fn refit(&mut self, ctx: &Context, em: &Emitter, s: Vec3, r1: f32, r2: f32, img: Vec3, sin_psi: f32) -> bool {
+    fn refit(&mut self, ctx: &Context, em: &Emitter, s: Vec3, r1: f32, r2: f32, img: Vec3, sin_psi: f32, gz: f32) -> bool {
         let mut obstructed = false;
         let l = ctx.listener;
-        let gz = ctx.ground_z;
         let mut ln1 = [0.0f64; NF];
         let mut ln2 = [0.0f64; NF];
 
@@ -388,7 +392,7 @@ impl Propagator {
             let c = ctx.speed_of_sound as f64;
             let fmax = ctx.design.freqs[NF - 1];
             for ob in ctx.obstacles.iter() {
-                let Some(ap) = diffraction::aperture(ob, s, l, gz) else { continue };
+                let Some(ap) = diffraction::aperture(ob, s, l, ctx.ground_z) else { continue };
                 if ap.negligible(fmax, c) {
                     continue;
                 }

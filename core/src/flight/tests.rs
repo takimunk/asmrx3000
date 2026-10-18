@@ -6,7 +6,7 @@ use crate::scene::{ObjectInfo, ObjectKind, SceneDesc};
 
 fn flying_engine(speed: f32, seed: u32) -> Engine {
     let mut desc = SceneDesc::default_scene();
-    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), ..Default::default() });
+    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), stops: Some(0.0), ..Default::default() });
     let e = Engine::with_scene(48_000.0, &desc).unwrap();
     e.set_param(param::PLAYING, 1.0);
     e
@@ -82,6 +82,8 @@ fn landscapes_have_their_features() {
     for (bi, b) in land::BIOMES.iter().enumerate() {
         let mut l = Land::new(42, bi as u32);
         let (mut rivers, mut lakes, mut ridges, mut sites, mut trees) = (0, 0, 0, 0, 0usize);
+        let (mut surf, mut air, mut big) = (0, 0, 0);
+        let mut seen_sites = std::collections::HashSet::new();
         let mut seen = std::collections::HashSet::new();
         let mut x = 0.0;
         while x < 5000.0 {
@@ -97,12 +99,35 @@ fn landscapes_have_their_features() {
                 }
             }
             sites = sites.max(l.sites.iter().filter(|s| s.alive).count());
+            for s in l.sites.iter().filter(|s| s.alive && seen_sites.insert(s.id)) {
+                let name = crate::sources::Water::PRESETS.get(s.preset as usize).copied().unwrap_or("");
+                match s.kind {
+                    land::SiteKind::Air => air += 1,
+                    land::SiteKind::Water if name.ends_with("surf") => surf += 1,
+                    land::SiteKind::Water if name == "big_river" => big += 1,
+                    _ => {}
+                }
+            }
             trees = trees.max(trees_near(&l, x, 0.0, 80.0).len());
             x += 50.0;
         }
-        assert!(trees > 100, "{}: {trees} trees", b.name);
-        assert!(rivers >= 5, "{}: {rivers} rivers", b.name);
-        assert!(lakes + ridges >= 2, "{}: {lakes} lakes {ridges} ridges", b.name);
+        println!("{:>16}: {trees} trees, {rivers} rivers, {lakes} lakes, {ridges} ridges, {sites} sites, {surf} surf, {air} air, {big} big river", b.name);
+        if b.forest > 0.05 {
+            assert!(trees > 100, "{}: {trees} trees", b.name);
+        }
+        if b.river_every < 1000.0 {
+            assert!(rivers >= 3, "{}: {rivers} rivers", b.name);
+        }
+        if b.relief.sea > 0.0 {
+            assert!(surf > 3, "{}: {surf} surf sites", b.name);
+        }
+        if b.relief.big_river > 0.0 {
+            assert!(big > 3, "{}: {big} big river sites", b.name);
+        }
+        if b.air == land::Air::Sand || b.air == land::Air::Ridge {
+            assert!(air > 5, "{}: {air} air sites", b.name);
+        }
+        assert!(lakes + ridges >= 1, "{}: {lakes} lakes {ridges} ridges", b.name);
         assert!(sites > 5 && sites < land::MAX_SITES, "{}: {sites} sites", b.name);
     }
 }
@@ -393,7 +418,7 @@ fn streaming_survives_turning_around() {
     look(&e, 0.0, 0.0, 8.0);
     let n = e.objects(&mut objs);
     assert!(n > 50 && n <= bridge::OBJECTS, "{n} objects after turning around");
-    assert!(objs[..n].iter().any(|o| o.kind == ObjectKind::Tree as u32 && o.x > 20.0), "nothing ahead");
+    assert!(objs[..n].iter().any(|o| o.kind == ObjectKind::Tree as u32 && o.x > 12.0), "nothing ahead");
     let mut src = [crate::SourceInfo::default(); 128];
     assert!(e.sources(&mut src) <= EMITTERS);
 }

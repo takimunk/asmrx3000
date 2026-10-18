@@ -179,3 +179,92 @@ impl FlightBridge {
         })
     }
 }
+
+/// Where the listener is in the landscape and what the landscape is (UI terrain). Published
+/// by the audio thread every block; read by the UI with [`FrameBridge::read`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct Frame {
+    /// Listener position in the landscape, m (world frame).
+    pub x: f64,
+    pub y: f64,
+    /// Course heading, rad: the travel frame is the world rotated by −heading.
+    pub heading: f32,
+    /// Absolute heights (m above sea level) of the ears and of the ground under them.
+    pub ear_z: f32,
+    pub ground_z: f32,
+    pub relief: f32,
+    /// The landscape: pass to `asmr_terrain_new`.
+    pub seed: u64,
+    pub biome: u32,
+    /// Changes whenever the landscape is regenerated.
+    pub generation: u32,
+    /// 0 cruising .. 1 stopped at a place.
+    pub linger: f32,
+    /// Precipitation falls as snow (1) or rain (0).
+    pub snow: f32,
+    /// How the ground looks: snow cover, sand cover, bare rock above this slope, a sea.
+    pub snow_cover: f32,
+    pub sand_cover: f32,
+    pub rock_slope: f32,
+    pub sea: f32,
+    /// Mean elevation (sine) of the skyline all around: 0 open .. ~0.5 deep valley.
+    pub enclosure: f32,
+    pub _pad: f32,
+}
+
+const _: () = assert!(core::mem::size_of::<Frame>() == 80);
+
+/// Seqlock over the frame's words.
+pub struct FrameBridge {
+    seq: AtomicU32,
+    words: [AtomicU32; FRAME_WORDS],
+}
+
+const FRAME_WORDS: usize = core::mem::size_of::<Frame>() / 4;
+
+impl Default for FrameBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FrameBridge {
+    pub fn new() -> Self {
+        Self { seq: AtomicU32::new(0), words: core::array::from_fn(|_| AtomicU32::new(0)) }
+    }
+
+    /// Single writer (audio thread).
+    pub fn publish(&self, f: &Frame) {
+        let s = self.seq.load(Ordering::Relaxed);
+        self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
+        fence(Ordering::Release);
+        // SAFETY: Frame is repr(C), plain old data, a multiple of 4 bytes.
+        let words: [u32; FRAME_WORDS] = unsafe { core::mem::transmute_copy(f) };
+        for (a, w) in self.words.iter().zip(words) {
+            a.store(w, Ordering::Relaxed);
+        }
+        self.seq.store(s.wrapping_add(2), Ordering::Release);
+    }
+
+    /// Any thread: the latest consistent frame.
+    pub fn read(&self) -> Frame {
+        let mut words = [0u32; FRAME_WORDS];
+        for _ in 0..64 {
+            let s1 = self.seq.load(Ordering::Acquire);
+            if s1 % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            for (w, a) in words.iter_mut().zip(self.words.iter()) {
+                *w = a.load(Ordering::Relaxed);
+            }
+            fence(Ordering::Acquire);
+            if self.seq.load(Ordering::Relaxed) == s1 {
+                break;
+            }
+        }
+        // SAFETY: as above; any bit pattern is a valid Frame.
+        unsafe { core::mem::transmute_copy(&words) }
+    }
+}

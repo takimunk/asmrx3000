@@ -562,12 +562,14 @@ fn describe(key: &str) -> &'static str {
         "flight.speed" => "Flight mode only (the user switches it on with the flight button): forward speed through an endless generated landscape, m/s. 0 hover, 1.5 walk, 5 run, 12 glide, 25 fast flight. Altitude follows unless set.",
         "flight.altitude" => "Flight mode: ears above the ground, m, logarithmic (1.7 walking among trunks, 5 under the crowns, 20 just above the canopy, 40 high). Follows the speed unless set.",
         "flight.curviness" => "Flight mode: how much the path bends, 0 straight .. 1 (turn radius 250 m). Takes effect ~200 m ahead.",
-        "flight.biome" => "Flight mode landscape: mixed, broadleaf (oak, birch, aspen), taiga (spruce and pine, lakes, rock), river_valley (many brooks, willows, alders), meadows (open parkland, crickets, camps), highlands (ridges, waterfalls). A change fades out and regenerates.",
+        "flight.biome" => "Flight mode landscape: mixed, broadleaf (oak, birch, aspen), taiga (spruce and pine, lakes, rock), river_valley (many brooks, willows, alders), meadows (open parkland, crickets, camps), highlands (ridges, waterfalls), desert (dunes, sand hissing in the wind, sparse life), snowy_mountains (high relief, snow, frozen lakes, echoes, wind howl on ridges), lake_shore (big lakes, beaches), sea_coast (surf, beaches, cliffs), big_river (a wide river with banks and floodplain). A change fades out and regenerates.",
         "flight.density" => "Flight mode: forest density multiplier, 0 open .. 1 as generated .. 2 dense; applies at once.",
         "flight.seed" => "Flight mode: which landscape, 0..999 (another number = another landscape; regenerates).",
         "flight.steer_by_head" => "Flight mode: fly where the head looks (AirPods head tracking). off = keep the course (head only looks around), yaw = turning the head turns the flight, yaw_pitch = also climb when looking up and descend when looking down.",
         "flight.turn_rate" => "Flight mode, steering by head: fastest turn, degrees per second (10 lazy glider, 30 default, 60+ agile). Reached when the head is turned ~45° from the course.",
         "flight.airflow" => "Flight mode: wind noise of motion at the ears, 0 off, 1 physical (subtle below ~10 m/s), 3 strong.",
+        "flight.relief" => "Flight mode: how high the hills, mountains and dunes are, 0 flat .. 1 as the biome .. 2 twice as steep (regenerates). Relief shapes the sound: hills hide sources, valleys echo.",
+        "flight.stops" => "Flight mode: how often the flight eases down and lingers at a place (lake shore, waterfall, surf, river bank, viewpoint), 0 never .. 0.5 now and then .. 1 at every one, longer.",
         _ => "",
     }
 }

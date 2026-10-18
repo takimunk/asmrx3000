@@ -75,6 +75,14 @@ pub struct WaterConfig {
     pub trickle: f32,
     /// Level of rain falling on the water surface (0..3).
     pub rain_on_surface: f32,
+    /// Sea surf: height of the breakers, m (0 = none; 0..4). Each breaker plunges (a
+    /// broadband crash), washes up the beach (hiss) and drains back (through shingle: a
+    /// rattle of pebbles).
+    pub surf: f32,
+    /// Swell period, s (4..18): time between breakers.
+    pub swell_s: f32,
+    /// Shingle on the beach (0 sand .. 1 pebbles): the rattle of the backwash.
+    pub shingle: f32,
     /// Linear output gain (0..8).
     pub gain: f32,
 }
@@ -95,6 +103,9 @@ impl Default for WaterConfig {
             drips_hz: 0.0,
             trickle: 0.0,
             rain_on_surface: 1.0,
+            surf: 0.0,
+            swell_s: 9.0,
+            shingle: 0.0,
             gain: 1.0,
         }
     }
@@ -115,6 +126,9 @@ impl WaterConfig {
         check("drips_hz", self.drips_hz, 0.0, 20.0)?;
         check("trickle", self.trickle, 0.0, 1.0)?;
         check("rain_on_surface", self.rain_on_surface, 0.0, 3.0)?;
+        check("surf", self.surf, 0.0, 4.0)?;
+        check("swell_s", self.swell_s, 4.0, 18.0)?;
+        check("shingle", self.shingle, 0.0, 1.0)?;
         check("gain", self.gain, 0.0, 8.0)
     }
 }
@@ -205,6 +219,91 @@ fn bubble_energy(r: f32, sr: f32) -> f32 {
     a * a * 0.25 * sr / bubble_damping(minnaert_hz(r))
 }
 
+/// One breaking wave: plunge, swash up the beach, backwash.
+#[derive(Clone, Copy, Default)]
+struct Breaker {
+    on: bool,
+    t: f32,
+    dur: f32,
+    amp: f32,
+}
+
+/// Sea surf (see `WaterConfig::surf`). A plunging breaker of height H dissipates the wave's
+/// energy flux E·c_g ∝ H²·T over a few seconds: the crash is broadband noise (a curtain of
+/// bubbles entrained at once, far too many to resolve: Campbell bed) whose level grows with
+/// H^1.5·√T; the swash hisses as the bore runs up the beach and the backwash drains through
+/// the sand or rattles the shingle (pebble collisions at a rate ∝ backwash × shingle). Wave
+/// groups (sets of larger waves every ~6 periods) and a continuous roar of the breakers
+/// further along the shore make the rest. Up to three breakers overlap.
+struct Surf {
+    breakers: [Breaker; 3],
+    next: f32,
+    group: f32,
+    crash: [NoiseBand; 3],
+    hiss: NoiseBand,
+    roar: NoiseBand,
+    ev_rattle: Events,
+    rattle_rate: f32,
+}
+
+impl Surf {
+    fn new(sr: f32, rng: &mut Rng) -> Self {
+        Self {
+            breakers: [Breaker::default(); 3],
+            next: rng.range(0.5, 4.0),
+            group: rng.uniform(),
+            crash: [NoiseBand::new(110.0, 0.5, sr), NoiseBand::new(650.0, 0.6, sr), NoiseBand::new(2800.0, 0.7, sr)],
+            hiss: NoiseBand::new(6000.0, 0.8, sr),
+            roar: NoiseBand::new(180.0, 0.45, sr),
+            ev_rattle: Events::new(rng),
+            rattle_rate: 0.0,
+        }
+    }
+
+    fn active(&self) -> bool {
+        self.breakers.iter().any(|b| b.on) || self.roar.gain.cur > 0.0
+    }
+
+    /// Advances the breakers by one block and sets the band levels.
+    fn update(&mut self, cfg: &WaterConfig, dt: f32, len: usize, sr: f32, rng: &mut Rng) {
+        let period = cfg.swell_s.clamp(4.0, 18.0);
+        if cfg.surf > 0.0 {
+            self.next -= dt;
+            self.group = (self.group + dt / (6.5 * period)) % 1.0;
+            if self.next <= 0.0 {
+                self.next = period * rng.range(0.8, 1.2);
+                if let Some(b) = self.breakers.iter_mut().find(|b| !b.on) {
+                    let set = 0.65 + 0.35 * (core::f32::consts::TAU * self.group).sin();
+                    *b = Breaker { on: true, t: 0.0, dur: period * rng.range(0.65, 0.85), amp: cfg.surf * set * (0.3 * rng.gauss()).exp() };
+                }
+            }
+        }
+        let (mut crash, mut wash, mut back) = (0.0f32, 0.0f32, 0.0f32);
+        for b in self.breakers.iter_mut().filter(|b| b.on) {
+            b.t += dt;
+            let t = b.t;
+            let c = if t < 0.35 { (t / 0.35) * (t / 0.35) } else { (-(t - 0.35) / 0.9).exp() };
+            crash += b.amp.powf(1.5) * c;
+            wash += b.amp * smoothstep(0.3, 1.2, t) * (1.0 - smoothstep(0.45 * b.dur, 0.7 * b.dur, t));
+            back += b.amp * smoothstep(0.5 * b.dur, 0.65 * b.dur, t) * (1.0 - smoothstep(0.85 * b.dur, b.dur, t));
+            if t >= b.dur {
+                b.on = false;
+            }
+        }
+        let k = 0.05 * EVENT_LEVEL * period.sqrt() / 3.0;
+        for (band, (w, fc, q)) in self.crash.iter_mut().zip(CRASH_BANDS) {
+            band.gain.to(k * w * (crash + 0.15 * wash) * band_norm(fc, q, sr), len);
+        }
+        self.hiss.gain.to(k * (0.45 * wash + 0.3 * back * (1.0 - cfg.shingle)) * band_norm(6000.0, 0.8, sr), len);
+        let shore = (cfg.length_m / 40.0).clamp(0.05, 3.0).sqrt();
+        self.roar.gain.to(k * 0.22 * cfg.surf.powf(1.5) * shore * band_norm(180.0, 0.45, sr), len);
+        self.rattle_rate = 500.0 * cfg.shingle * back / sr;
+    }
+}
+
+/// Surf crash bands: (weight, centre Hz, Q).
+const CRASH_BANDS: [(f32, f32, f32); 3] = [(1.0, 110.0, 0.5), (0.7, 650.0, 0.6), (0.35, 2800.0, 0.7)];
+
 pub struct Water {
     sample_rate: f32,
     rng: Rng,
@@ -250,6 +349,7 @@ pub struct Water {
     snag_rate: f32,
     ev_snag: Events,
     bed_mod: Ramp,
+    surf: Surf,
 }
 
 impl Water {
@@ -296,6 +396,7 @@ impl Water {
             snag_rate: 0.0,
             ev_snag: Events::new(&mut rng),
             bed_mod: Ramp::new(1.0),
+            surf: Surf::new(sr, &mut rng),
             rng,
             cfg,
         }
@@ -350,6 +451,22 @@ impl Water {
     pub fn trickle() -> WaterConfig {
         WaterConfig { flow_ms: 0.0, depth_m: 0.1, width_m: 0.4, length_m: 0.4, trickle: 0.6, drop_height_m: 0.3, ..Default::default() }
     }
+    /// Sea surf on a sandy beach: plunging breakers, swash and a soft backwash.
+    pub fn sea_surf() -> WaterConfig {
+        WaterConfig { flow_ms: 0.0, depth_m: 1.5, width_m: 10.0, length_m: 40.0, rock_d50_m: 0.01, aeration: 1.0, surf: 1.2, swell_s: 9.0, shingle: 0.05, ..Default::default() }
+    }
+    /// Surf on a rocky, shingly shore under cliffs: harder crash, pebbles rattling back.
+    pub fn rock_surf() -> WaterConfig {
+        WaterConfig { surf: 1.5, swell_s: 10.0, shingle: 0.8, rock_d50_m: 0.3, ..Self::sea_surf() }
+    }
+    /// Mid-stream of a big lowland river: deep, wide, smooth; boils and eddies gulp now and then.
+    pub fn big_river() -> WaterConfig {
+        WaterConfig { flow_ms: 1.0, depth_m: 3.5, width_m: 40.0, length_m: 30.0, rock_d50_m: 0.05, turbulence: 0.12, aeration: 0.3, waves: 0.2, fetch_m: 2000.0, ..Default::default() }
+    }
+    /// The bank of a big river: slow water along the shore, small waves lapping.
+    pub fn river_bank() -> WaterConfig {
+        WaterConfig { flow_ms: 0.3, depth_m: 0.6, width_m: 6.0, length_m: 30.0, rock_d50_m: 0.08, turbulence: 0.15, aeration: 0.35, waves: 0.9, fetch_m: 3000.0, ..Default::default() }
+    }
 
     pub fn preset(name: &str) -> Option<WaterConfig> {
         Some(match name {
@@ -362,12 +479,16 @@ impl Water {
             "small_waterfall" => Self::small_waterfall(),
             "drips" => Self::drips(),
             "trickle" => Self::trickle(),
+            "sea_surf" => Self::sea_surf(),
+            "rock_surf" => Self::rock_surf(),
+            "big_river" => Self::big_river(),
+            "river_bank" => Self::river_bank(),
             _ => return None,
         })
     }
 
     pub const PRESETS: &'static [&'static str] =
-        &["still_lake", "lake_lapping", "slow_river", "brook_pebbles", "brook_rocks", "rapids", "small_waterfall", "drips", "trickle"];
+        &["still_lake", "lake_lapping", "slow_river", "brook_pebbles", "brook_rocks", "rapids", "small_waterfall", "drips", "trickle", "sea_surf", "rock_surf", "big_river", "river_bank"];
 
     fn update(&mut self, c: &Controls, len: usize) {
         let sr = self.sample_rate;
@@ -554,6 +675,11 @@ impl Water {
         }
         let white = &white[..len];
         out.fill(0.0);
+        let surfing = self.cfg.surf > 0.0 || self.surf.active();
+        if surfing {
+            let cfg = self.cfg;
+            self.surf.update(&cfg, dt, len, sr, &mut self.rng);
+        }
 
         // Events at their sample offsets.
         let clouds = self.cloud_rate > 0.0 || self.cloud.iter().any(|m| m.energy() > 1e-14);
@@ -589,6 +715,12 @@ impl Water {
                     self.drip(at);
                 }
             }
+            if surfing && self.surf.rattle_rate > 0.0 && self.surf.ev_rattle.tick(self.surf.rattle_rate, &mut self.rng) > 0 {
+                // A pebble knocked over by the backwash.
+                let rng = &mut self.rng;
+                let spec = GrainSpec { amp: 0.004 * EVENT_LEVEL * rng.range(0.3, 1.2), fc: rng.range(2500.0, 7000.0), q: 0.9, attack: 0.0002, decay: rng.range(0.002, 0.007), delay: at, ..Default::default() };
+                self.grains.spawn(&spec, sr);
+            }
             if self.trickle_rate > 0.0 && self.ev_trickle.tick(self.trickle_rate / sr, &mut self.rng) > 0 {
                 let r = self.rng.range(0.0006, 0.002);
                 self.bubbles.spawn(r, bubble_amp(r) * 1.5 * EVENT_LEVEL, self.rng.range(0.05, 0.2), at, sr);
@@ -616,6 +748,13 @@ impl Water {
         self.bed_mod.finish();
         for b in self.plunge.iter_mut() {
             b.render_add(white, out);
+        }
+        if surfing {
+            for b in self.surf.crash.iter_mut() {
+                b.render_add(white, out);
+            }
+            self.surf.hiss.render_add(white, out);
+            self.surf.roar.render_add(white, out);
         }
         let mut rain = [0.0f32; BLOCK];
         let rain = &mut rain[..len];
