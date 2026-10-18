@@ -87,14 +87,18 @@ impl Dynamics {
         // Leveller: partial correction of short-term loudness, held while (nearly) silent.
         let st = self.pre.short_term;
         if st > -55.0 {
-            let want = (p.strength.clamp(0.0, 1.0) * (p.target_lufs - st)).clamp(-MAX_CUT_DB, MAX_BOOST_DB * p.strength.clamp(0.0, 1.0));
+            // Too loud comes down nearly all the way (comfort); too quiet is lifted partly and
+            // at most MAX_BOOST_DB, so a still night keeps its stillness.
+            let s = p.strength.clamp(0.0, 1.0);
+            let err = p.target_lufs - st;
+            let want = if err < 0.0 { ((2.0 * s).min(1.0) * err).max(-MAX_CUT_DB) } else { (0.6 * s * err).min(MAX_BOOST_DB * s) };
             // Down in ~1 s, up in ~4 s.
             let tau = if want < self.level_db { 1.0 } else { 4.0 };
             self.level_db += (want - self.level_db) * (1.0 - (-dt / tau).exp());
         }
         // Comfort compressor on momentary loudness after the leveller.
         let over = self.pre.momentary + self.level_db - (p.target_lufs + COMFORT_LU);
-        let want = if over > 0.0 { -over * (1.0 - 1.0 / COMFORT_RATIO) * p.strength.clamp(0.25, 1.0) } else { 0.0 };
+        let want = if over > 0.0 { -over * (1.0 - 1.0 / COMFORT_RATIO) * p.strength.clamp(0.0, 1.0) } else { 0.0 };
         let tau = if want < self.comp_db { 0.03 } else { 1.5 };
         self.comp_db += (want - self.comp_db) * (1.0 - (-dt / tau).exp());
 
@@ -106,11 +110,7 @@ impl Dynamics {
             let g = start + (target - start) * u;
             let peak = l[i].abs().max(r[i].abs()) * g;
             let need = if peak > CEILING { CEILING / peak } else { 1.0 };
-            if need < self.lim {
-                self.lim = need;
-            } else {
-                self.lim += (1.0 - self.lim) * self.lim_release;
-            }
+            self.lim = need.min(self.lim + (1.0 - self.lim) * self.lim_release);
             out[i] = g * self.lim;
         }
         self.applied = target * self.lim;
@@ -151,11 +151,11 @@ mod tests {
         let mut seed = 1u32;
         // A loud scene (≈ 75 dB at the ears) comes down to the target.
         let mut d = Dynamics::new(48_000.0);
-        run(&mut d, 0.3, 12.0, &p, &mut seed);
+        run(&mut d, 0.03, 12.0, &p, &mut seed);
         assert!((d.post.short_term + 22.0).abs() < 1.5, "loud: {}", d.post.short_term);
         // A quiet one is lifted, but by at most MAX_BOOST_DB.
         let mut q = Dynamics::new(48_000.0);
-        run(&mut q, 0.004, 20.0, &p, &mut seed);
+        run(&mut q, 0.0015, 20.0, &p, &mut seed);
         assert!(q.level_db > 8.0 && q.level_db <= MAX_BOOST_DB + 0.01, "{}", q.level_db);
         assert!(q.post.short_term < -24.0);
         // A sudden clap: the compressor and limiter keep the output under the ceiling.

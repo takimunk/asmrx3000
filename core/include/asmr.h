@@ -86,6 +86,14 @@ enum {
     ASMR_TELEMETRY_FLIGHT_ALTITUDE = 16, /* ears above the ground, m (follows flight.altitude, gentle swells) */
     ASMR_TELEMETRY_FLIGHT_ODOMETER = 17, /* distance flown along the path, m, wraps at 10 km (scroll the ground with it) */
     ASMR_TELEMETRY_FLIGHT_TURN = 18,     /* turn rate of the path, rad/s, + = turning left */
+    /* Sound director (docs/sound-director.md). Loudness of the mix after its dynamics, before
+     * ASMR_PARAM_VOLUME, BS.1770: */
+    ASMR_TELEMETRY_LOUDNESS_MOMENTARY = 19,  /* LUFS, 400 ms */
+    ASMR_TELEMETRY_LOUDNESS_SHORT = 20,      /* LUFS, 3 s */
+    ASMR_TELEMETRY_LOUDNESS_INTEGRATED = 21, /* LUFS, gated, since start */
+    ASMR_TELEMETRY_MIX_GAIN_DB = 22,         /* leveller + comfort compressor + limiter, dB */
+    ASMR_TELEMETRY_SOLOISTS = 23,            /* foreground sources right now */
+    ASMR_TELEMETRY_MASKING = 24,             /* share of the soloists' loudness masked by the bed, 0..1 */
 };
 
 enum {
@@ -156,6 +164,7 @@ enum {
     ASMR_GROUP_INSECTS = 7,
     ASMR_GROUP_FIRE = 8,
     ASMR_GROUP_FLIGHT = 9,      /* flight mode: speed, altitude, path, landscape */
+    ASMR_GROUP_MIX = 10,        /* mix intent for the sound director: clarity, density, focus */
 };
 
 enum {
@@ -211,6 +220,19 @@ enum {
     ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
     ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
     ASMR_CONTROL_FLIGHT_AIRFLOW = 1006,   /* wind noise of motion at the ears x 0..3 [1 = physical, subtle below ~10 m/s] */
+    /* Mix intent (docs/sound-director.md): art direction for the real-time sound director, never
+     * per-block levels. Focus: -1 background .. 0 neutral .. +1 foreground. */
+    ASMR_CONTROL_MIX_CLARITY = 1100,       /* macro 0..1 [0.6]: 0 = raw physical mix, 1 = strongest separation */
+    ASMR_CONTROL_MIX_DENSITY = 1101,       /* overlapping bird phrases 0 (one at a time) .. 1 (no limit); follows clarity */
+    ASMR_CONTROL_MIX_SOLOISTS = 1102,      /* foreground sources at once, 1..4; follows clarity [2] */
+    ASMR_CONTROL_MIX_LOUDNESS = 1103,      /* target loudness, LUFS -36..-10 [-22] */
+    ASMR_CONTROL_MIX_DYNAMICS = 1104,      /* leveller / comfort compressor amount 0..1 [0.7] */
+    ASMR_CONTROL_MIX_FOCUS_WATER = 1105,
+    ASMR_CONTROL_MIX_FOCUS_WIND = 1106,
+    ASMR_CONTROL_MIX_FOCUS_BIRDS = 1107,
+    ASMR_CONTROL_MIX_FOCUS_RAIN = 1108,    /* rain and thunder */
+    ASMR_CONTROL_MIX_FOCUS_INSECTS = 1109,
+    ASMR_CONTROL_MIX_FOCUS_FIRE = 1110,
 };
 
 typedef struct AsmrControlInfo {
@@ -290,6 +312,42 @@ uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out,
 uint32_t asmr_get_state_json(const AsmrEngine *engine, char *out, uint32_t max);
 uint32_t asmr_apply_patch_json(const AsmrEngine *engine, const char *patch, char *out, uint32_t max);
 uint32_t asmr_get_prompt_json(const AsmrEngine *engine, char *out, uint32_t max);
+
+/* Sound director telemetry (asmr_get_mix). Groups index the arrays below. */
+enum {
+    ASMR_MIX_GROUP_WATER = 0,
+    ASMR_MIX_GROUP_WIND = 1,    /* wind and foliage */
+    ASMR_MIX_GROUP_BIRDS = 2,
+    ASMR_MIX_GROUP_RAIN = 3,
+    ASMR_MIX_GROUP_THUNDER = 4,
+    ASMR_MIX_GROUP_INSECTS = 5,
+    ASMR_MIX_GROUP_FIRE = 6,
+    ASMR_MIX_GROUPS = 8,        /* array size (one spare) */
+};
+
+typedef struct AsmrMixInfo {
+    float loudness_momentary;   /* LUFS after the mix dynamics, before volume */
+    float loudness_short;
+    float loudness_integrated;
+    float gain_db;              /* mix dynamics gain */
+    float group_lufs[8];        /* each group's share of the output (bed + its soloists), LUFS; -70 = silent */
+    float group_sone[8];        /* loudness of the group alone, sone (Zwicker) */
+    float group_masking[8];     /* 0..1: part of the group's loudness hidden by everything else */
+    float group_duck_db[8];     /* masking-aware cut on the group's bed in the bands it occupies, dB <= 0 */
+    uint32_t soloists;          /* foreground sources now */
+    uint32_t soloist_source[4]; /* their asmr_get_sources indices (flight: 64 + slot), UINT32_MAX = none */
+    float soloist_salience[4];  /* 0..1 */
+    float soloist_masking[4];   /* 0..1 */
+    uint32_t phrases;           /* bird phrases sounding now */
+    uint32_t max_phrases;       /* their limit (0 = none) */
+    float masking_before;       /* soloists' masked share without / with ducking, 0..1 */
+    float masking_after;
+    float smr_before_db;        /* soloists' signal-to-mask ratio in their bands without / with ducking, dB */
+    float smr_after_db;
+} AsmrMixInfo;
+
+/* Any thread. */
+void asmr_get_mix(const AsmrEngine *engine, AsmrMixInfo *out);
 
 /* Live per-track peak waveform (asmr_get_scope): one point per 64-sample block, oldest first. */
 enum {

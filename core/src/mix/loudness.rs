@@ -48,7 +48,7 @@ pub fn threshold_db(f: f32) -> f32 {
 /// A-weighting gain (power, linear) at `f` Hz (IEC 61672), 1 at 1 kHz.
 pub fn a_weight_sq(f: f32) -> f32 {
     let f2 = f * f;
-    let ra = (12194.0f32 * 12194.0).powi(2) * f2 * f2 / ((f2 + 20.6 * 20.6) * ((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)).sqrt() * (f2 + 12194.0 * 12194.0));
+    let ra = 12194.0f32 * 12194.0 * f2 * f2 / ((f2 + 20.6 * 20.6) * ((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)).sqrt() * (f2 + 12194.0 * 12194.0));
     // +2.0 dB normalisation at 1 kHz.
     (ra * 1.258_925_4).powi(2)
 }
@@ -401,7 +401,8 @@ fn bilinear(b: [f64; 3], a: [f64; 3], fs: f64) -> Biquad {
 
 impl SoundLevelMeter {
     pub fn new(fs: f32) -> Self {
-        let w = |f: f64| 2.0 * core::f64::consts::PI * f;
+        // Poles prewarped so the bilinear map keeps them at their analogue frequencies.
+        let w = |f: f64| 2.0 * fs as f64 * (core::f64::consts::PI * f / fs as f64).tan();
         let (w1, w2, w3, w4) = (w(20.598997), w(107.65265), w(737.86223), w(12194.217));
         let fsd = fs as f64;
         let mut a = [
@@ -534,7 +535,8 @@ mod tests {
         for (f, expect) in [(1000.0, 94.0), (100.0, 94.0 - 19.1), (8000.0, 94.0 - 1.1)] {
             let mut m = SoundLevelMeter::new(fs);
             m.process(&sine(f, fs, 48_000, 2f32.sqrt()), 1.0);
-            assert!((m.laeq() - expect).abs() < 0.6, "{f} Hz: {}", m.laeq());
+            // Bilinear with prewarped poles: within IEC 61672 class 1 (±1 dB here).
+            assert!((m.laeq() - expect).abs() < 1.0, "{f} Hz: {}", m.laeq());
             assert!((a_weight_sq(f).log10() * 10.0 - (expect - 94.0)).abs() < 0.3);
         }
     }

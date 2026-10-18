@@ -154,6 +154,48 @@ impl Analysis {
         m * MASK_INDEX
     }
 
+    /// Signal-to-mask ratio (dB) of track `t` against `others`, averaged over its bands with
+    /// its specific loudness as weight: (without duck, with duck, total weight).
+    pub fn smr(&self, t: usize, others: &[bool], duck: &[Curve]) -> (f32, f32, f32) {
+        let (mut s0, mut s1, mut w) = (0.0, 0.0, 0.0);
+        for z in 0..BANDS {
+            let e = self.exc[t][z];
+            let n = self.model.specific(z, e, 0.0);
+            if n <= 0.0 {
+                continue;
+            }
+            let tq = self.model.e_tq[z];
+            s0 += n * 10.0 * (e / (self.masker(others, z, None) + tq)).max(1e-9).log10();
+            s1 += n * 10.0 * (e / (self.masker(others, z, Some(duck)) + tq)).max(1e-9).log10();
+            w += n;
+        }
+        if w > 0.0 {
+            (s0 / w, s1 / w, w)
+        } else {
+            (0.0, 0.0, 0.0)
+        }
+    }
+
+    /// Unmasked and partial loudness (sone) of the sum of the tracks in `members` against the
+    /// tracks in `others` (duck curves applied to both if given).
+    pub fn partial_union(&self, members: &[bool], others: &[bool], duck: Option<&[Curve]>) -> (f32, f32) {
+        let (mut n, mut np) = (0.0, 0.0);
+        for z in 0..BANDS {
+            let mut e = 0.0;
+            for (t, on) in members.iter().enumerate() {
+                if *on {
+                    e += self.exc[t][z] * duck.map_or(1.0, |c| db_gain_sq(c[t][z]));
+                }
+            }
+            if e <= 0.0 {
+                continue;
+            }
+            n += self.model.specific(z, e, 0.0);
+            np += self.model.specific(z, e, self.masker(others, z, duck));
+        }
+        (n, np)
+    }
+
     /// Unmasked and partial loudness (sone) of track `t` against the tracks in `others`,
     /// with optional duck curves applied to the maskers (and to `t` itself if it is ducked).
     pub fn partial(&self, t: usize, others: &[bool], duck: Option<&[Curve]>) -> (f32, f32) {

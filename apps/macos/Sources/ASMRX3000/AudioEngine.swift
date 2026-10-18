@@ -61,6 +61,12 @@ struct Telemetry {
     var altitude: Float = 1.7
     var odometer: Float = 0
     var speed: Float = 0
+    /// Sound director: short-term loudness (LUFS, before volume), dynamics gain (dB),
+    /// foreground soloists and how masked they are (0..1).
+    var loudness: Float = -70
+    var mixGain: Float = 0
+    var soloists: Float = 0
+    var masking: Float = 0
 }
 
 /// Hosts the Rust engine inside AVAudioEngine. The Rust side does all DSP; this class only
@@ -83,7 +89,7 @@ final class AudioEngine: ObservableObject {
     private var stopWork: DispatchWorkItem?
     private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 128)
     private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 256)
-    private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
+    private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 96)
     private var controlNames: [UInt32: (String, String)] = [:]
     /// Control values the user set, in order, re-applied when the core is rebuilt.
     private var setControls: [(UInt32, Float)] = []
@@ -237,8 +243,19 @@ final class AudioEngine: ObservableObject {
             flight: telemetry(ASMR_TELEMETRY_FLIGHT),
             altitude: telemetry(ASMR_TELEMETRY_FLIGHT_ALTITUDE),
             odometer: telemetry(ASMR_TELEMETRY_FLIGHT_ODOMETER),
-            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED)
+            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED),
+            loudness: telemetry(ASMR_TELEMETRY_LOUDNESS_SHORT),
+            mixGain: telemetry(ASMR_TELEMETRY_MIX_GAIN_DB),
+            soloists: telemetry(ASMR_TELEMETRY_SOLOISTS),
+            masking: telemetry(ASMR_TELEMETRY_MASKING)
         )
+    }
+
+    /// Full sound-director telemetry: per-group loudness, masking and ducks, the soloists.
+    func mixInfo() -> AsmrMixInfo {
+        var info = AsmrMixInfo()
+        asmr_get_mix(core, &info)
+        return info
     }
 
     /// Scene objects (id, kind, position, flags). Ids are stable for the engine's lifetime.

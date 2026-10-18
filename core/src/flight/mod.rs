@@ -530,6 +530,7 @@ impl Flight {
             let mut c = em.controls;
             c.water = inp.water * em.flow;
             c.neural = inp.neural;
+            c.legacy_levels = mixer.bypass;
             c.gust = (inp.wind_slider + (inp.wind.local(rel.y) - inp.wind_slider) * inp.gustiness).max(0.0);
             // Sound director: calibrated level, role, masking EQ, phrase permits.
             let view = EmitterView {

@@ -93,10 +93,24 @@ enum Icon: Hashable {
             case ASMR_GROUP_INSECTS: return .cricket
             case ASMR_GROUP_FIRE: return .flame
             case ASMR_GROUP_FLIGHT: return .flight
+            case ASMR_GROUP_MIX: return .tone
             default: return .volume
             }
         }
         let leaf = c.key.split(separator: ".").last.map(String.init) ?? c.key
+        if c.group == UInt32(ASMR_GROUP_MIX) {
+            // Mix intent: focus per group shows that group's pictogram.
+            switch leaf {
+            case "water": return .water
+            case "wind": return .wind
+            case "birds", "soloists": return .birds
+            case "rain": return .rain
+            case "insects": return .cricket
+            case "fire": return .flame
+            case "density": return .dot
+            default: return .gain
+            }
+        }
         switch leaf {
         case "flow", "current": return .flow
         case "speed" where c.group == UInt32(ASMR_GROUP_WATER): return .flow

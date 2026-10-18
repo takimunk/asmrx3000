@@ -106,6 +106,8 @@ pub struct Controls {
     pub env: Ambient,
     /// Prefer trained neural voices where a species has one (ASMR_PARAM_NEURAL_BIRDS).
     pub neural: bool,
+    /// A/B renders of the mix before the sound director: skip voice level matching.
+    pub legacy_levels: bool,
 }
 
 /// A mono sound generator. Called on the audio thread once per control block:

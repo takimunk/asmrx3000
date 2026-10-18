@@ -585,6 +585,17 @@ impl Engine {
         m.probes().iter().map(|p| (p.class, p.meter.laeq(), p.meter.lafmax(), p.inv_r2 / p.blocks.max(1) as f64)).collect()
     }
 
+    /// Starts timing the mix layer; `mix_cpu_s` reads the total. Between renders.
+    pub fn enable_mix_timing(&self) {
+        // SAFETY: as above.
+        unsafe { &mut *self.dsp.get() }.mix.enable_timing();
+    }
+
+    pub fn mix_cpu_s(&self) -> f64 {
+        // SAFETY: as above.
+        unsafe { &*self.dsp.get() }.mix.cpu_s
+    }
+
     /// Restarts the integrated-loudness measurement.
     pub fn reset_loudness(&self) {
         // SAFETY: as above.
@@ -815,6 +826,7 @@ impl Dsp {
             let mut controls = em.controls;
             controls.water = water * em.flow;
             controls.neural = neural;
+            controls.legacy_levels = self.mix.bypass;
             controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
             let flying = em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0;
             let view = EmitterView {
@@ -1187,6 +1199,9 @@ mod tests {
             engine.set_param(param::WIND, 0.0);
             engine.set_control(id::WATER_REGIME, regime);
             engine.set_control(id::WATER_FLOW, flow);
+            // Absolute level comparison of the model itself: no calibration headroom, leveller
+            // or ducking in the way.
+            engine.set_mix_bypass(true);
             let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
             let mut e = 0.0f64;
             for i in 0..(48_000 * 4 / 512) {

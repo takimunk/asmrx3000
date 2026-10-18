@@ -18,9 +18,10 @@ use crate::sources::ModelKind;
 /// Sound-pressure unit of calibrated signals: 1.0 = 1 Pa = 94 dB SPL.
 pub const PA_DB: f32 = 93.979;
 
-/// dB SPL at the ears that corresponds to 0 dBFS before the mix dynamics: a typical scene at
-/// ~50 dB(A) lands near −21 LUFS (the dynamics take it the rest of the way).
-pub const PLAYBACK_REF_DB: f32 = 72.0;
+/// dB SPL at the ears that corresponds to 0 dBFS before the mix dynamics: a lively scene at
+/// ~55–60 dB(A) lands near the −22 LUFS target, a quiet night at 35 dB(A) well below it (the
+/// leveller lifts it only partly).
+pub const PLAYBACK_REF_DB: f32 = 78.0;
 
 /// What made a sound: the calibration and attention class of an emitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,32 +162,33 @@ use SoundClass as C;
 /// The calibration table. `raw_db` comes from `cargo run --release --example calibrate`.
 #[rustfmt::skip]
 pub static TABLE: [Entry; 14] = [
-    e(C::Bird(Species::Chaffinch), LaFmax1m, 86.0, 0.0, "full song", "Brumm & Todt 2002; Brumm 2004 review: passerine song 80–95 dB(A) at 1 m"),
-    e(C::Bird(Species::Robin), LaFmax1m, 82.0, 0.0, "song", "Brumm & Todt 2002 (robins 78–87 dB at 1 m)"),
-    e(C::Bird(Species::SongThrush), LaFmax1m, 88.0, 0.0, "song", "Brackenbury 1979 (thrushes ~90 dB at 1 m)"),
-    e(C::Bird(Species::Nightingale), LaFmax1m, 90.0, 0.0, "song", "Brumm 2004 (nightingale 84–95 dB at 1 m, noise dependent)"),
-    e(C::Bird(Species::TawnyOwl), LaFmax1m, 80.0, 0.0, "hoot", "Galeotti & Pavan 1991 / Appleby & Redpath 1997 (hoots audible >1 km)"),
-    e(C::Bird(Species::Cuckoo), LaFmax1m, 88.0, 0.0, "cu-coo call", "carries 1–2 km; ~85–90 dB at 1 m"),
-    e(C::Bird(Species::WoodPigeon), LaFmax1m, 74.0, 0.0, "cooing", "low-pitched coo, ~70–78 dB at 1 m"),
-    e(C::Bird(Species::Swallow), LaFmax1m, 74.0, 0.0, "twitter", "soft twittering song, ~70–78 dB at 1 m"),
-    e(C::Water, LaEq1m, 64.0, 0.0, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
-    e(C::Foliage, LaEqScene, 44.0, 0.0, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
-    e(C::Wind, LaEqScene, 36.0, 0.0, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
-    e(C::Rain, LaEqScene, 51.0, 0.0, "default scene, 4 mm/h steady rain", "rain 1 mm/h ~45, 4 mm/h ~50, 15 mm/h ~58, 50 mm/h ~65 dB(A) (in-forest measurements)"),
-    e(C::Insects, LaEq1m, 72.0, 0.0, "field_cricket chorus (4 males), 22 °C, night", "Gryllus campestris calling song ~90 dB at 10 cm (~70 dB at 1 m each)"),
-    e(C::Fire, LaEq1m, 62.0, 0.0, "campfire 20 kW", "campfire crackle ~55–65 dB(A) at 1 m"),
+    e(C::Bird(Species::Chaffinch), LaFmax1m, 86.0, 79.7, "full song", "Brumm & Todt 2002; Brumm 2004 review: passerine song 80–95 dB(A) at 1 m"),
+    e(C::Bird(Species::Robin), LaFmax1m, 82.0, 77.3, "song", "Brumm & Todt 2002 (robins 78–87 dB at 1 m)"),
+    e(C::Bird(Species::SongThrush), LaFmax1m, 88.0, 78.6, "song", "Brackenbury 1979 (thrushes ~90 dB at 1 m)"),
+    e(C::Bird(Species::Nightingale), LaFmax1m, 90.0, 80.7, "song", "Brumm 2004 (nightingale 84–95 dB at 1 m, noise dependent)"),
+    e(C::Bird(Species::TawnyOwl), LaFmax1m, 80.0, 81.6, "hoot", "Galeotti & Pavan 1991 / Appleby & Redpath 1997 (hoots audible >1 km)"),
+    e(C::Bird(Species::Cuckoo), LaFmax1m, 88.0, 79.2, "cu-coo call", "carries 1–2 km; ~85–90 dB at 1 m"),
+    e(C::Bird(Species::WoodPigeon), LaFmax1m, 74.0, 77.7, "cooing", "low-pitched coo, ~70–78 dB at 1 m"),
+    e(C::Bird(Species::Swallow), LaFmax1m, 74.0, 77.5, "twitter", "soft twittering song, ~70–78 dB at 1 m"),
+    e(C::Water, LaEq1m, 57.0, 52.6, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
+    e(C::Foliage, LaEqScene, 44.0, 70.5, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
+    e(C::Wind, LaEqScene, 36.0, 29.9, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
+    e(C::Rain, LaEqScene, 51.0, 63.0, "default scene, 4 mm/h steady rain", "rain 1 mm/h ~45, 4 mm/h ~50, 15 mm/h ~58, 50 mm/h ~65 dB(A) (in-forest measurements)"),
+    e(C::Insects, LaEq1m, 72.0, 81.4, "field_cricket chorus (4 males), 22 °C, night", "Gryllus campestris calling song ~90 dB at 10 cm (~70 dB at 1 m each)"),
+    e(C::Fire, LaEq1m, 62.0, 62.8, "campfire 20 kW", "campfire crackle ~55–65 dB(A) at 1 m"),
 ];
 
-/// Thunder: clap LAFmax at the listener, mean over strikes at storm 1 (lightning 0.5–3 km).
+/// Thunder: loudest clap LAFmax at the listener in 4 minutes at storm 1 (~10 strikes,
+/// 0.5–3 km).
 /// Kept separate: the generator includes the long-range physics and its emitter is a
 /// direction proxy at `director::THUNDER_PROXY_M`, whose 1/r the gain undoes.
 pub static THUNDER: Entry = Entry {
     class: C::Thunder,
     metric: LaFmaxScene,
-    target_db: 84.0,
-    raw_db: 0.0,
+    target_db: 88.0,
+    raw_db: 71.5,
     post: crate::director::THUNDER_PROXY_M,
-    condition: "storm 1, mean clap",
+    condition: "storm 1, loudest clap in 4 min",
     source: "thunder 1–3 km: 80–100 dB peak, ~75–90 dB(A) Fmax (Few 1969; Bass 1980)",
 };
 
@@ -195,4 +197,17 @@ pub fn entry(class: SoundClass) -> &'static Entry {
         return &THUNDER;
     }
     TABLE.iter().find(|e| e.class == class).unwrap_or(&TABLE[0])
+}
+
+/// Level match of the trained neural voices to the procedural ones (same species, same
+/// LAFmax at 1 m), dB: the neural models come out of training at their own scale.
+/// Measured by `examples/calibrate.rs` (procedural − neural).
+pub fn neural_trim_db(species: Species) -> f32 {
+    match species {
+        Species::Chaffinch => 13.4,
+        Species::Robin => 9.3,
+        Species::SongThrush => 10.1,
+        Species::Nightingale => 16.5,
+        _ => 0.0,
+    }
 }

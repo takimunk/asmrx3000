@@ -253,6 +253,10 @@ pub struct MixInfo {
     /// Foreground loudness lost to masking (0..1), before and after ducking.
     pub masking_before: f32,
     pub masking_after: f32,
+    /// Signal-to-mask ratio of the soloists in the bands that carry their loudness
+    /// (loudness-weighted mean, dB), before and after ducking.
+    pub smr_before_db: f32,
+    pub smr_after_db: f32,
 }
 
 const INFO_WORDS: usize = core::mem::size_of::<MixInfo>() / 4;
@@ -330,7 +334,15 @@ pub struct Mix {
     a_slow: f32,
     a_speed: f32,
     a_gain: f32,
+    timing: bool,
+    /// Seconds spent in the mix layer since `enable_timing`.
+    pub cpu_s: f64,
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+type Clock = std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+type Clock = ();
 
 /// Rough boost of the ground reflection on the listener power (+2 dB, incoherent).
 const GROUND_POWER: f32 = 1.6;
@@ -373,6 +385,8 @@ impl Mix {
             a_slow: coef(2.0),
             a_speed: coef(0.3),
             a_gain: coef(0.25),
+            timing: false,
+            cpu_s: 0.0,
         }
     }
 
@@ -413,8 +427,43 @@ impl Mix {
 
     /// Before emitter `idx` renders: its gain, path EQ, send and phrase permit.
     pub fn voice(&mut self, idx: usize, v: &EmitterView) -> Voice<'_> {
+        let t0 = self.clock();
+        let (gain, eq, send, permit) = self.voice_inner(idx, v);
+        self.lap(t0);
+        let eq_db = match eq {
+            None => &self.flat,
+            Some((g, d)) => &self.eq[g][d as usize],
+        };
+        Voice { gain, eq_db, send, permit }
+    }
+
+    #[inline]
+    fn clock(&self) -> Option<Clock> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.timing {
+            return Some(std::time::Instant::now());
+        }
+        None
+    }
+
+    #[inline]
+    fn lap(&mut self, t0: Option<Clock>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(t) = t0 {
+            self.cpu_s += t.elapsed().as_secs_f64();
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = t0;
+    }
+
+    /// Starts accumulating the mix layer's own CPU time (`cpu_s`).
+    pub fn enable_timing(&mut self) {
+        self.timing = true;
+    }
+
+    fn voice_inner(&mut self, idx: usize, v: &EmitterView) -> (f32, Option<(usize, bool)>, f32, bool) {
         let Some(s) = self.slots.get_mut(idx) else {
-            return Voice { gain: v.class.gain(), eq_db: &self.flat, send: 1.0, permit: true };
+            return (v.class.gain(), None, 1.0, true);
         };
         if s.key != v.key || !s.used {
             *s = Slot::empty();
@@ -443,7 +492,7 @@ impl Mix {
         }
         if self.bypass {
             s.gain_db = 0.0;
-            return Voice { gain: legacy_gain(v.kind), eq_db: &self.flat, send: 1.0, permit: true };
+            return (legacy_gain(v.kind), None, 1.0, true);
         }
 
         // Level and cues from the role and the intent.
@@ -458,7 +507,7 @@ impl Mix {
                 send = 1.0 - 0.3 * c;
             }
             Role::Demoted => {
-                gain_db -= 2.0 + 4.0 * c;
+                gain_db -= 2.0 + 6.0 * c;
                 send = 1.0 + c;
                 demoted = true;
             }
@@ -472,14 +521,20 @@ impl Mix {
         let permit = s.permit || v.flying || matches!(s.role, Role::Soloist(_));
         let gain = s.cal * 10f32.powf(s.gain_db / 20.0);
         let eq = match s.role {
-            Role::Soloist(_) => &self.flat,
-            _ => &self.eq[s.group][demoted as usize],
+            Role::Soloist(_) => None,
+            _ => Some((s.group, demoted)),
         };
-        Voice { gain, eq_db: eq, send: s.send, permit }
+        (gain, eq, s.send, permit)
     }
 
     /// After emitter `idx` rendered `signal` (raw generator output, before `Voice::gain`).
     pub fn feed(&mut self, idx: usize, signal: &[f32], gain: f32) {
+        let t0 = self.clock();
+        self.feed_inner(idx, signal, gain);
+        self.lap(t0);
+    }
+
+    fn feed_inner(&mut self, idx: usize, signal: &[f32], gain: f32) {
         let pb = if self.bypass { 1.0 / self.dynamics_playback_nominal() } else { 1.0 };
         let Some(s) = self.slots.get_mut(idx) else { return };
         let len = signal.len().min(BLOCK);
@@ -523,6 +578,12 @@ impl Mix {
 
     /// End of the emitter loop: analysis, attention, ducking, phrase permits.
     pub fn finish(&mut self, len: usize) {
+        let t0 = self.clock();
+        self.finish_inner(len);
+        self.lap(t0);
+    }
+
+    fn finish_inner(&mut self, len: usize) {
         // Slots not rendered this block (flight mode churn) drop out.
         for s in self.slots.iter_mut() {
             if s.used && !s.seen {
@@ -545,8 +606,10 @@ impl Mix {
 
     /// Output gains for the block (per sample, linear, includes the playback mapping).
     pub fn master(&mut self, l: &[f32], r: &[f32], out: &mut [f32]) {
+        let t0 = self.clock();
         let p = DynParams { target_lufs: self.intent.target_lufs, strength: self.intent.dynamics };
         self.dynamics.process(l, r, &p, out);
+        self.lap(t0);
     }
 
     /// Full telemetry snapshot, also stored into `shared`.
@@ -594,7 +657,9 @@ impl Mix {
     }
 
     fn select_soloists(&mut self) {
-        let n = if self.intent.clarity > 0.0 && !self.bypass { self.intent.soloists } else { 0 };
+        // In bypass the roles are still tracked (analysis only: nothing is applied), so A/B
+        // numbers describe the same sources.
+        let n = if self.intent.clarity > 0.0 { self.intent.soloists } else { 0 };
         // Release: silent for a while, or faded and held long enough; or slots shrank.
         for k in 0..MAX_SOLOISTS {
             let Some(i) = self.soloist[k] else { continue };
@@ -718,9 +783,10 @@ impl Mix {
                 fg[group::COUNT + k] = 1.0;
             }
         }
-        // Bed level (A-weighted) for the salience reference.
+        // Ambience level (A-weighted textures: water, wind, rain) for the salience reference:
+        // how far an event stands out of the background it is heard against.
         let mut bed_p = 0.0;
-        for g in 0..group::COUNT {
+        for g in [group::WATER, group::WIND, group::RAIN] {
             if bed[g] {
                 bed_p += (0..BANDS).map(|z| a.fast[g][z] * a.model.a_w[z]).sum::<f32>();
             }
@@ -767,11 +833,19 @@ impl Mix {
         let mut info = self.info;
         let all: [bool; TRACKS] = core::array::from_fn(|t| a.fast[t].iter().any(|v| *v > 0.0));
         for t in 0..group::COUNT {
-            let k: f32 = (0..BANDS).map(|z| a.slow[t][z] * a.model.k_w[z]).sum();
+            // A group is its bed track plus its soloists (comparable with and without the
+            // director, whose roles only move emitters between tracks).
+            let mut members = [false; TRACKS];
+            members[t] = all[t];
+            for k in 0..MAX_SOLOISTS {
+                if let Some(i) = self.soloist[k] {
+                    members[group::COUNT + k] = self.slots[i].group == t && all[group::COUNT + k];
+                }
+            }
+            let k: f32 = (0..TRACKS).filter(|&m| members[m]).map(|m| (0..BANDS).map(|z| a.slow[m][z] * a.model.k_w[z]).sum::<f32>()).sum();
             info.group_lufs[t] = loudness::lufs(2.0 * k * g).max(-70.0);
-            let mut others = all;
-            others[t] = false;
-            let (n, np) = a.partial(t, &others, Some(&self.duck[..TRACKS]));
+            let others: [bool; TRACKS] = core::array::from_fn(|m| all[m] && !members[m]);
+            let (n, np) = a.partial_union(&members, &others, Some(&self.duck[..TRACKS]));
             info.group_sone[t] = n;
             info.group_masking[t] = if n > 0.01 { (1.0 - np / n).clamp(0.0, 1.0) } else { 0.0 };
             // Mean duck over the bands that carry the group.
@@ -786,6 +860,7 @@ impl Mix {
         // Soloists and the foreground masking before / after ducking.
         let mut nb = 0;
         let (mut lost_before, mut lost_after, mut total) = (0.0, 0.0, 0.0);
+        let (mut smr0, mut smr1, mut smr_w) = (0.0, 0.0, 0.0);
         let bed: [bool; TRACKS] = core::array::from_fn(|t| t < group::COUNT && self.intent.focus[t] <= 0.25 && all[t]);
         for k in 0..MAX_SOLOISTS {
             info.soloist_source[k] = u32::MAX;
@@ -795,6 +870,12 @@ impl Mix {
             let t = group::COUNT + k;
             let (n, before) = a.partial(t, &bed, None);
             let (_, after) = a.partial(t, &bed, Some(&self.duck[..TRACKS]));
+            let (s0, s1, w) = a.smr(t, &bed, &self.duck[..TRACKS]);
+            if w > 0.0 {
+                smr0 += s0 * w;
+                smr1 += s1 * w;
+                smr_w += w;
+            }
             info.soloist_source[k] = i as u32;
             info.soloist_salience[k] = self.slots[i].salience;
             info.soloist_masking[k] = if n > 0.01 { (1.0 - after / n).clamp(0.0, 1.0) } else { 0.0 };
@@ -811,8 +892,12 @@ impl Mix {
         // Smooth for display.
         info.masking_before += (mb - info.masking_before) * 0.05;
         info.masking_after += (ma - info.masking_after) * 0.05;
+        if smr_w > 0.0 {
+            info.smr_before_db += (smr0 / smr_w - info.smr_before_db) * 0.05;
+            info.smr_after_db += (smr1 / smr_w - info.smr_after_db) * 0.05;
+        }
         info.phrases = self.phrases as u32;
-        info.max_phrases = self.intent.max_phrases().map_or(0, |m| m as u32);
+        info.max_phrases = if self.bypass { 0 } else { self.intent.max_phrases().map_or(0, |m| m as u32) };
         self.info = info;
     }
 }

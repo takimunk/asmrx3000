@@ -200,6 +200,17 @@ pub unsafe extern "C" fn asmr_get_controls(engine: *const Engine, out: *mut Cont
     }
 }
 
+/// Sound director telemetry (`AsmrMixInfo`). Any thread.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_mix(engine: *const Engine, out: *mut mix::MixInfo) {
+    if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
+        *out = e.mix_info();
+    }
+}
+
 /// Sets a control. NaN on a child control hands it back to its macro.
 ///
 /// # Safety
