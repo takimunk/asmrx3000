@@ -51,6 +51,8 @@ impl NeuralModel {
 pub const BUILTIN: &[(&str, &[u8])] = &[
     ("chaffinch", include_bytes!("../../assets/neural/chaffinch.asnw")),
     ("robin", include_bytes!("../../assets/neural/robin.asnw")),
+    ("song_thrush", include_bytes!("../../assets/neural/song_thrush.asnw")),
+    ("nightingale", include_bytes!("../../assets/neural/nightingale.asnw")),
 ];
 
 /// Parsed built-in model, shared by all voices of that species. Parses on first use, so call
