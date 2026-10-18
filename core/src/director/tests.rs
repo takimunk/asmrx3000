@@ -242,3 +242,196 @@ fn thunder_proxy_points_at_the_strike() {
     let em = &world.emitters[0];
     assert!(em.controls.env.rain_mm_h > 5.0);
 }
+
+// ---------------------------------------------------------------------------------------
+// Life model
+// ---------------------------------------------------------------------------------------
+
+const OPEN_SCENE: &str = include_str!("../../scenes/open_country.json");
+
+#[test]
+fn residents_feed_on_the_ground_by_day_and_return_to_trees() {
+    let mut sim = Sim::default_scene();
+    let ground = sim.world.ground_z;
+    let birds: Vec<usize> = [100, 101, 106, 110, 111].iter().map(|&id| sim.idx(id)).collect();
+    let mut on_ground = vec![0.0f32; birds.len()];
+    let mut in_tree_after = vec![false; birds.len()];
+    sim.run(400.0, &Environment { hour: 10.0, ..Default::default() }, |_, w| {
+        for (k, &b) in birds.iter().enumerate() {
+            let z = w.entities[b].position.z;
+            if z < ground + 0.3 {
+                on_ground[k] += DT;
+            } else if on_ground[k] > 0.0 && z > ground + 2.0 && w.entities[b].flags & object_flags::MOVING == 0 {
+                in_tree_after[k] = true;
+            }
+        }
+    });
+    let feeders = on_ground.iter().filter(|&&t| t > 10.0).count();
+    assert!(feeders >= 3, "ground time {on_ground:?}");
+    assert!(in_tree_after.iter().filter(|&&b| b).count() >= 2, "back up: {in_tree_after:?}");
+}
+
+#[test]
+fn flight_styles_shape_the_path_and_the_wingbeat() {
+    // Chaffinch flights undulate with closed-wing glides; a swallow hawks low over the area.
+    let mut sim = Sim::default_scene();
+    let finch = sim.idx(106);
+    let em = sim.world.entities[finch].emitters.start;
+    let (mut glides, mut beats, mut flying) = (0, 0, 0);
+    let mut prev_z: Option<f32> = None;
+    let mut turns = 0;
+    let mut rising = None;
+    sim.run(400.0, &Environment { hour: 10.0, ..Default::default() }, |_, w| {
+        let e = &w.entities[finch];
+        if e.flags & object_flags::MOVING != 0 {
+            flying += 1;
+            let f = w.emitters[em].controls.flap;
+            if f == 0.0 {
+                glides += 1;
+            } else {
+                beats += 1;
+            }
+            if let Some(pz) = prev_z {
+                let up = e.position.z > pz;
+                if rising.is_some_and(|r| r != up) {
+                    turns += 1;
+                }
+                rising = Some(up);
+            }
+            prev_z = Some(e.position.z);
+        } else {
+            prev_z = None;
+            rising = None;
+        }
+    });
+    assert!(flying > 500, "the chaffinch flew ({flying} blocks)");
+    assert!(glides > flying / 6 && beats > flying / 3, "glides {glides}, beats {beats} of {flying}");
+    assert!(turns > 6, "undulating flight: {turns} up/down turns");
+    assert!(sim.world.emitters[em].controls.wings_driven);
+}
+
+/// Renders an engine for `secs`, calling `f(t, birds, objects)` every block.
+fn engine_run(e: &crate::Engine, secs: f32, mut f: impl FnMut(f32, &[BirdInfo], &[crate::ObjectInfo])) {
+    let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+    let mut b = [BirdInfo::default(); 64];
+    let mut o = [crate::ObjectInfo::default(); 64];
+    let mut t = 0.0;
+    while t < secs {
+        e.render(&mut l, &mut r);
+        t += 512.0 / 48_000.0;
+        let nb = e.birds(&mut b);
+        let no = e.objects(&mut o);
+        f(t, &b[..nb], &o[..no]);
+    }
+}
+
+#[test]
+fn neighbours_take_turns_and_answer() {
+    // Robins and blackbirds at dawn: same-species neighbours take turns (wait while the
+    // other sings, answer when it stops), so they overlap far less than chance.
+    let e = crate::Engine::new(48_000.0);
+    e.set_param(crate::param::PLAYING, 1.0);
+    e.set_param(crate::param::TIME_OF_DAY, 5.2);
+    let song = |b: &BirdInfo| b.flags & bird_flags::VOCAL != 0 && b.flags & bird_flags::CALLING == 0;
+    let pairs = [(101u32, 112u32), (110, 111), (100, 106)];
+    let mut n = 0usize;
+    let mut stats = [(0usize, 0usize, 0usize); 3];
+    engine_run(&e, 240.0, |_, b, _| {
+        n += 1;
+        for (k, (x, y)) in pairs.iter().enumerate() {
+            let sx = b.iter().find(|i| i.id == *x).is_some_and(song);
+            let sy = b.iter().find(|i| i.id == *y).is_some_and(song);
+            stats[k].0 += sx as usize;
+            stats[k].1 += sy as usize;
+            stats[k].2 += (sx && sy) as usize;
+        }
+    });
+    let (mut both, mut chance) = (0.0, 0.0);
+    for (a, b, ab) in stats {
+        let (pa, pb) = (a as f32 / n as f32, b as f32 / n as f32);
+        assert!(pa > 0.03 && pb > 0.03, "both sing: {pa} {pb}");
+        both += ab as f32 / n as f32;
+        chance += pa * pb;
+    }
+    assert!(both < 0.5 * chance, "overlap {both:.4} vs {chance:.4} by chance");
+}
+
+#[test]
+fn dragging_a_tree_alarms_its_birds_and_far_makes_them_flee() {
+    let mut sim = Sim::default_scene();
+    let day = Environment { hour: 10.0, ..Default::default() };
+    sim.run(2.0, &day, |_, _| {});
+    let tree = sim.idx(2);
+    let birds: Vec<usize> = [100, 106].iter().map(|&id| sim.idx(id)).filter(|&b| sim.director.agents().iter().any(|a| a.entity == b && a.perched_tree() == Some(tree))).collect();
+    assert!(!birds.is_empty());
+    // A short nudge: alarm calls, no flight.
+    let p0 = sim.world.entities[tree].position;
+    sim.world.set_position(tree, p0 + Vec3::new(0.5, 0.0, 0.0));
+    let mut alarm = false;
+    sim.run(3.0, &day, |_, w| {
+        alarm |= birds.iter().any(|&b| w.emitters[w.entities[b].emitters.start].controls.alarm);
+    });
+    assert!(alarm, "scolding");
+    // Carried 6 m: they leave the tree.
+    sim.world.set_position(tree, p0 + Vec3::new(6.5, 0.0, 0.0));
+    let mut fled = false;
+    sim.run(3.0, &day, |_, w| {
+        fled |= birds.iter().any(|&b| w.entities[b].flags & object_flags::MOVING != 0);
+    });
+    assert!(fled, "fled the moving tree");
+}
+
+#[test]
+fn skylark_song_flight_and_gulls_soar_in_the_open() {
+    let e = crate::Engine::from_json(48_000.0, OPEN_SCENE).unwrap();
+    e.set_param(crate::param::PLAYING, 1.0);
+    let ground = -1.7;
+    let (mut lark_top, mut sang_high, mut gull_top, mut gull_in_tree) = (f32::MIN, false, f32::MIN, false);
+    engine_run(&e, 300.0, |_, b, o| {
+        let z = |id: u32| o.iter().find(|x| x.id == id).map_or(ground, |x| x.z) - ground;
+        let lark = b.iter().find(|x| x.id == 100).unwrap();
+        lark_top = lark_top.max(z(100));
+        sang_high |= z(100) > 15.0 && lark.state == bird_state::SONG_FLIGHT && lark.flags & bird_flags::VOCAL != 0;
+        let gull = b.iter().find(|x| x.id == 102).unwrap();
+        gull_top = gull_top.max(z(102));
+        gull_in_tree |= gull.state != bird_state::FLYING && gull.state != bird_state::SOARING && z(102) > 1.0;
+    });
+    assert!(lark_top > 20.0 && sang_high, "lark climbed to {lark_top} m, sang up there: {sang_high}");
+    assert!(gull_top > 8.0, "gull soared to {gull_top} m");
+    assert!(!gull_in_tree, "gulls do not perch in trees");
+}
+
+#[test]
+fn bird_telemetry_through_the_c_abi() {
+    let e = crate::Engine::new(48_000.0);
+    e.set_param(crate::param::PLAYING, 1.0);
+    let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+    for _ in 0..200 {
+        e.render(&mut l, &mut r);
+    }
+    let mut info = [BirdInfo::default(); 64];
+    // SAFETY: live engine, writable buffer of 64.
+    let n = unsafe { crate::asmr_get_birds(&e, info.as_mut_ptr(), 64) } as usize;
+    assert_eq!(n, 13);
+    let mut objs = [crate::ObjectInfo::default(); 64];
+    let no = e.objects(&mut objs);
+    for b in &info[..n] {
+        let o = objs[..no].iter().find(|o| o.id == b.id).expect("bird id is an object id");
+        assert_eq!(o.kind, crate::ObjectKind::Bird as u32);
+        assert!((b.species as usize) < Species::ALL.len() && b.state <= bird_state::ABSENT && b.flight <= 6);
+    }
+    let blackbird = info[..n].iter().find(|b| b.id == 110).unwrap();
+    assert_eq!(blackbird.species, Species::Blackbird.code());
+    assert_eq!(blackbird.flight, FlightStyle::Direct.code());
+    assert_eq!(core::mem::size_of::<BirdInfo>(), 36);
+}
+
+#[test]
+fn blackbird_sings_with_its_neural_voice() {
+    assert_eq!(neural_model_name(Species::Blackbird), Some("blackbird"));
+    for s in Species::ALL {
+        let neural = neural_model_name(s).is_some();
+        let expect = matches!(s, Species::Chaffinch | Species::Robin | Species::SongThrush | Species::Nightingale | Species::Blackbird);
+        assert_eq!(neural, expect, "{s:?}");
+    }
+}

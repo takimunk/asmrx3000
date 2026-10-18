@@ -46,6 +46,7 @@ final class SceneRenderer {
     private var data = [SIMD4<Float>](repeating: .zero, count: 48)
     private var lastBird: [UInt32: SIMD3<Float>] = [:]
     private var heading: [UInt32: Float] = [:]
+    private let birdFlight = BirdFlight()
 
     static let sun = simd_normalize(SIMD3<Float>(-0.42, 0.5, 0.76))
     static let birdScale: Float = 4.0
@@ -233,6 +234,7 @@ final class SceneRenderer {
 
         let flight = stage.flight
         let flying = flight.active
+        birdFlight.update(stage.audio, time: time)
         // In flight the ground sits `drop` below the herm, which flies at the altitude.
         func ground(_ x: Float, _ y: Float) -> Float {
             flying ? FlightGround.height(x, y, frame: flight) - flight.drop : Terrain.height(x, y)
@@ -288,11 +290,12 @@ final class SceneRenderer {
                 }
                 heading[o.id] = h
                 lastBird[o.id] = p
-                guard let mesh = lib[moving ? "bird_flying" : "bird"] else { continue }
-                let wing: Float = moving ? sin(time * 14 + Float(o.id)) * 0.85 : 0
-                let m = Self.transform(p, yaw: h, scale: Self.birdScale)
+                // Species size, wingbeat and attitude of its flight style (Birds.swift).
+                let pose = birdFlight.pose(id: o.id, at: p, heading: h, moving: moving, ground: ground(o.x, o.y), time: time, scale: Self.birdScale)
+                guard let mesh = lib[pose.spread ? "bird_flying" : "bird"] else { continue }
+                let (wing, m) = (pose.wing, pose.model)
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id) + 1000, flags(.object(o.id)), 0, 0), anim: SIMD4(wing, 0, 0, 0))))
-                if !moving, !flying, let pole {
+                if !moving, !flying, !pose.onGround, let pole {
                     // A dead snag to perch on, with one twig.
                     let g = ground(o.x, o.y)
                     let top = o.z - 0.1 * Self.birdScale

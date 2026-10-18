@@ -1,19 +1,33 @@
 //! The director decides what happens in the scene over time: which animals are active at
-//! this hour, where each one is, when it sings, takes off, flies past or circles.
+//! this hour, where each one is, when it sings, feeds, takes off, flies past or circles.
 //!
-//! It owns one [`Agent`] per animal and a little scene-wide policy (flock events). Every
-//! control block the engine calls [`Director::step`], which moves bird entities in the
+//! It owns one [`Agent`] per animal (each with its own life: territory, song posts, feeding,
+//! species flight style; see agent.rs) and the scene-wide social layer:
+//! * **counter-singing**: a bird waits while a neighbour of its species sings and often
+//!   answers when it stops (so several birds alternate instead of singing over each other;
+//!   this works with the mix layer's phrase permits, it does not replace them);
+//! * **alarms**: a dragged tree, an owl flying past by day, a pigeon's clattering take-off
+//!   ([`Director::disturb`] for anything else) make birds scold or flee to cover;
+//! * **flocks**: several residents of one tree leave together along one shared path, in
+//!   formation.
+//!
+//! Every control block the engine calls [`Director::step`], which moves bird entities in the
 //! [`World`] and writes their emitters' behavioural [`Controls`](crate::sources::Controls).
 //! Real-time safe: all state is allocated in [`Director::new`].
 
 mod agent;
+pub mod bridge;
 mod species;
 pub mod weather;
 mod voices;
-pub use voices::bird_voice;
+pub use voices::{bird_voice, neural_model_name};
 
-pub use agent::{Agent, State};
-pub use species::{day_phase, daylight, DayPhase, Species, SpeciesDef};
+pub use agent::{code as bird_state, Agent, Mode, State};
+pub use bridge::{bird_flags, BirdBridge, BirdInfo};
+pub use species::{
+    bird_density_for_biome, day_phase, daylight, flight_motion, pick_species_for_biome, species_weights_for_biome, DayPhase, FlightStyle,
+    Species, SpeciesDef, BIOMES,
+};
 pub use weather::Weather;
 
 use crate::math::Vec3;
@@ -63,13 +77,22 @@ pub struct Director {
     time: f64,
     weather: Weather,
     thunder: Vec<usize>,
+    /// Per agent: singing on a song post now / in the previous block.
+    singing: Vec<bool>,
+    was_singing: Vec<bool>,
+    /// Per tree: position last block; (metres dragged recently, seconds since the last drag).
+    tree_pos: Vec<Vec3>,
+    dragged: Vec<(f32, f32)>,
 }
+
+/// Trees dragged further than this within a couple of seconds make their birds flee.
+const DRAG_FLEE_M: f32 = 4.0;
 
 impl Director {
     /// `world` must have been built from the same `desc`.
     pub fn new(desc: &SceneDesc, world: &World) -> Self {
         let mut rng = Rng::new(desc.seed ^ 0xD1EC_7000);
-        let trees = world.entities.iter().enumerate().filter(|(_, e)| e.kind == ObjectKind::Tree).map(|(i, _)| i).collect();
+        let trees: Vec<usize> = world.entities.iter().enumerate().filter(|(_, e)| e.kind == ObjectKind::Tree).map(|(i, _)| i).collect();
         let mut agents = Vec::new();
         for (i, e) in desc.entities.iter().enumerate() {
             if let EntityDesc::Bird(b) = e {
@@ -80,7 +103,7 @@ impl Director {
                 };
                 let home = home_id.and_then(|h| world.index_of(h));
                 let emitter = world.entities[i].emitters.start;
-                agents.push(Agent::new(i, emitter, b.species, &b.behaviour, home, &world.entities, rng.next_u64()));
+                agents.push(Agent::new(i, emitter, b.species, &b.behaviour, home, &world.entities, world.ground_z, rng.next_u64()));
             }
         }
         let policy = desc.director.clone();
@@ -96,7 +119,116 @@ impl Director {
             .map(|(i, _)| i)
             .collect();
         let weather = Weather::new(&desc.environment, desc.seed ^ 0x5EA7_4E12);
-        Self { agents, trees, rng, policy, flock_left, time: 0.0, weather, thunder }
+        let n = agents.len();
+        let tree_pos: Vec<Vec3> = trees.iter().map(|&t| world.entities[t].position).collect();
+        let dragged = vec![(0.0, 10.0); tree_pos.len()];
+        Self {
+            agents,
+            trees,
+            rng,
+            policy,
+            flock_left,
+            time: 0.0,
+            weather,
+            thunder,
+            singing: vec![false; n],
+            was_singing: vec![false; n],
+            tree_pos,
+            dragged,
+        }
+    }
+
+    /// Something alarming happened at `at` (a predator, a loud event, the listener rushing
+    /// past): birds within reach scold, the nearest flee if `flee`. `strength` 0..2 scales
+    /// the species' flush distances. Audio thread (or before rendering starts).
+    pub fn disturb(&mut self, at: Vec3, strength: f32, flee: bool) {
+        for a in self.agents.iter_mut() {
+            a.disturb(at, strength, flee);
+        }
+    }
+
+    /// Scene-wide social signals: counter-singing (from the voices' phrase state after the
+    /// previous block) and alarms (dragged trees, owls by day, pigeon take-offs).
+    fn social(&mut self, dt: f32, env: &Environment, world: &World) {
+        let n = self.agents.len();
+        for (i, a) in self.agents.iter().enumerate() {
+            let busy = world.emitters.get(a.emitter).is_some_and(|e| e.generator.busy());
+            self.singing[i] = busy && a.on_song_post();
+        }
+        for i in 0..n {
+            let (sp, p) = (self.agents[i].species, self.agents[i].position());
+            let range = sp.def().hearing;
+            let mut hold = false;
+            for j in 0..n {
+                if j != i && self.singing[j] && self.agents[j].species == sp && (self.agents[j].position() - p).length() < range {
+                    hold = true;
+                    break;
+                }
+            }
+            let me = self.singing[i];
+            self.agents[i].set_hold(hold && !me);
+        }
+        for j in 0..n {
+            if self.was_singing[j] && !self.singing[j] {
+                let (sp, p) = (self.agents[j].species, self.agents[j].position());
+                for i in 0..n {
+                    if i != j && !self.singing[i] && self.agents[i].species == sp && (self.agents[i].position() - p).length() < sp.def().hearing {
+                        self.agents[i].invite_answer();
+                    }
+                }
+            }
+        }
+        self.was_singing.copy_from_slice(&self.singing);
+
+        // A tree dragged by the user: its birds scold; dragged far, they flee.
+        for k in 0..self.trees.len() {
+            let t = self.trees[k];
+            let p = world.entities[t].position;
+            let moved = (p - self.tree_pos[k]).length();
+            self.tree_pos[k] = p;
+            let (amount, since) = &mut self.dragged[k];
+            *since += dt;
+            if *since > 2.0 {
+                *amount = 0.0;
+            }
+            if moved > 0.005 {
+                *amount += moved;
+                *since = 0.0;
+                let flee = *amount > DRAG_FLEE_M;
+                if flee {
+                    *amount = 0.0;
+                }
+                let at = world.entities[t].canopy();
+                for a in self.agents.iter_mut() {
+                    // Its own birds are right at the danger; the neighbours hear the commotion.
+                    let here = if a.perched_tree() == Some(t) { a.position() } else { at };
+                    a.disturb(here, 1.0, flee);
+                }
+            }
+        }
+        // Owls flying by day are mobbed; a pigeon's clattering take-off startles neighbours.
+        let day = daylight(env.hour);
+        for i in 0..n {
+            let a = &self.agents[i];
+            let owl = a.species == Species::TawnyOwl && matches!(a.state, State::Flying { .. }) && day > 0.05;
+            let startle = a.last().startle;
+            if !owl && !startle {
+                continue;
+            }
+            let p = a.position();
+            for j in 0..n {
+                if j == i {
+                    continue;
+                }
+                let b = &mut self.agents[j];
+                let bp = b.position();
+                if owl && b.species.def().mobs && (bp - p).length() < 15.0 {
+                    b.disturb(bp, 1.0, false);
+                } else if startle && (bp - p).length() < 6.0 {
+                    b.disturb(p, 0.6, false);
+                }
+            }
+        }
     }
 
     pub fn weather(&self) -> &Weather {
@@ -115,20 +247,20 @@ impl Director {
         self.time
     }
 
-    /// Several resident birds sharing a tree leave it together for another tree.
+    /// Several resident birds sharing a tree leave it together for another tree, along one
+    /// shared path in a loose formation.
     fn flock_event(&mut self, env: &Environment, world: &World) -> bool {
         let n = self.trees.len();
         if n < 2 {
             return false;
         }
+        let joins = |a: &Agent, from: usize| {
+            a.is_resident() && a.perched_tree() == Some(from) && a.species.def().flocking >= 0.2 && a.species.flight_activity(env.hour) > 0.3
+        };
         let start = self.rng.next_u32() as usize % n;
         for k in 0..n {
             let from = self.trees[(start + k) % n];
-            let count = self
-                .agents
-                .iter()
-                .filter(|a| a.is_resident() && a.perched_tree() == Some(from) && a.species.flight_activity(env.hour) > 0.3)
-                .count();
+            let count = self.agents.iter().filter(|a| joins(a, from)).count();
             if count < 2 {
                 continue;
             }
@@ -143,10 +275,29 @@ impl Director {
                     to = t;
                 }
             }
+            // Shared path: from the flock's centre to the target crown.
+            let mut centre = Vec3::default();
+            let mut speed = 0.0;
+            for a in self.agents.iter().filter(|a| joins(a, from)) {
+                centre = centre + a.position();
+                let s = a.species.def().speed;
+                speed += 0.5 * (s[0] + s[1]);
+            }
+            let inv = 1.0 / count as f32;
+            let (centre, speed) = (centre * inv, (speed * inv).max(1.0));
+            let target = world.entities[to].canopy();
+            let d = target - centre;
+            let l = d.length();
+            let up = Vec3::new(0.0, 0.0, 0.12 * l + 1.0);
+            let side = Vec3::new(-d.y, d.x, 0.0) * self.rng.range(-0.2, 0.2);
+            let (c1, c2) = (centre + d * 0.33 + up + side, centre + d * 0.66 + up + side);
+            let dur = (l * 1.15 / speed).max(1.0);
             for a in self.agents.iter_mut() {
-                if a.is_resident() && a.perched_tree() == Some(from) {
+                if joins(a, from) {
                     let delay = self.rng.range(0.0, 0.8);
-                    a.flock_to(to, delay);
+                    let o = Vec3::new(self.rng.range(-1.0, 1.0), self.rng.range(-1.2, 1.2), self.rng.range(-0.6, 0.6));
+                    let k = self.rng.range(0.97, 1.03);
+                    a.flock_to(to, delay, c1 + o, c2 + o, dur * k);
                 }
             }
             return true;
@@ -179,6 +330,7 @@ impl Director {
             let [a, b] = self.policy.flock_interval;
             self.flock_left = if fired { self.rng.range(a, b.max(a)) } else { self.rng.range(5.0, 15.0) };
         }
+        self.social(dt, env, world);
         for a in self.agents.iter_mut() {
             let out = a.step(dt, env, &world.entities, &self.trees);
             let e = &mut world.entities[a.entity];
@@ -194,7 +346,11 @@ impl Director {
             let c = &mut world.emitters[a.emitter].controls;
             c.activity = if out.absent { 0.0 } else { out.activity };
             c.calling = out.calling;
+            c.alarm = out.alarm;
+            c.reply = out.reply;
+            c.wait = out.wait;
             c.flap = if out.absent { 0.0 } else { out.flap };
+            c.wings_driven = true;
         }
     }
 }

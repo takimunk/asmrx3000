@@ -316,6 +316,18 @@ pub enum BehaviourDesc {
         #[serde(default)]
         orbit: bool,
     },
+    /// Lives in the open, without a home tree (skylark on a meadow, gulls on a shore, a raven
+    /// over the mountains): feeds on the ground, sings from the ground or in a song flight,
+    /// soars over the area; perches on trees inside it if there are any. docs/director.md.
+    Open {
+        /// Centre of the area (x, y; z is ignored: birds use the ground).
+        #[serde(default)]
+        center: [f32; 3],
+        #[serde(default = "default_open_radius")]
+        radius: f32,
+        #[serde(default = "one")]
+        roam: f32,
+    },
     /// Off stage most of the time; now and then flies straight past the listener, calling.
     Flyby {
         #[serde(default = "default_first")]
@@ -376,6 +388,9 @@ pub enum BehaviourDesc {
     },
 }
 
+fn default_open_radius() -> f32 {
+    25.0
+}
 fn default_first() -> f32 {
     10.0
 }

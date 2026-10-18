@@ -219,7 +219,9 @@ fn intent_from_the_prompt_moves_the_mix() {
     };
     let front = water(1.0);
     let back = water(-1.0);
-    assert!(front > back + 6.0, "water in front {front:.1} vs behind {back:.1}");
+    // ~6 dB (the exact spread depends on how busy the dawn chorus is: the leveller follows
+    // the whole scene).
+    assert!(front > back + 5.0, "water in front {front:.1} vs behind {back:.1}");
 }
 
 #[test]

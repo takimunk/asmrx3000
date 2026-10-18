@@ -269,6 +269,11 @@ final class AudioEngine: ObservableObject {
         out.append(contentsOf: rawObjects.prefix(Int(n)))
     }
 
+    /// What each scene bird is doing (species, state, flight style, wingbeat): Stage/Birds.swift.
+    func readBirds(_ out: inout [AsmrBirdInfo]) -> Int {
+        out.withUnsafeMutableBufferPointer { Int(asmr_get_birds(core, $0.baseAddress, UInt32($0.count))) }
+    }
+
     /// Shape of a streamed object (river bed, lake shore, ridge line), listener-relative.
     func readObjectPath(_ id: UInt32, into out: inout [SIMD3<Float>]) {
         var raw = [Float](repeating: 0, count: 3 * 32)

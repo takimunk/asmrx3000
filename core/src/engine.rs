@@ -219,6 +219,8 @@ struct Shared {
     /// 1 while the streamed objects (not the scene's) are reported.
     flight_shown: AtomicU32,
     flight_objects: FlightBridge,
+    /// Bird telemetry (`asmr_get_birds`).
+    birds: crate::director::BirdBridge,
     seed: u64,
     head: HeadPoseInput,
     /// Seconds of audio rendered (f64 bits): the clock head-pose arrivals are stamped with.
@@ -307,6 +309,7 @@ impl Engine {
             flight_requested: AtomicU32::new(0),
             flight_shown: AtomicU32::new(0),
             flight_objects: FlightBridge::new(),
+            birds: crate::director::BirdBridge::new(),
             seed: desc.seed,
             head: HeadPoseInput::new(),
             clock: AtomicU64::new(0),
@@ -660,6 +663,15 @@ impl Engine {
             return self.shared.flight_objects.read(out);
         }
         self.shared.objects.read(out)
+    }
+
+    /// Per-bird behaviour telemetry of the scene (species, state, flight style, wingbeat,
+    /// velocity); 0 while flight mode is shown. Any thread.
+    pub fn birds(&self, out: &mut [crate::director::BirdInfo]) -> usize {
+        if self.shared.flight_shown.load(Ordering::Acquire) != 0 {
+            return 0;
+        }
+        self.shared.birds.read(out)
     }
 
     /// Moves a user-movable object (applied by the audio thread at the next block).
@@ -1097,6 +1109,7 @@ impl Dsp {
 
         let bubble_rate: f32 = self.world.emitters.iter().map(|s| s.generator.event_rate()).sum();
         shared.objects.publish(&self.world);
+        shared.birds.publish(&self.director, &self.world);
         let t = &shared.telemetry;
         match flight {
             Some(f) => {
@@ -1240,7 +1253,7 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 43);
+        assert_eq!(engine.sources(&mut src), 46);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
@@ -1283,7 +1296,7 @@ mod tests {
         assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
         let mut objs = [ObjectInfo::default(); 64];
         let n = engine.objects(&mut objs);
-        assert_eq!(n, 31);
+        assert_eq!(n, 34);
         let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
         assert_eq!(tree.kind, ObjectKind::Tree as u32);
         assert_ne!(tree.flags & object_flags::MOVABLE, 0);
