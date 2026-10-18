@@ -35,6 +35,9 @@ final class AudioEngine: ObservableObject {
     private var headPose: (Float, Float, Float) = (0, 0, 0)
     private var stopWork: DispatchWorkItem?
     private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 32)
+    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 32)
+    /// Positions the user gave objects; re-applied when the core is rebuilt for a new sample rate.
+    private var placed: [UInt32: SIMD3<Float>] = [:]
 
     init() {
         core = asmr_engine_new(48_000)
@@ -133,6 +136,25 @@ final class AudioEngine: ObservableObject {
         )
     }
 
+    /// Scene objects (id, kind, position, flags). Ids are stable for the engine's lifetime.
+    func readObjects(_ out: inout [AsmrObjectInfo]) {
+        let n = rawObjects.withUnsafeMutableBufferPointer {
+            asmr_get_objects(core, $0.baseAddress, UInt32($0.count))
+        }
+        out.removeAll(keepingCapacity: true)
+        out.append(contentsOf: rawObjects.prefix(Int(n)))
+    }
+
+    /// Live peak waveform of a track (ASMR_SCOPE_*), oldest first, one point per 64 samples.
+    func readScope(_ track: Int, into out: inout [Float]) {
+        out.withUnsafeMutableBufferPointer { _ = asmr_get_scope(core, UInt32(track), $0.baseAddress, UInt32($0.count)) }
+    }
+
+    func setObjectPosition(id: UInt32, _ p: SIMD3<Float>) {
+        placed[id] = p
+        asmr_set_object_position(core, id, p.x, p.y, p.z)
+    }
+
     // MARK: Private
 
     private func set<P: BinaryInteger>(_ param: P, _ value: Float) {
@@ -151,6 +173,9 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_ORBIT, orbit)
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
+        for (id, p) in placed {
+            asmr_set_object_position(core, id, p.x, p.y, p.z)
+        }
     }
 
     /// Must only run while the AVAudioEngine is stopped.

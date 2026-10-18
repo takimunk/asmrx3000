@@ -28,6 +28,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
+cp "$APP_PKG/Resources/models.bin" "$APP/Contents/Resources/models.bin"
 codesign --force --sign - "$APP"
 echo "✓ $APP"
 

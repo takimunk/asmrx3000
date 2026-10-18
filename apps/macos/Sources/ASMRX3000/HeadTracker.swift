@@ -31,7 +31,7 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         super.init()
         // Snapshot runs come from a shell, where TCC would attribute motion access to the
         // terminal and abort the process.
-        guard !CommandLine.arguments.contains("--snapshot") else { return }
+        guard !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--bench") else { return }
         manager.delegate = self
         start()
     }
