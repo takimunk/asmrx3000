@@ -27,6 +27,7 @@ enum {
     ASMR_PARAM_TEMPERATURE = 17, /* air temperature, deg C (insect song rates follow it) */
     ASMR_PARAM_HUMIDITY = 18,    /* relative humidity 0..1 (drying of leaves and ground) */
     ASMR_PARAM_STORM = 19,       /* thunderstorm activity 0..1 (lightning rate and closeness) */
+    ASMR_PARAM_NEURAL_BIRDS = 10, /* 1 = trained neural voices where a species has one (chaffinch, robin, song thrush, nightingale) [1], 0 = procedural */
 
     /* Acoustic environment (34..40). Any thread; applied at the next block. Values are
      * clamped to the given ranges; defaults in brackets. See docs/spatial-engine.md.

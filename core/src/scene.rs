@@ -644,7 +644,8 @@ impl World {
                 EntityDesc::Bird(b) => {
                     let def = b.species.def();
                     let pitch = b.pitch.unwrap_or_else(|| Bird::default_pitch(def.voice) * rng.range(0.93, 1.07));
-                    let voice = Box::new(Bird::new(sample_rate, rng.next_u64(), def.voice, pitch, b.tempo.clamp(0.3, 3.0)));
+                    let procedural = Bird::new(sample_rate, rng.next_u64(), def.voice, pitch, b.tempo.clamp(0.3, 3.0));
+                    let voice = crate::director::bird_voice(b.species, procedural, sample_rate, rng.next_u64());
                     let wings = Wings::new(sample_rate, rng.next_u64(), def.wings);
                     push(&mut emitters, SourceKind::Bird, Vec3::default(), Box::new(Flyer::new(voice, wings, b.loudness.clamp(0.0, 8.0))), 1.0);
                     Entity {

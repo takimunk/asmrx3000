@@ -9,6 +9,8 @@
 mod agent;
 mod species;
 pub mod weather;
+mod voices;
+pub use voices::bird_voice;
 
 pub use agent::{Agent, State};
 pub use species::{day_phase, daylight, DayPhase, Species, SpeciesDef};

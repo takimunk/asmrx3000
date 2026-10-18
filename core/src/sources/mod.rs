@@ -104,6 +104,8 @@ pub struct Controls {
     pub flap: f32,
     /// Weather and environment (director).
     pub env: Ambient,
+    /// Prefer trained neural voices where a species has one (ASMR_PARAM_NEURAL_BIRDS).
+    pub neural: bool,
 }
 
 /// A mono sound generator. Called on the audio thread once per control block:

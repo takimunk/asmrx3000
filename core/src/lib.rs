@@ -7,6 +7,7 @@ mod ambisonics;
 mod binaural;
 pub mod controls;
 pub mod director;
+pub mod neural;
 mod dsp;
 mod engine;
 mod fft;

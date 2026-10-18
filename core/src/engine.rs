@@ -67,6 +67,8 @@ pub mod param {
     pub const HUMIDITY: u32 = 18;
     /// Thunderstorm activity 0..1 (lightning rate and closeness).
     pub const STORM: u32 = 19;
+    /// 1 = trained neural voices for species that have one, 0 = procedural voices only.
+    pub const NEURAL_BIRDS: u32 = 10;
     // Acoustic environment (asmr.h). TEMPERATURE and HUMIDITY above are shared with the weather.
     pub const PRESSURE: u32 = 34;
     pub const GROUND: u32 = 35;
@@ -232,6 +234,7 @@ impl Engine {
         shared.params[param::TEMPERATURE as usize].store(env.temperature_c);
         shared.params[param::HUMIDITY as usize].store(env.humidity);
         shared.params[param::STORM as usize].store(env.storm);
+        shared.params[param::NEURAL_BIRDS as usize].store(1.0);
         shared.telemetry[telemetry::SAMPLE_RATE as usize].store(sr);
         let env = Acoustic::default();
         for (id, v) in [
@@ -496,6 +499,7 @@ impl Dsp {
 
         let wind = p(param::WIND).clamp(0.0, 1.0);
         let birds = p(param::BIRDS).clamp(0.0, 1.0);
+        let neural = p(param::NEURAL_BIRDS) > 0.5;
         let water = p(param::WATER).clamp(0.0, 1.0);
         let orbit = p(param::ORBIT).clamp(0.0, 1.0);
         let volume = p(param::VOLUME).clamp(0.0, 1.5);
@@ -539,6 +543,7 @@ impl Dsp {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
             controls.water = water * em.flow;
+            controls.neural = neural;
             controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
             em.generator.render(tmp, &controls);
             let kind_gain = match em.kind {
@@ -671,6 +676,24 @@ mod tests {
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
+    }
+
+    #[test]
+    fn neural_birds_sing_in_the_scene() {
+        let engine = Engine::new(48_000.0);
+        assert_eq!(engine.param(param::NEURAL_BIRDS), 1.0);
+        engine.set_param(param::PLAYING, 1.0);
+        engine.set_param(param::BIRDS, 1.0);
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        let mut sang = false;
+        for _ in 0..(48_000 * 20 / 512) {
+            engine.render(&mut l, &mut r);
+            assert!(l.iter().chain(&r).all(|v| v.is_finite() && v.abs() <= 1.0));
+            let mut src = [SourceInfo::default(); MAX_SOURCES];
+            let n = engine.sources(&mut src);
+            sang |= src[..n].iter().any(|s| s.kind == SourceKind::Bird as u32 && s.freq > 500.0);
+        }
+        assert!(sang, "no bird sang in 20 s");
     }
 
     #[test]
