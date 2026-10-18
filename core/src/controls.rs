@@ -487,6 +487,68 @@ impl ControlBank {
         }
         n
     }
+
+    // --- Prompt control (core/src/prompt.rs) ---
+
+    /// Effective value of control `i` if it followed its macro (None for macros and
+    /// children without a curve). Any thread.
+    pub(crate) fn followed(&self, i: usize, params: &[AtomicF32]) -> Option<f32> {
+        let d = &DEFS[i];
+        if d.flags & flags::MACRO != 0 {
+            return None;
+        }
+        let get = |id: u32| index(id).map_or(0.0, |k| self.value_at(k, params, 1));
+        self.follow(d.id, &get)
+    }
+
+    pub(crate) fn overridden_at(&self, i: usize) -> bool {
+        self.is_overridden(i)
+    }
+
+    pub(crate) fn default_at(&self, i: usize) -> f32 {
+        self.default_of(DEFS[i].id)
+    }
+}
+
+/// Static description of control `i` (0..COUNT), for the prompt layer.
+#[derive(Clone, Copy, Debug)]
+pub struct Meta {
+    pub id: u32,
+    pub group: u32,
+    pub parent: u32,
+    pub flags: u32,
+    pub min: f32,
+    pub max: f32,
+    pub key: &'static str,
+    pub unit: &'static str,
+}
+
+pub fn meta(i: usize) -> Meta {
+    let d = &DEFS[i];
+    Meta { id: d.id, group: d.group, parent: d.parent, flags: d.flags, min: d.min, max: d.max, key: d.key, unit: d.unit }
+}
+
+/// Index (0..COUNT) of the control with machine name `key`.
+pub fn index_of_key(key: &str) -> Option<usize> {
+    DEFS.iter().position(|d| d.key == key)
+}
+
+pub fn index_of_id(id: u32) -> Option<usize> {
+    index(id)
+}
+
+/// Indices of controls stored in legacy parameter `p`.
+pub fn indices_of_param(p: u32) -> impl Iterator<Item = usize> {
+    DEFS.iter().enumerate().filter(move |(_, d)| matches!(d.store, Store::Param(q, _) if q == p)).map(|(i, _)| i)
+}
+
+/// All option names of a discrete control, index order.
+pub fn options(id: u32) -> Vec<&'static str> {
+    (0..).map_while(|i| option_name(id, i)).collect()
+}
+
+pub fn group_name(g: u32) -> &'static str {
+    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire"].get(g as usize).copied().unwrap_or("other")
 }
 
 /// Number of controls.

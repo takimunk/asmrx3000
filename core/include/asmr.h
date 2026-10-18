@@ -211,6 +211,28 @@ void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
 /* Name of option `index` of a discrete control into `out` (NUL-terminated); returns its length, 0 if none. */
 uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t index, char *out, uint32_t max);
 
+/* Prompt control (docs/prompt-control.md). Any thread. JSON strings, UTF-8. Each call writes
+   its NUL-terminated result into `out` only if `max` > its length, and returns the length in
+   bytes either way: call with out = NULL to size the buffer.
+   - state: {"controls": [{key, group, macro | parent, value, option?, options?, min, max, log?,
+     unit?, default, overridden?}], "environment": {...}, "objects": [{id, kind, pos, movable?,
+     moving?}], "frame", "gliding"}.
+   - patch: {"glide_s": 4, "changes": [{"key": "water.flow", "value": 0.3},
+     {"key": "water.regime", "value": "rapids"}, {"key": "water.depth", "value": "reset"}],
+     "moves": [{"object": 3, "position": [x, y, z]}]}. Keys are AsmrControlInfo.key. Values are
+     clamped; continuous controls glide (smoothstep, glide_s seconds, per change too), presets
+     and resets of presets switch at once; "reset" glides a child back onto its macro's curve.
+     asmr_set_control / asmr_set_param on a gliding control cancels its glide. Valid entries are
+     applied even if others fail. Result: {"ok", "applied": [{key, value, clamped?}],
+     "moved": [ids], "errors": ["unknown key `x`", ...], "undo": <patch restoring the touched
+     controls and objects>}.
+   - prompt: {"system": static system prompt, "context": current values as text,
+     "tool": {"name": "set_scene", "description", "input_schema"}}; the model's tool input is a
+     patch plus "explanation". */
+uint32_t asmr_get_state_json(const AsmrEngine *engine, char *out, uint32_t max);
+uint32_t asmr_apply_patch_json(const AsmrEngine *engine, const char *patch, char *out, uint32_t max);
+uint32_t asmr_get_prompt_json(const AsmrEngine *engine, char *out, uint32_t max);
+
 /* Live per-track peak waveform (asmr_get_scope): one point per 64-sample block, oldest first. */
 enum {
     ASMR_SCOPE_WATER = 0,
