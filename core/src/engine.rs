@@ -20,7 +20,7 @@ use crate::fft::fft;
 use crate::math::{Mat3, Vec3};
 use crate::physics::ground::GroundType;
 use crate::rng::Rng;
-use crate::scene::{ObjectBridge, ObjectInfo, SceneDesc, World};
+use crate::scene::{object_flags, ObjectBridge, ObjectInfo, SceneDesc, World};
 use crate::windfield::WindField;
 
 /// Control-rate block: source positions and gains update once per block.
@@ -32,6 +32,9 @@ pub const WIND_SPAN: f32 = 20.0;
 const SPECTRUM_RING: usize = 4096;
 const SPECTRUM_FFT: usize = 2048;
 const WIND_FIELD_POINTS: usize = 64;
+/// Live per-track peak waveforms for the UI (ASMR_SCOPE_*), one point per block.
+pub const SCOPE_TRACKS: usize = 9;
+const SCOPE_LEN: usize = 4096;
 
 const WATER_GAIN: f32 = 1.0;
 const WIND_GAIN: f32 = 0.6;
@@ -152,6 +155,9 @@ struct Shared {
     wind_field: Box<[AtomicF32]>,
     objects: ObjectBridge,
     controls: ControlBank,
+    /// Live waveform taps, see `scope`.
+    scope: Box<[AtomicF32]>,
+    scope_pos: AtomicUsize,
 }
 
 struct Dsp {
@@ -213,6 +219,8 @@ impl Engine {
             wind_field: atomics(WIND_FIELD_POINTS),
             objects: ObjectBridge::new(&world),
             controls: ControlBank::new(controls::Bases::new(desc, &world), desc),
+            scope: atomics(SCOPE_TRACKS * SCOPE_LEN),
+            scope_pos: AtomicUsize::new(0),
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -408,6 +416,48 @@ impl Engine {
             *o = self.shared.wind_field[i0].load() * (1.0 - f) + self.shared.wind_field[i1].load() * f;
         }
     }
+
+    /// The newest `out.len()` peaks of a scope track, oldest first. Returns how many are real
+    /// (the rest, at the start, are zero).
+    pub fn scope(&self, track: u32, out: &mut [f32]) -> usize {
+        let t = track as usize;
+        if t >= SCOPE_TRACKS {
+            out.fill(0.0);
+            return 0;
+        }
+        let pos = self.shared.scope_pos.load(Ordering::Acquire);
+        let n = out.len().min(SCOPE_LEN).min(pos);
+        let pad = out.len() - n;
+        out[..pad].fill(0.0);
+        for k in 0..n {
+            let idx = (pos - n + k) % SCOPE_LEN;
+            out[pad + k] = self.shared.scope[t * SCOPE_LEN + idx].load();
+        }
+        n
+    }
+}
+
+/// Track indices of `Engine::scope`; mirror ASMR_SCOPE_* in asmr.h.
+pub mod scope {
+    pub const WATER: usize = 0;
+    pub const WIND: usize = 1;
+    pub const BIRDS: usize = 2;
+    /// Birds in flight.
+    pub const FLIGHT: usize = 3;
+    pub const OUTPUT: usize = 4;
+    pub const RAIN: usize = 5;
+    pub const INSECTS: usize = 6;
+    pub const FIRE: usize = 7;
+    pub const THUNDER: usize = 8;
+}
+
+fn push_scope(shared: &Shared, peaks: &[f32; SCOPE_TRACKS]) {
+    let pos = shared.scope_pos.load(Ordering::Relaxed);
+    let i = pos % SCOPE_LEN;
+    for (t, p) in peaks.iter().enumerate() {
+        shared.scope[t * SCOPE_LEN + i].store(*p);
+    }
+    shared.scope_pos.store(pos.wrapping_add(1), Ordering::Release);
 }
 
 impl Dsp {
@@ -427,6 +477,7 @@ impl Dsp {
             out_r.fill(0.0);
             self.mono[..len].fill(0.0);
             self.out_level = 0.0;
+            push_scope(shared, &[0.0; SCOPE_TRACKS]);
             return;
         }
 
@@ -482,6 +533,7 @@ impl Dsp {
             ch[..len].fill(0.0);
         }
         let inv_len = 1.0 / len as f32;
+        let mut peaks = [0.0f32; SCOPE_TRACKS];
 
         for (idx, em) in self.world.emitters.iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
@@ -501,6 +553,20 @@ impl Dsp {
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
+            let peak = tmp.iter().fold(0.0f32, |m, v| m.max(v.abs())) * kind_gain;
+            let track = match em.kind {
+                SourceKind::Water => scope::WATER,
+                SourceKind::Wind => scope::WIND,
+                SourceKind::Bird => scope::BIRDS,
+                SourceKind::Rain => scope::RAIN,
+                SourceKind::Thunder => scope::THUNDER,
+                SourceKind::Fire => scope::FIRE,
+                SourceKind::Insect => scope::INSECTS,
+            };
+            peaks[track] = peaks[track].max(peak);
+            if em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0 {
+                peaks[scope::FLIGHT] = peaks[scope::FLIGHT].max(peak);
+            }
 
             // Propagation: delay/Doppler, spreading, air, ground, directivity, occlusion,
             // forest scattering, near field and reverb sends (propagation.rs).
@@ -531,6 +597,8 @@ impl Dsp {
             energy += m * m;
         }
         self.out_level = self.out_level * 0.9 + (energy * inv_len).sqrt() * 0.1;
+        peaks[scope::OUTPUT] = self.mono[..len].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        push_scope(shared, &peaks);
         self.time += dt as f64;
     }
 
@@ -603,6 +671,18 @@ mod tests {
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
+    }
+
+    #[test]
+    fn scope_follows_output() {
+        let engine = Engine::new(48_000.0);
+        engine.set_param(param::PLAYING, 1.0);
+        let (mut l, mut r) = (vec![0.0f32; 4800], vec![0.0f32; 4800]);
+        engine.render(&mut l, &mut r);
+        let mut scope = [0.0f32; 64];
+        assert_eq!(engine.scope(scope::OUTPUT as u32, &mut scope), 64);
+        assert!(scope.iter().any(|v| *v > 0.0));
+        assert_eq!(engine.scope(SCOPE_TRACKS as u32, &mut scope), 0);
     }
 
     #[test]

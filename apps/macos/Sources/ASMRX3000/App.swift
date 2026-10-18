@@ -10,11 +10,14 @@ struct ASMRX3000App: App {
             Snapshot.run(path: CommandLine.arguments[i + 1])
             exit(0)
         }
+        if CommandLine.arguments.contains("--bench") {
+            Bench.start()
+        }
     }
 
     var body: some Scene {
         MenuBarExtra {
-            ConsoleView(console: model.console)
+            Popover(model: model)
         } label: {
             Image(nsImage: MenuBarIcon.image(active: model.audio.isPlaying))
         }
@@ -26,7 +29,7 @@ struct ASMRX3000App: App {
 final class AppModel: ObservableObject {
     let audio = AudioEngine()
     let head = HeadTracker()
-    lazy var console = Console(model: self)
+    lazy var stage = Stage(audio: audio, head: head)
     private var bag = Set<AnyCancellable>()
 
     init() {

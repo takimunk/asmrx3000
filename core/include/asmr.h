@@ -210,6 +210,20 @@ void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
 /* Name of option `index` of a discrete control into `out` (NUL-terminated); returns its length, 0 if none. */
 uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t index, char *out, uint32_t max);
 
+/* Live per-track peak waveform (asmr_get_scope): one point per 64-sample block, oldest first. */
+enum {
+    ASMR_SCOPE_WATER = 0,
+    ASMR_SCOPE_WIND = 1,
+    ASMR_SCOPE_BIRDS = 2,
+    ASMR_SCOPE_FLIGHT = 3,  /* birds in flight */
+    ASMR_SCOPE_OUTPUT = 4,
+    ASMR_SCOPE_RAIN = 5,
+    ASMR_SCOPE_INSECTS = 6,
+    ASMR_SCOPE_FIRE = 7,
+    ASMR_SCOPE_THUNDER = 8,
+};
+uint32_t asmr_get_scope(const AsmrEngine *engine, uint32_t track, float *out, uint32_t points);
+
 #ifdef __cplusplus
 }
 #endif

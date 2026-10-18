@@ -1,45 +1,89 @@
 import AppKit
 import ImageIO
+import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png`: runs the engine and console for a few seconds without an
-/// audio device and writes one console frame as a PNG. For visual checks and CI.
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1] [--azimuth rad]`
+/// runs the engine for a few seconds without an audio device and writes the whole popover
+/// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
-    static func run(path: String, seconds: Double = 6) {
+    @MainActor
+    static func run(path: String, seconds: Double = 11) {
+        let args = CommandLine.arguments
+        func value(_ flag: String) -> String? {
+            args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        }
+        IconView.still = true
         let model = AppModel()
-        model.audio.orbit = 0.4
-        let console = model.console
+        let stage = model.stage
+        model.audio.orbit = value("--orbit").flatMap(Float.init) ?? 0
+        model.audio.birds = value("--birds").flatMap(Float.init) ?? 1
+        if let az = value("--azimuth").flatMap(Float.init) { stage.camera.azimuth = az }
+
         let fps = 30.0
-        var grid: AsciiGrid?
+        let selectKind = value("--select") ?? "tree"
         for i in 0..<Int(seconds * fps) {
             model.audio.simulate(seconds: 1 / fps)
-            grid = console.frame(time: 1000 + Double(i) / fps)
+            stage.step(dt: 1 / fps)
+            if i == 2 {
+                // Select something and move it a little, the way a user would.
+                switch selectKind {
+                case "tree":
+                    if let t = stage.things.first(where: { $0.kind == .tree }) {
+                        stage.select(t.key)
+                        stage.nudge(SIMD3(0.5, 0, 0))
+                    }
+                case "bird":
+                    if let t = stage.things.last(where: { $0.kind == .bird }) {
+                        stage.select(t.key)
+                        stage.nudge(SIMD3(0, 0, 0.75))
+                    }
+                case "river":
+                    stage.select(.river)
+                default:
+                    break
+                }
+            }
         }
-        guard let grid else { return }
+        if let h = stage.things.first(where: { $0.kind == .bird && $0.key != stage.selection }) { stage.hover = h.key }
 
-        let atlas = GlyphAtlas.shared
-        let scale: CGFloat = 2
-        let pad: CGFloat = 10
-        let w = CGFloat(grid.cols) * atlas.cellW + pad * 2
-        let h = CGFloat(grid.rows) * atlas.cellH + pad * 2
-        guard let ctx = CGContext(data: nil, width: Int(w * scale), height: Int(h * scale), bitsPerComponent: 8,
-                                  bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let scale: Float = 2
+        let sceneSize = SIMD2(Float(Popover.width), Float(Popover.sceneHeight))
+        let specSize = SIMD2(Float(Popover.width - 32), Float(Popover.spectrogramHeight))
+        let sceneRenderer = SceneRenderer(stage: stage)
+        let specRenderer = SpectrogramRenderer(stage: stage)
+        let tracksRenderer = TracksRenderer(stage: stage)
+        // The river's branch is open unless asked otherwise.
+        let controls = stage.controls
+        let expand = value("--expand") ?? "water"
+        controls.expanded = controls.macros.first { $0.key == expand }?.id
+        let macros = controls.macros
+        let rows = Tracks.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
+        let openCount = controls.expanded.map { controls.children(of: $0).count } ?? 0
+        let tracksHeight = Float(Popover.rowHeight) * Float(macros.count) + Float(Tracks.childHeight) * Float(openCount)
+        let tracksSize = SIMD2(Float(Popover.width - 32 - Popover.iconColumn), tracksHeight)
+        let hover = SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38)
+        specRenderer.hover = hover
+        guard let scene = GPU.shared.image(width: Int(sceneSize.x * scale), height: Int(sceneSize.y * scale), encode: {
+                  sceneRenderer.encode($0, target: $1, size: sceneSize, scale: scale)
+              }),
+              let spec = GPU.shared.image(width: Int(specSize.x * scale), height: Int(specSize.y * scale), encode: {
+                  specRenderer.encode($0, target: $1, size: specSize, scale: scale)
+              }),
+              let tracks = GPU.shared.image(width: Int(tracksSize.x * scale), height: Int(tracksSize.y * scale), encode: {
+                  tracksRenderer.encode($0, target: $1, size: tracksSize, scale: scale, rows: rows)
+              })
         else { return }
-        ctx.setFillColor(Pal.background)
-        ctx.fill(CGRect(x: 0, y: 0, width: w * scale, height: h * scale))
-        // Match SwiftUI's y-down coordinate space.
-        ctx.translateBy(x: 0, y: h * scale)
-        ctx.scaleBy(x: scale, y: -scale)
-        ctx.translateBy(x: pad, y: pad)
-        AsciiRenderer.draw(grid, in: ctx)
 
-        guard let image = ctx.makeImage(),
-              let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL,
-                                                         UTType.png.identifier as CFString, 1, nil)
+        let renderer = ImageRenderer(content: Popover(model: model, stills: StillFrames(scene: scene, spectrogram: spec, tracks: tracks, spectrogramHover: hover)))
+        renderer.scale = CGFloat(scale)
+        guard let image = renderer.cgImage,
+              let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)
         else { return }
         CGImageDestinationAddImage(dest, image, nil)
         CGImageDestinationFinalize(dest)
         print("snapshot → \(path)")
+        for s in stage.sources { print(s.kind, String(format: "level %.4f freq %.0f", s.level, s.freq)) }
+        print("wind", stage.wind.prefix(8).map { String(format: "%.2f", $0) })
     }
 }
