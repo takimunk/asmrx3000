@@ -125,9 +125,14 @@ enum Providers {
         if ProcessInfo.processInfo.environment["ASMR_PROMPT_PROVIDER"] == "mock" {
             return MockProvider()
         }
-        // Real adapters go here (TypeSafe / System One: pending its API docs).
+        if let key = typesafeKey {
+            return TypeSafeProvider(key: key)
+        }
         return nil
     }
+
+    /// Read once per run: the first read may show the keychain's "allow" dialog.
+    private static let typesafeKey: String? = Keychain.key(account: "typesafe")
 }
 
 /// Offline stand-in: a handful of keyword rules that produce the same kind of patch a model
@@ -178,5 +183,34 @@ struct MockProvider: PromptProvider {
         let explanation = said.isEmpty ? "Не понял, что изменить." : "Мок: " + said.joined(separator: ", ") + "."
         let patch: [String: Any] = ["explanation": explanation, "glide_s": glide, "changes": changes]
         return try PromptReply(patch: JSONSerialization.data(withJSONObject: patch))
+    }
+}
+
+/// `ASMRX3000 --prompt-live "…"`: one real request through the configured provider; prints
+/// the patch, the core's result and the latency (never the key).
+enum PromptCheck {
+    static func run(_ text: String) {
+        let audio = AudioEngine()
+        guard let provider = Providers.current() else {
+            print("no provider: add a key with `security add-generic-password -U -s \(Keychain.service) -a typesafe -w`")
+            return
+        }
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let request = try PromptRequest(text: text, promptJSON: audio.promptJSON(), state: audio.stateJSON())
+                let start = Date()
+                let reply = try await provider.complete(request)
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                print("provider \(provider.name), \(ms) ms")
+                print("patch  " + String(decoding: reply.patch, as: UTF8.self))
+                let result = audio.applyPatch(reply.patch)
+                print("result ok=\(result["ok"] ?? "?") errors=\(result["errors"] ?? [])")
+            } catch {
+                print("failed: \(PromptError.from(error)) \(error)")
+            }
+            done.signal()
+        }
+        done.wait()
     }
 }
