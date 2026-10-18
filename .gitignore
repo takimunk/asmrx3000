@@ -1,0 +1,6 @@
+/core/target/
+/apps/macos/.build/
+/apps/macos/.swiftpm/
+/build/
+*.wav
+.DS_Store

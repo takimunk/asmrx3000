@@ -1,0 +1,5 @@
+module CAsmr [system] {
+    header "../../../../core/include/asmr.h"
+    link "asmr_core"
+    export *
+}

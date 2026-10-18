@@ -1,0 +1,20 @@
+[package]
+name = "asmr-core"
+version = "0.1.0"
+edition = "2021"
+description = "ASMR X3000 real-time acoustic environment engine"
+publish = false
+
+[lib]
+name = "asmr_core"
+crate-type = ["staticlib", "rlib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+panic = "abort"

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>ASMRX3000</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.asmrx3000.app</string>
+    <key>CFBundleName</key>
+    <string>ASMR X3000</string>
+    <key>CFBundleDisplayName</key>
+    <string>ASMR X3000</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMotionUsageDescription</key>
+    <string>ASMR X3000 uses your AirPods' head tracking to keep the soundscape fixed in space as you turn your head.</string>
+</dict>
+</plist>
