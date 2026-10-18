@@ -167,6 +167,7 @@ struct Dsp {
 pub struct Engine {
     shared: Shared,
     dsp: UnsafeCell<Dsp>,
+    controls: crate::controls::Controls,
 }
 
 // SAFETY: `dsp` is only touched by `render`, which the API contract restricts to a single
@@ -257,7 +258,11 @@ impl Engine {
             out_level: 0.0,
         };
         dsp.publish(&shared);
-        Self { shared, dsp: UnsafeCell::new(dsp) }
+        Self { shared, dsp: UnsafeCell::new(dsp), controls: crate::controls::Controls::new() }
+    }
+
+    pub fn controls(&self) -> &crate::controls::Controls {
+        &self.controls
     }
 
     pub fn set_param(&self, id: u32, value: f32) {

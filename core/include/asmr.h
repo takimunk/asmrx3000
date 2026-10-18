@@ -72,6 +72,36 @@ enum {
 };
 uint32_t asmr_get_scope(const AsmrEngine *engine, uint32_t track, float *out, uint32_t points);
 
+/* Control tree (stub until the physical-models branch lands). A group has one macro slider
+ * (parent = UINT32_MAX) and child controls for its physical parameters; moving a macro
+ * updates its children, so read values back every frame. */
+enum {
+    ASMR_GROUP_WATER = 0,
+    ASMR_GROUP_WIND = 1,
+    ASMR_GROUP_FOLIAGE = 2,
+    ASMR_GROUP_RAIN = 3,
+    ASMR_GROUP_BIRDS = 4,
+    ASMR_GROUP_MASTER = 5,
+};
+enum {
+    ASMR_CONTROL_MACRO = 1u << 0,
+    ASMR_CONTROL_LOG = 1u << 1,
+    ASMR_CONTROL_DISCRETE = 1u << 2, /* preset index, min..max in steps of 1 */
+};
+
+typedef struct AsmrControlInfo {
+    uint32_t id;           /* stable */
+    uint32_t group;        /* ASMR_GROUP_* */
+    uint32_t parent;       /* macro id this branches from; UINT32_MAX = top level */
+    uint32_t flags;        /* ASMR_CONTROL_* */
+    float min, max, value, default_value;
+    char key[24];          /* e.g. "water.flow", "water.depth" */
+    char unit[8];          /* "m/s", "m", "mm/h", "" */
+} AsmrControlInfo;
+
+uint32_t asmr_get_controls(const AsmrEngine *engine, AsmrControlInfo *out, uint32_t max);
+void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
+
 /* Scene objects (stub until the scene graph lands: objects = the sources above, id = index). */
 enum {
     ASMR_OBJECT_MOVABLE = 1u << 0, /* the user may move it */

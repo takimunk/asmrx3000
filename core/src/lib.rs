@@ -4,6 +4,7 @@
 
 mod ambisonics;
 mod binaural;
+mod controls;
 mod dsp;
 mod engine;
 mod fft;
@@ -12,6 +13,7 @@ mod rng;
 mod sources;
 mod windfield;
 
+pub use controls::ControlInfo;
 pub use engine::{param, telemetry, Engine, ObjectInfo, SourceInfo, SourceKind, MAX_SOURCES};
 
 use std::slice;
@@ -128,5 +130,26 @@ pub unsafe extern "C" fn asmr_get_scope(engine: *const Engine, track: u32, out: 
     match (engine.as_ref(), out.is_null()) {
         (Some(e), false) => e.scope(track, slice::from_raw_parts_mut(out, points as usize)) as u32,
         _ => 0,
+    }
+}
+
+/// Stub of the control tree (see controls.rs).
+///
+/// # Safety
+/// `out` must point to `max` writable `AsmrControlInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_controls(engine: *const Engine, out: *mut ControlInfo, max: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.controls().list(e, slice::from_raw_parts_mut(out, max as usize)) as u32,
+        _ => 0,
+    }
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_control(engine: *const Engine, id: u32, value: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.controls().set(e, id, value);
     }
 }
