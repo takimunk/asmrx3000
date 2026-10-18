@@ -601,7 +601,10 @@ raise birds.activity.
 involved (+0.6..1 in front, −0.4..−1 behind) and mix.clarity / mix.density; when the scene changes \
 character (storm, night, dawn chorus), set a fitting focus too (storm: rain +0.5; dawn: birds +0.5). \
 Leave mix.loudness and mix.dynamics alone unless asked about overall level or calm. The sound \
-director does the real-time levelling itself.
+director does the real-time levelling itself. \"Less noise / hiss / mush\" → lower mix.texture_budget \
+(0.1–0.2); \"listen where I look\" → mix.front_focus 0.8; \"stay with the brook\", \"meditative\" → \
+mix.refocus 0.8–1; more or less depth → mix.distance. <group>.level (dB) are plain faders: only for \
+explicit \"quieter/louder/mute the …\" about one group.
 - explanation: one short line (≤ 70 characters) in the user's language, saying what you changed, \
 plain words, no numbers unless asked. If the request is not about the sound scene, make no changes \
 and say so briefly.";

@@ -360,16 +360,6 @@ pub fn niche_targets(a: &Analysis, tracks: &[usize], bed: &[bool], depth_db: f32
         }
         *b = (0..BANDS).map(|z| m.specific(z, a.exc[tracks[k]][z], 0.0)).fold(0.0, f32::max);
     }
-    if false {
-        static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        if C.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 2000 == 0 {
-            for z in 0..BANDS {
-                let sh: Vec<String> = (0..n).map(|k| format!("{:.2}", share(k, z))).collect();
-                let lv: Vec<String> = (0..n).map(|k| format!("{:.0}", super::loudness::db_spl(a.exc[tracks[k]][z]))).collect();
-                eprintln!("z{z:2} sum {:.0} dB | shares {} | lv {} | best {:?}", super::loudness::db_spl(sum[z]), sh.join(" "), lv.join(" "), &best[..n]);
-            }
-        }
-    }
     for z in 0..BANDS {
         if sum[z] < m.e_tq[z] {
             continue;

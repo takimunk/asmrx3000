@@ -744,7 +744,9 @@ impl Mix {
         // the stationary refocus is brought closer: attending to a sound shrinks its distance.
         let closer = if s.anchor { 1.0 - 0.7 * refocus } else { 1.0 };
         let dcue = if s.class == SoundClass::Thunder { Cue::NONE } else { focus::distance_cue(dist, self.intent.distance * on * closer) };
+        // Looking at a texture lifts it half as much as an event (attention selects objects).
         let fcue = focus::front_cue(s.cos, self.intent.front_focus * on, solo);
+        let fcue = if tex { Cue { db: if fcue.db > 0.0 { 0.5 * fcue.db } else { fcue.db }, ..fcue } } else { fcue };
         let bird = matches!(s.class, SoundClass::Bird(_));
         // Stationary refocus: the anchors come forward and drier, the rest steps back.
         let rcue = if refocus <= 0.0 {
@@ -1122,44 +1124,46 @@ impl Mix {
 
         // Ranking: protected = anchors, the strongest stream of each texture class, and the
         // KEEP_STREAMS strongest overall. The rest is the tail, ranked again for its weights.
-        let mut prio = [f32::NEG_INFINITY; MAX_SLOTS];
-        let mut class_best = [(usize::MAX, f32::NEG_INFINITY); TEXTURE_KINDS];
-        for (i, s) in self.slots.iter().enumerate() {
-            if !sounding(s) {
+        // Sounding textures, sorted by priority (insertion sort on the stack: tens of them).
+        let mut order = [(0u16, 0.0f32); MAX_SLOTS];
+        let mut n = 0;
+        let mut class_best = [usize::MAX; TEXTURE_KINDS];
+        for i in 0..MAX_SLOTS {
+            // Not a sounding texture (or not ranked yet): protected, no tail cut.
+            self.slots[i].protected = true;
+            self.slots[i].tail_w = 0.0;
+            if !sounding(&self.slots[i]) {
                 continue;
             }
-            let p = self.texture_priority(s);
-            prio[i] = p;
-            let k = texture_kind(s.class).unwrap_or(0);
-            if p > class_best[k].1 {
-                class_best[k] = (i, p);
+            let p = self.texture_priority(&self.slots[i]);
+            let mut k = n;
+            while k > 0 && order[k - 1].1 < p {
+                order[k] = order[k - 1];
+                k -= 1;
+            }
+            order[k] = (i as u16, p);
+            n += 1;
+        }
+        for &(i, _) in &order[..n] {
+            let c = texture_kind(self.slots[i as usize].class).unwrap_or(0);
+            if class_best[c] == usize::MAX {
+                class_best[c] = i as usize;
             }
         }
-        let beats = |j: usize, i: usize| prio[j] > prio[i] || (prio[j] == prio[i] && j < i);
-        let (mut n_tex, mut n_prot) = (0u32, 0u32);
-        for i in 0..MAX_SLOTS {
-            let s = &self.slots[i];
-            if prio[i] == f32::NEG_INFINITY {
-                self.slots[i].protected = true;
-                self.slots[i].tail_w = 0.0;
-                continue;
-            }
-            n_tex += 1;
-            let rank = (0..MAX_SLOTS).filter(|&j| j != i && prio[j] > f32::NEG_INFINITY && beats(j, i)).count();
-            let best_of_class = class_best[texture_kind(s.class).unwrap_or(0)].0 == i;
-            let protected = s.anchor || best_of_class || rank < focus::KEEP_STREAMS || on <= 0.0;
-            self.slots[i].protected = protected;
-            if protected {
+        let (mut n_prot, mut tail_rank) = (0u32, 0usize);
+        for (rank, &(i, _)) in order[..n].iter().enumerate() {
+            let i = i as usize;
+            let s = &mut self.slots[i];
+            let best_of_class = class_best[texture_kind(s.class).unwrap_or(0)] == i;
+            s.protected = s.anchor || best_of_class || rank < focus::KEEP_STREAMS || on <= 0.0;
+            if s.protected {
                 n_prot += 1;
+            } else {
+                s.tail_w = focus::tail_weight(tail_rank);
+                tail_rank += 1;
             }
         }
-        for i in 0..MAX_SLOTS {
-            if prio[i] == f32::NEG_INFINITY || self.slots[i].protected {
-                continue;
-            }
-            let k = (0..MAX_SLOTS).filter(|&j| j != i && prio[j] > f32::NEG_INFINITY && !self.slots[j].protected && beats(j, i)).count();
-            self.slots[i].tail_w = focus::tail_weight(k);
-        }
+        let n_tex = n as u32;
 
         // Joint loudness of every texture vs the protected streams alone (the tail track is a
         // copy of the tail inside the group tracks).
@@ -1175,7 +1179,8 @@ impl Mix {
             n_all += a.model.specific(z, e_all, 0.0);
             n_prot_sone += a.model.specific(z, e_prot, 0.0);
         }
-        let ratio = if n_all > 0.05 && n_prot_sone > 0.0 { n_all / n_prot_sone } else { 1.0 };
+        // The protected streams count at least TAIL_FLOOR_SONE: a soft, quiet bed keeps its tail.
+        let ratio = if n_all > 0.05 { n_all / n_prot_sone.max(focus::TAIL_FLOOR_SONE) } else { 1.0 };
         // Standing still tightens the budget (the rest steps further back).
         let refocus = self.refocus_now();
         let limit = if on > 0.0 { focus::budget_limit(self.intent.texture_budget).map(|l| (l - 0.2 * refocus).max(1.02)) } else { None };
@@ -1189,7 +1194,8 @@ impl Mix {
             _ => 1.0,
         };
         // Under budget the cut is released towards 0 (it never boosts).
-        self.bed_budget.update(bed_ratio, sone.map(|_| 1.0), focus::BED_MAX_DB, hop_s);
+        let max_db = focus::BED_MAX_DB * (1.0 + ((0.35 - self.intent.texture_budget) / 0.35).clamp(0.0, 1.0));
+        self.bed_budget.update(bed_ratio, sone.map(|_| 1.0), max_db, hop_s);
         let info = &mut self.info;
         info.texture_sone += (n_all - info.texture_sone) * 0.05;
         info.texture_protected_sone += (n_prot_sone - info.texture_protected_sone) * 0.05;
@@ -1262,8 +1268,9 @@ impl Mix {
             }
         }
         if c > 0.0 {
-            // Attended (frontal) bed sources are ducked less.
-            for g in 0..group::COUNT {
+            // Attended (frontal) event-like bed sources (birds in the bed, fire) are ducked less;
+            // textures in front still step aside for the soloists.
+            for g in (0..group::COUNT).filter(|g| !TEXTURE_GROUPS.contains(g)) {
                 let k = 1.0 - 0.5 * ff * self.front_share[g];
                 for v in self.duck_target[g].iter_mut() {
                     *v *= k;

@@ -252,7 +252,7 @@ enum {
     ASMR_CONTROL_MIX_FOCUS_INSECTS = 1109,
     ASMR_CONTROL_MIX_FOCUS_FIRE = 1110,
     ASMR_CONTROL_MIX_FRONT_FOCUS = 1111,    /* "mix.front_focus" 0..1 [0.5]: attention follows the head pose; frontal cone up to +4*x dB
-                                               and clearer, rear up to -4*x dB and darker (soloists behind lose half) */
+                                               (textures +2*x), sides -x, rear -3*x dB and darker (soloists behind: half) */
     ASMR_CONTROL_MIX_DISTANCE = 1112,       /* "mix.distance" 0..1 [0.6]: perceptual distance beyond 4 m: extra 1/r^(0.8x) (cap -18 dB),
                                                HF loss, wetter; near (<4 m) a little louder and drier */
     ASMR_CONTROL_MIX_TEXTURE_BUDGET = 1113, /* "mix.texture_budget" 0..1 [0.35]: broadband textures beyond the protected few streams may add at

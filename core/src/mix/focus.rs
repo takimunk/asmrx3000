@@ -26,6 +26,9 @@ pub const DIST_MAX_DB: f32 = 18.0;
 pub const KEEP_STREAMS: usize = 3;
 /// Deepest cut of the texture tail, dB.
 pub const TAIL_MAX_DB: f32 = 24.0;
+/// The tail is measured against at least this much protected loudness (sone): below a few
+/// sone the whole bed is a soft wash and nothing piles up.
+pub const TAIL_FLOOR_SONE: f32 = 3.0;
 
 #[inline]
 pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -76,7 +79,7 @@ pub fn direction_weights(cos: f32) -> (f32, f32, f32) {
 }
 
 /// Attention that follows the head: `amount` = mix.front_focus. Front +4·amount dB, sides
-/// −1.5·amount, rear −4·amount dB and up to −4·amount dB darker; a soloist behind loses
+/// −1·amount, rear −3·amount dB and up to −4·amount dB darker; a soloist behind loses
 /// only half of it (a strong source stays audible behind).
 pub fn front_cue(cos: f32, amount: f32, soloist: bool) -> Cue {
     let a = amount.clamp(0.0, 1.0);
@@ -85,7 +88,7 @@ pub fn front_cue(cos: f32, amount: f32, soloist: bool) -> Cue {
     }
     let (f, r, s) = direction_weights(cos);
     let rear = if soloist { 0.5 } else { 1.0 };
-    Cue { db: a * (4.0 * f - 1.5 * s - 4.0 * r * rear), tilt_db: -4.0 * a * r * rear, send: 1.0 }
+    Cue { db: a * (4.0 * f - 1.0 * s - 3.0 * r * rear), tilt_db: -4.0 * a * r * rear, send: 1.0 }
 }
 
 /// Feedback controller of the texture tail: drives `cut_db` (≤ 0) so that the joint loudness
@@ -136,8 +139,8 @@ pub fn budget_sone(budget: f32) -> Option<f32> {
     }
 }
 
-/// Deepest cut of the whole texture bed by the absolute budget, dB (protected streams take
-/// half of it).
+/// Deepest cut of the whole texture bed by the absolute budget at the default budget and
+/// above, dB (protected streams take half of it); twice that at budget 0.
 pub const BED_MAX_DB: f32 = 10.0;
 
 /// Cut weight of the tail emitter ranked `k` (0 = highest priority of the tail): the first
@@ -197,7 +200,7 @@ mod tests {
         let rear_solo = front_cue(-1.0, a, true);
         assert!((front.db - 2.0).abs() < 1e-4 && front.tilt_db == 0.0);
         assert!(side.db < 0.0 && side.db > -1.0);
-        assert!((rear.db + 2.0).abs() < 1e-4 && rear.tilt_db < 0.0);
+        assert!((rear.db + 1.5).abs() < 1e-4 && rear.tilt_db < 0.0);
         assert!(rear_solo.db > rear.db && rear_solo.db >= -1.0);
         let (f, r, s) = direction_weights(0.7);
         assert!((f + r + s - 1.0).abs() < 1e-5);

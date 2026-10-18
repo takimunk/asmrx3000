@@ -299,7 +299,7 @@ fn front_focus_follows_the_head() {
     let (looked, hf_front) = settled_voice(bird, left, core::f32::consts::FRAC_PI_2, i);
     let (behind, hf_rear) = settled_voice(bird, left, -core::f32::consts::FRAC_PI_2, i);
     assert!((looked - 2.0).abs() < 0.2, "front +2 dB at 0.5: {looked:.2}");
-    assert!((behind + 2.0).abs() < 0.2, "rear −2 dB at 0.5: {behind:.2}");
+    assert!((behind + 1.5).abs() < 0.2, "rear −1.5 dB at 0.5: {behind:.2}");
     assert!(hf_rear < hf_front - 1.0, "rear darker: {hf_front:.1} vs {hf_rear:.1}");
     let off = Intent { front_focus: 0.0, ..i };
     let (a, _) = settled_voice(bird, left, core::f32::consts::FRAC_PI_2, off);
