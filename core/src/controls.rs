@@ -44,6 +44,10 @@ pub mod flags {
     pub const DISCRETE: u32 = 1 << 2;
     /// Child currently set by the user (does not follow its macro).
     pub const OVERRIDDEN: u32 = 1 << 3;
+    /// Per-group loudness trim in dB (`<group>.level`): a pure gain on the group in the mix,
+    /// after calibration and before the director's analysis. Never follows its macro; NaN
+    /// resets it to 0 dB. −40 dB mutes.
+    pub const LEVEL: u32 = 1 << 4;
 }
 
 pub const NO_PARENT: u32 = u32::MAX;
@@ -135,6 +139,25 @@ pub mod id {
     pub const MIX_FOCUS_RAIN: u32 = 1108;
     pub const MIX_FOCUS_INSECTS: u32 = 1109;
     pub const MIX_FOCUS_FIRE: u32 = 1110;
+    /// Attention follows the head: frontal cone lifted and clearer, rear a little lower and
+    /// darker (0 = off).
+    pub const MIX_FRONT_FOCUS: u32 = 1111;
+    /// Perceptual distance: far sources recede (level, HF, wetter), near ones are present.
+    pub const MIX_DISTANCE: u32 = 1112;
+    /// Texture budget: how much the low-priority tail of broadband textures may add on top of
+    /// the few protected texture streams (0 = cull hard, 1 = no limit).
+    pub const MIX_TEXTURE_BUDGET: u32 = 1113;
+    /// Stationary refocus: when the listener stops, a few constant sounds come forward and
+    /// the rest steps back (0 = off).
+    pub const MIX_REFOCUS: u32 = 1114;
+    /// Per-group loudness trims, dB (flags::LEVEL), `<group>.level`: id = group base + 50.
+    pub const WATER_LEVEL: u32 = 150;
+    pub const WIND_LEVEL: u32 = 250;
+    pub const FOLIAGE_LEVEL: u32 = 350;
+    pub const RAIN_LEVEL: u32 = 450;
+    pub const BIRDS_LEVEL: u32 = 550;
+    pub const INSECTS_LEVEL: u32 = 850;
+    pub const FIRE_LEVEL: u32 = 950;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -167,11 +190,11 @@ const fn def(id: u32, group: u32, parent: u32, flags: u32, min: f32, max: f32, k
     Def { id, group, parent, flags, min, max, key, unit, store }
 }
 
-use flags::{DISCRETE as D, LOG as L, MACRO as M};
+use flags::{DISCRETE as D, LEVEL as LV, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 56;
+const N: usize = 67;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -230,6 +253,17 @@ static DEFS: [Def; N] = [
     def(MIX_FOCUS_RAIN, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.rain", "", Store::Local),
     def(MIX_FOCUS_INSECTS, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.insects", "", Store::Local),
     def(MIX_FOCUS_FIRE, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.fire", "", Store::Local),
+    def(MIX_FRONT_FOCUS, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.front_focus", "", Store::Local),
+    def(MIX_DISTANCE, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.distance", "", Store::Local),
+    def(MIX_TEXTURE_BUDGET, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.texture_budget", "", Store::Local),
+    def(MIX_REFOCUS, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.refocus", "", Store::Local),
+    def(WATER_LEVEL, g::WATER, WATER_FLOW, LV, -40.0, 12.0, "water.level", "dB", Store::Local),
+    def(WIND_LEVEL, g::WIND, WIND_SPEED, LV, -40.0, 12.0, "wind.level", "dB", Store::Local),
+    def(FOLIAGE_LEVEL, g::FOLIAGE, FOLIAGE_DENSITY, LV, -40.0, 12.0, "foliage.level", "dB", Store::Local),
+    def(RAIN_LEVEL, g::RAIN, RAIN_RATE, LV, -40.0, 12.0, "rain.level", "dB", Store::Local),
+    def(BIRDS_LEVEL, g::BIRDS, BIRDS_ACTIVITY, LV, -40.0, 12.0, "birds.level", "dB", Store::Local),
+    def(INSECTS_LEVEL, g::INSECTS, INSECTS_ACTIVITY, LV, -40.0, 12.0, "insects.level", "dB", Store::Local),
+    def(FIRE_LEVEL, g::FIRE, FIRE_HEAT, LV, -40.0, 12.0, "fire.level", "dB", Store::Local),
 ];
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -423,6 +457,11 @@ impl ControlBank {
             MIX_SOLOISTS => mix_soloists(0.6),
             MIX_LOUDNESS => -22.0,
             MIX_DYNAMICS => 0.7,
+            MIX_FRONT_FOCUS => 0.5,
+            MIX_DISTANCE => 0.6,
+            MIX_TEXTURE_BUDGET => 0.35,
+            MIX_REFOCUS => 0.5,
+            // Level trims (flags::LEVEL) start at 0 dB.
             _ => 0.0,
         }
     }
@@ -502,6 +541,10 @@ impl ControlBank {
         let d = &DEFS[i];
         if value.is_nan() {
             self.overridden[i].store(0, Ordering::Relaxed);
+            // A level trim has no macro curve: "follow the macro" means back to 0 dB.
+            if d.flags & flags::LEVEL != 0 {
+                self.local[i].store(self.default_of(d.id));
+            }
             return;
         }
         if !value.is_finite() {

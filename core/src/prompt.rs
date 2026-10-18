@@ -559,6 +559,11 @@ fn describe(key: &str) -> &'static str {
         "mix.focus.rain" => "Foreground .. background for rain and thunder (−1..1).",
         "mix.focus.insects" => "Foreground .. background for crickets and insects (−1..1).",
         "mix.focus.fire" => "Foreground .. background for the campfire (−1..1).",
+        "mix.front_focus" => "Attention follows the head: sounds in front of the listener's face are lifted ~2 dB and kept clear, sounds behind are a little lower and darker (0 off, 0.5 default, 1 strong). Raise for 'listen where I look'.",
+        "mix.distance" => "How strongly distance is heard: far sounds recede (quieter, darker, more reverb), near ones are present (0 physical only, 0.6 default, 1 strong depth).",
+        "mix.texture_budget" => "How much the background textures (rain patches, leaves, water segments, wind, insects) may pile up beyond the few nearest/most important ones (0 = only those few, 0.35 default, 1 = everything summed). Lower for 'less noise', 'less hiss', 'cleaner'; raise for 'enveloping', 'wall of rain'.",
+        "mix.refocus" => "When the listener stands still, over a few seconds the nearest brook and one bird area come forward and the rest steps back (0 off, 0.5 default, 1 strong). Raise for 'meditative', 'calm focus'; lower for 'keep everything'.",
+        "water.level" | "wind.level" | "foliage.level" | "rain.level" | "birds.level" | "insects.level" | "fire.level" => "Loudness trim of this sound group in the mix, dB (−40 mutes, 0 default, +12). A plain fader: use it only for explicit 'louder/quieter/mute the …' requests about one group; prefer the physical macro or mix.focus otherwise.",
         "flight.speed" => "Flight mode only (the user switches it on with the flight button): forward speed through an endless generated landscape, m/s. 0 hover, 1.5 walk, 5 run, 12 glide, 25 fast flight. Altitude follows unless set.",
         "flight.altitude" => "Flight mode: ears above the ground, m, logarithmic (1.7 walking among trunks, 5 under the crowns, 20 just above the canopy, 40 high). Follows the speed unless set.",
         "flight.curviness" => "Flight mode: how much the path bends, 0 straight .. 1 (turn radius 250 m). Takes effect ~200 m ahead.",
@@ -663,7 +668,8 @@ fn context_text(v: &View) -> String {
             None => format!("{}{}{}", c["value"], if unit.is_empty() { "" } else { " " }, unit),
         };
         let range = if c["options"].is_array() { String::new() } else { format!(" (range {}..{})", c["min"], c["max"]) };
-        let flag = if c["overridden"] == json!(true) { ", set explicitly" } else if c["parent"].is_string() { ", follows macro" } else { "" };
+        let level = c["unit"] == json!("dB") && key.ends_with(".level");
+        let flag = if c["overridden"] == json!(true) { ", set explicitly" } else if c["parent"].is_string() && !level { ", follows macro" } else { "" };
         let _ = writeln!(s, "{key} = {val}{range}{flag}");
     }
     let e = &state["environment"];
