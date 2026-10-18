@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASMR X3000 — a forest that is physically simulated</title>
+<meta name="description" content="Real-time physically based soundscape: wind, river and birds simulated in 3D, rendered as binaural audio with head tracking. Try it in your browser.">
+<style>
+  :root { --bg:#070b08; --fg:#b9f5c8; --dim:#5f8a6b; --hot:#ffd35a; --line:#1b2c20; --panel:#0b120d; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  body::after { content:""; position:fixed; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+  a { color:var(--hot); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width:960px; margin:0 auto; padding:0 20px; }
+  nav { display:flex; justify-content:space-between; padding:20px 0; color:var(--dim); }
+  nav b { color:var(--fg); letter-spacing:.12em; }
+  nav a { margin-left:18px; }
+  h1 { font-size:clamp(34px,7vw,64px); line-height:1.05; margin:56px 0 18px; text-shadow:0 0 18px rgba(120,255,160,.45); letter-spacing:-.02em; }
+  h2 { font-size:13px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); margin:72px 0 16px; font-weight:400; }
+  h2::before { content:"▍"; color:var(--hot); margin-right:8px; }
+  .lead { max-width:640px; color:#8fd1a2; font-size:17px; }
+  .cta { margin:28px 0 0; display:flex; gap:12px; flex-wrap:wrap; }
+  .btn { display:inline-block; border:1px solid var(--fg); color:var(--fg); padding:9px 16px; background:transparent; font:inherit; cursor:pointer; }
+  .btn:hover { background:var(--fg); color:var(--bg); text-decoration:none; }
+  .btn.hot { border-color:var(--hot); color:var(--hot); } .btn.hot:hover { background:var(--hot); color:var(--bg); }
+  .panel { border:1px solid var(--line); background:var(--panel); padding:20px; }
+  .demo { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; }
+  @media (max-width:760px) { .demo { grid-template-columns:1fr; } }
+  .seg { display:flex; border:1px solid var(--line); margin-bottom:14px; }
+  .seg button { flex:1; background:none; border:0; color:var(--dim); padding:10px; font:inherit; cursor:pointer; }
+  .seg button[aria-pressed=true] { background:var(--fg); color:var(--bg); }
+  .note { color:var(--dim); font-size:13px; min-height:3.6em; }
+  label { display:flex; justify-content:space-between; font-size:13px; color:var(--dim); margin-top:14px; }
+  input[type=range] { width:100%; accent-color:var(--fg); }
+  canvas { width:100%; display:block; background:#050806; border:1px solid var(--line); }
+  #radar { aspect-ratio:1; cursor:grab; touch-action:none; } #radar:active { cursor:grabbing; }
+  #spec { height:90px; margin-top:12px; }
+  .hint { font-size:12px; color:var(--dim); margin-top:8px; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+  @media (max-width:760px) { .grid3 { grid-template-columns:1fr; } }
+  .grid3 h3 { margin:0 0 6px; font-size:15px; color:var(--hot); font-weight:400; }
+  .grid3 p { margin:0; color:#8fd1a2; font-size:14px; }
+  pre { background:var(--panel); border:1px solid var(--line); padding:14px; overflow:auto; }
+  img.shot { max-width:100%; border:1px solid var(--line); image-rendering:auto; }
+  footer { margin:80px 0 40px; color:var(--dim); font-size:13px; border-top:1px solid var(--line); padding-top:20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav><b>ASMR X3000</b><span><a href="#demo">demo</a><a href="#how">how it works</a><a href="https://github.com/takimunk/asmrx3000">github</a></span></nav>
+
+  <h1>A forest you can<br>turn your head in.</h1>
+  <p class="lead">Not a looped recording. Wind gusts travel through the trees, a river bubbles bubble by bubble, birds sing from real positions in 3D — all simulated live, then rendered to your headphones with head-related binaural cues. On a Mac with AirPods, turning your head turns the world.</p>
+  <div class="cta">
+    <a class="btn hot" href="#demo">▶ Try the demo</a>
+    <a class="btn" href="https://github.com/takimunk/asmrx3000">★ Source on GitHub</a>
+  </div>
+
+  <h2 id="demo">Live demo — use headphones</h2>
+  <div class="demo">
+    <div class="panel">
+      <div class="seg" role="group" aria-label="Playback mode">
+        <button id="m-flat" aria-pressed="true">FLAT RECORDING</button>
+        <button id="m-spatial" aria-pressed="false">LIVE SCENE · 3D</button>
+      </div>
+      <button class="btn hot" id="play" style="width:100%">[ ▶ PLAY ]</button>
+      <div class="note" id="note" style="margin-top:12px"></div>
+      <label>Wind <span id="v-wind"></span></label><input type="range" id="wind" min="0" max="1" step="0.01" value="0.5">
+      <label>Birds <span id="v-birds"></span></label><input type="range" id="birds" min="0" max="1" step="0.01" value="0.6">
+      <label>River <span id="v-water"></span></label><input type="range" id="water" min="0" max="1" step="0.01" value="0.6">
+      <label>Bird circling <span id="v-orbit"></span></label><input type="range" id="orbit" min="0" max="1" step="0.01" value="0.3">
+      <label>Volume <span id="v-volume"></span></label><input type="range" id="volume" min="0" max="1.2" step="0.01" value="0.7">
+    </div>
+    <div class="panel">
+      <canvas id="radar" width="480" height="480" aria-label="Top-down sound field radar"></canvas>
+      <div class="hint" id="radar-hint">Drag left/right (or use ← →) to turn your head. In live-scene mode the whole sound field rotates with you.</div>
+      <canvas id="spec" width="480" height="90" aria-label="Spectrum"></canvas>
+    </div>
+  </div>
+
+  <h2 id="how">How it works</h2>
+  <div class="grid3">
+    <div><h3>Sources, not samples</h3><p>Water is synthesised from individual Minnaert bubbles, wind from a gust front sweeping across the scene, birds from procedural song with their own positions.</p></div>
+    <div><h3>3rd-order Ambisonics</h3><p>Everything is encoded into a 16-channel sound field, so the listener can be rotated after the fact — the same trick VR audio uses.</p></div>
+    <div><h3>Binaural + head tracking</h3><p>The field is decoded through an HRTF model to two ears. The macOS app reads AirPods motion sensors and rotates the field in real time.</p></div>
+  </div>
+  <p class="hint" style="margin-top:18px">The demo above runs the exact same Rust engine as the native app, compiled to WebAssembly and executed inside an AudioWorklet — no samples are downloaded. “Flat recording” plays the same scene as an ordinary fixed stereo mix: the head is locked and spatial width is collapsed, which is what a pre-recorded track gives you.</p>
+
+  <h2>The native app</h2>
+  <img class="shot" src="console.png" alt="ASCII console UI of the macOS menu bar app" width="414" height="553">
+  <p class="hint">macOS menu bar app: animated ASCII console with spectrogram, sound-field radar and a live log of what the engine is doing.</p>
+  <pre>git clone https://github.com/takimunk/asmrx3000
+cd asmrx3000
+scripts/build-macos.sh</pre>
+
+  <footer>ASMR X3000 · <a href="https://github.com/takimunk/asmrx3000">github.com/takimunk/asmrx3000</a> · macOS first, Windows/Linux and a Chrome extension next.</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const NOTES = {
+  flat: 'Same forest, rendered like a normal ASMR track: fixed stereo image, no head response. Turning your head does nothing — the sound turns with you.',
+  spatial: 'Live physical simulation. Sources sit at fixed places in the world; drag the radar to turn your head and listen to them stay put.'
+};
+let ctx, node, playing = false, spatial = false, yaw = 0, radarState = { sources: [], spectrum: [], gust: 0 };
+const KIND_COLOR = ['#4aa8ff', '#b9f5c8', '#ffd35a']; // water, wind, bird
+const KIND_NAME = ['river', 'wind', 'bird'];
+
+function setMode(s) {
+  spatial = s;
+  $('m-flat').setAttribute('aria-pressed', String(!s));
+  $('m-spatial').setAttribute('aria-pressed', String(s));
+  $('note').textContent = NOTES[s ? 'spatial' : 'flat'];
+  node?.port.postMessage({ type: 'mode', spatial: s });
+  if (!s) { yaw = 0; send('yaw', 0); }
+}
+$('m-flat').onclick = () => setMode(false);
+$('m-spatial').onclick = () => setMode(true);
+
+function send(type, value, name) { node?.port.postMessage({ type, value, name }); }
+
+async function start() {
+  ctx = new AudioContext({ latencyHint: 'interactive' });
+  const wasm = await (await fetch('asmr_core.wasm')).arrayBuffer();
+  await ctx.audioWorklet.addModule('engine-worklet.js');
+  node = new AudioWorkletNode(ctx, 'asmr', { outputChannelCount: [2], processorOptions: { wasm } });
+  node.port.onmessage = ({ data }) => { radarState = data; };
+  node.connect(ctx.destination);
+  node.port.postMessage({ type: 'mode', spatial });
+  for (const n of ['wind', 'birds', 'water', 'orbit', 'volume']) pushParam(n);
+}
+function pushParam(n) {
+  const v = +$(n).value;
+  $('v-' + n).textContent = Math.round(v * 100) + '%';
+  node?.port.postMessage({ type: 'param', name: n.toUpperCase(), value: v });
+}
+for (const n of ['wind', 'birds', 'water', 'orbit', 'volume']) { $(n).oninput = () => pushParam(n); $('v-' + n).textContent = Math.round(+$(n).value * 100) + '%'; }
+
+$('play').onclick = async () => {
+  if (!ctx) { try { await start(); } catch (e) { $('note').textContent = 'Audio failed to start: ' + e.message; return; } }
+  playing = !playing;
+  playing ? await ctx.resume() : await ctx.suspend();
+  $('play').textContent = playing ? '[ ❚❚ PAUSE ]' : '[ ▶ PLAY ]';
+};
+
+// Head turning: drag on the radar or use arrow keys. Positive yaw = turned left (engine convention).
+const radar = $('radar');
+let dragX = null;
+const turn = d => { if (!spatial) setMode(true); yaw = Math.max(-Math.PI, Math.min(Math.PI, yaw + d)); send('yaw', yaw); };
+radar.addEventListener('pointerdown', e => { dragX = e.clientX; radar.setPointerCapture(e.pointerId); });
+radar.addEventListener('pointermove', e => { if (dragX == null) return; turn(-(e.clientX - dragX) * 0.012); dragX = e.clientX; });
+radar.addEventListener('pointerup', () => dragX = null);
+addEventListener('keydown', e => { if (e.key === 'ArrowLeft') turn(0.08); if (e.key === 'ArrowRight') turn(-0.08); });
+
+function draw() {
+  const g = radar.getContext('2d'), W = radar.width, c = W / 2, R = c - 24;
+  g.fillStyle = '#050806'; g.fillRect(0, 0, W, W);
+  g.strokeStyle = '#1b2c20'; g.lineWidth = 1; g.font = '12px ui-monospace,monospace'; g.fillStyle = '#5f8a6b';
+  for (const m of [5, 10, 20]) { g.beginPath(); g.arc(c, c, R * m / 20, 0, 7); g.stroke(); g.fillText(m + ' m', c + 4, c - R * m / 20 + 12); }
+  g.beginPath(); g.moveTo(c, c - R); g.lineTo(c, c + R); g.moveTo(c - R, c); g.lineTo(c + R, c); g.stroke();
+  g.fillStyle = '#ffd35a'; g.fillText('FRONT', c - 18, 14);
+  for (const s of radarState.sources || []) {
+    // Head frame: +x forward (up on screen), +y left (left on screen).
+    const px = c - s.ry / 20 * R, py = c - s.rx / 20 * R;
+    const r = 4 + Math.min(1, s.level * 8) * 10;
+    g.fillStyle = KIND_COLOR[s.kind] || '#fff'; g.globalAlpha = s.kind === 1 ? .35 : .95;
+    g.beginPath(); g.arc(Math.max(8, Math.min(W - 8, px)), Math.max(8, Math.min(W - 8, py)), r, 0, 7); g.fill();
+  }
+  g.globalAlpha = 1; g.fillStyle = '#fff'; g.beginPath(); g.moveTo(c, c - 9); g.lineTo(c + 6, c + 7); g.lineTo(c - 6, c + 7); g.fill();
+  g.fillStyle = '#5f8a6b';
+  g.fillText(spatial ? `head yaw ${(yaw * 57.3).toFixed(0)}°` : 'head locked (flat)', 10, W - 12);
+  let x = 10; g.font = '11px ui-monospace,monospace';
+  KIND_NAME.forEach((n, i) => { g.fillStyle = KIND_COLOR[i]; g.fillText('● ' + n, W - 190 + i * 62, W - 12); });
+
+  const sp = $('spec'), h = sp.getContext('2d'), b = radarState.spectrum || [];
+  h.fillStyle = '#050806'; h.fillRect(0, 0, sp.width, sp.height);
+  const bw = sp.width / (b.length || 1);
+  b.forEach((v, i) => { const hh = Math.min(1, v) * sp.height; h.fillStyle = `hsl(${120 - v * 100},70%,${35 + v * 25}%)`; h.fillRect(i * bw + 1, sp.height - hh, bw - 2, hh); });
+  requestAnimationFrame(draw);
+}
+setMode(false);
+draw();
+</script>
+</body>
+</html>

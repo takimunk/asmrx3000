@@ -48,6 +48,7 @@ pub fn order_of(acn: usize) -> usize {
     (acn as f32).sqrt() as usize
 }
 
+#[allow(dead_code)] // for loudspeaker decoders; binaural decoding uses MagLS instead
 /// max-rE per-order weights: trade a little spatial sharpness for a much more stable,
 /// less phasey image (Zotter & Frank).
 pub fn max_re_weights() -> [f32; ORDER + 1] {

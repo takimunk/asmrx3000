@@ -10,6 +10,38 @@ struct SourceInfo {
     var freq: Float
 }
 
+/// One slider of the engine's control tree (asmr_get_controls).
+struct Control: Equatable {
+    var id: UInt32
+    var group: UInt32
+    var parent: UInt32?
+    var flags: UInt32
+    var min: Float
+    var max: Float
+    var value: Float
+    var defaultValue: Float
+    var key: String
+    var unit: String
+
+    var isMacro: Bool { flags & UInt32(ASMR_CONTROL_FLAG_MACRO) != 0 }
+    var isLog: Bool { flags & UInt32(ASMR_CONTROL_FLAG_LOG) != 0 && min > 0 }
+    var isDiscrete: Bool { flags & UInt32(ASMR_CONTROL_FLAG_DISCRETE) != 0 }
+
+    /// Position along the slider, 0..1.
+    var fraction: Float {
+        guard max > min else { return 0 }
+        if isLog { return log(value / min) / log(max / min) }
+        return (value - min) / (max - min)
+    }
+
+    func value(atFraction f: Float) -> Float {
+        let f = Swift.min(Swift.max(f, 0), 1)
+        if isLog { return min * pow(max / min, f) }
+        let v = min + (max - min) * f
+        return isDiscrete ? v.rounded() : v
+    }
+}
+
 struct Telemetry {
     var dspLoad: Float = 0
     var gust: Float = 0
@@ -35,6 +67,13 @@ final class AudioEngine: ObservableObject {
     private var headPose: (Float, Float, Float) = (0, 0, 0)
     private var stopWork: DispatchWorkItem?
     private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 32)
+    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 32)
+    private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
+    private var controlNames: [UInt32: (String, String)] = [:]
+    /// Control values the user set, in order, re-applied when the core is rebuilt.
+    private var setControls: [(UInt32, Float)] = []
+    /// Positions the user gave objects; re-applied when the core is rebuilt for a new sample rate.
+    private var placed: [UInt32: SIMD3<Float>] = [:]
 
     init() {
         core = asmr_engine_new(48_000)
@@ -133,6 +172,54 @@ final class AudioEngine: ObservableObject {
         )
     }
 
+    /// Scene objects (id, kind, position, flags). Ids are stable for the engine's lifetime.
+    func readObjects(_ out: inout [AsmrObjectInfo]) {
+        let n = rawObjects.withUnsafeMutableBufferPointer {
+            asmr_get_objects(core, $0.baseAddress, UInt32($0.count))
+        }
+        out.removeAll(keepingCapacity: true)
+        out.append(contentsOf: rawObjects.prefix(Int(n)))
+    }
+
+    /// The control tree: macros and their children. Values change when a macro moves, so this is
+    /// read every frame.
+    func readControls(_ out: inout [Control]) {
+        let n = rawControls.withUnsafeMutableBufferPointer {
+            asmr_get_controls(core, $0.baseAddress, UInt32($0.count))
+        }
+        out.removeAll(keepingCapacity: true)
+        for var raw in rawControls.prefix(Int(n)) {
+            let names: (String, String)
+            if let cached = controlNames[raw.id] {
+                names = cached
+            } else {
+                let key = withUnsafeBytes(of: &raw.key) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                let unit = withUnsafeBytes(of: &raw.unit) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                names = (key, unit)
+                controlNames[raw.id] = names
+            }
+            out.append(Control(id: raw.id, group: raw.group, parent: raw.parent == UInt32.max ? nil : raw.parent,
+                               flags: raw.flags, min: raw.min, max: raw.max, value: raw.value,
+                               defaultValue: raw.default_value, key: names.0, unit: names.1))
+        }
+    }
+
+    func setControl(_ id: UInt32, _ value: Float) {
+        setControls.removeAll { $0.0 == id }
+        setControls.append((id, value))
+        asmr_set_control(core, id, value)
+    }
+
+    /// Live peak waveform of a track (ASMR_SCOPE_*), oldest first, one point per 64 samples.
+    func readScope(_ track: Int, into out: inout [Float]) {
+        out.withUnsafeMutableBufferPointer { _ = asmr_get_scope(core, UInt32(track), $0.baseAddress, UInt32($0.count)) }
+    }
+
+    func setObjectPosition(id: UInt32, _ p: SIMD3<Float>) {
+        placed[id] = p
+        asmr_set_object_position(core, id, p.x, p.y, p.z)
+    }
+
     // MARK: Private
 
     private func set<P: BinaryInteger>(_ param: P, _ value: Float) {
@@ -151,6 +238,12 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_ORBIT, orbit)
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
+        for (id, p) in placed {
+            asmr_set_object_position(core, id, p.x, p.y, p.z)
+        }
+        for (id, v) in setControls {
+            asmr_set_control(core, id, v)
+        }
     }
 
     /// Must only run while the AVAudioEngine is stopped.

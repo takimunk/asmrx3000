@@ -30,6 +30,17 @@ impl Svf {
         self.a3 = g * self.a2;
     }
 
+    /// Zero states that have decayed into the subnormal range.
+    #[inline]
+    pub fn flush(&mut self) {
+        if self.ic1.abs() < 1e-18 {
+            self.ic1 = 0.0;
+        }
+        if self.ic2.abs() < 1e-18 {
+            self.ic2 = 0.0;
+        }
+    }
+
     /// Returns (lowpass, bandpass normalised to unity peak, highpass).
     #[inline]
     pub fn process(&mut self, v0: f32) -> (f32, f32, f32) {
@@ -53,17 +64,4 @@ pub fn soft_clip(x: f32) -> f32 {
         let y = KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh();
         y.copysign(x)
     }
-}
-
-/// Dot product with 8 independent accumulators so LLVM can vectorise it (NEON / SSE).
-/// Both slices must have the same length, a multiple of 8.
-#[inline(always)]
-pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    let mut acc = [0.0f32; 8];
-    for (ca, cb) in a.chunks_exact(8).zip(b.chunks_exact(8)) {
-        for k in 0..8 {
-            acc[k] += ca[k] * cb[k];
-        }
-    }
-    (acc[0] + acc[4]) + (acc[1] + acc[5]) + (acc[2] + acc[6]) + (acc[3] + acc[7])
 }

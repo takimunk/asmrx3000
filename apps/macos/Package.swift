@@ -19,6 +19,8 @@ let package = Package(
                 .unsafeFlags(["-L", rustLibDir]),
                 .linkedFramework("CoreMotion"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
             ]
         ),
     ]

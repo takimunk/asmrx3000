@@ -1,61 +1,469 @@
-//! Wind in the canopy: a broadband "body" (turbulent noise whose spectrum shifts up with
-//! gust speed) plus leaf rustle (sparse short noise grains whose density grows with the
-//! square of the local gust). Driven by the shared `WindField`.
+//! Wind: the sound of moving air meeting obstacles. There is no sound of "air" on its own;
+//! everything heard is flow interacting with something.
+//!
+//! * **Body**: turbulent vortex shedding from every twig, branch and trunk. A cylinder of
+//!   diameter d sheds at f = St·U/d (St ≈ 0.2) and radiates as a dipole, intensity ∝ U⁶
+//!   (Phillips 1956). Vegetation spans a wide range of diameters; with Leonardo's rule
+//!   (N(d) ∝ d⁻², length ∝ d) the total shedding length per log-diameter band times d is
+//!   roughly constant, so each band contributes about equally: the familiar broad roar.
+//!   The model sums `BANDS` noise bands at St·U/dₖ for log-spaced dₖ in [d_min, d_max],
+//!   broadened by turbulence (low Q), gated by Re > 40 and by audibility. Flexible
+//!   vegetation reconfigures (leaves fold, drag ∝ U^1.3 instead of U², Vogel 1989), so the
+//!   default level law is I ∝ U^4.6, not U⁶; `level_exponent` sets it.
+//! * **Aeolian tones** from wires: coherent shedding locks onto the wire's transverse modes
+//!   fₙ = n·f₁ ("aeolian harp"); the mode nearest St·U/d sings, and as the wind changes the
+//!   tone jumps between harmonics. Long power lines (f₁ ≈ 1 Hz) give a beating hum that just
+//!   follows St·U/d.
+//! * **Gaps and hollows** (cavity tones): the shear layer over an opening of length L
+//!   oscillates at f ≈ 0.57·(m − ¼)·U/L (Rossiter modes); when a mode meets the cavity's
+//!   Helmholtz resonance the gap whistles or howls, so the howl comes and goes with gusts.
+//! * **Distance**: far wind is the average of a large area (smoother gusts) and loses its
+//!   highs to air absorption (only the roar remains).
+//!
+//! Local wind speed comes from the travelling gust field (`Controls::gust`, mapped to m/s by
+//! [`wind_speed_ms`]), times the source's exposure.
 
-use crate::dsp::Svf;
+use core::f32::consts::TAU;
+
+use serde::{Deserialize, Serialize};
+
+use super::common::*;
+use super::rain::check;
+use super::{Controls, Generator};
 use crate::rng::Rng;
 
-pub struct WindSource {
-    sample_rate: f32,
-    rng: Rng,
-    body: Svf,
-    leaves: Svf,
-    leaf_env: f32,
-    leaf_amp: f32,
-    leaf_decay: f32,
-    gust: f32,
-    timbre: f32,
+const BANDS: usize = 6;
+const WIRE_SLOTS: usize = 4;
+/// Reference speed for levels, m/s.
+const U_REF: f32 = 5.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct WindConfig {
+    /// Wind speed at this source relative to the canopy-height mean (0..2.5): sheltered
+    /// hollow 0.3, forest interior 0.7, open ridge 1.5.
+    pub exposure: f32,
+    /// Smallest and largest obstacle diameters, m (0.0003..1.0): needles/twigs .. trunks.
+    pub d_min_m: f32,
+    pub d_max_m: f32,
+    /// Strouhal number (0.12..0.3).
+    pub strouhal: f32,
+    /// Intensity ∝ U^n (3..8): 6 rigid dipoles, ~4.6 flexible vegetation.
+    pub level_exponent: f32,
+    /// Amount of broadband body (0..3).
+    pub body: f32,
+    /// Spectral tilt across the diameter bands, dB per doubling of diameter (−9..9).
+    pub tilt_db: f32,
+    /// Wire diameter, m (0 = no wire; 0.0005..0.05).
+    pub wire_diameter_m: f32,
+    /// First transverse mode of the wire, Hz (0.3..300): power line span ~1, fence wire ~40.
+    pub wire_fundamental_hz: f32,
+    /// Wire tone level (0..3).
+    pub wires: f32,
+    /// Helmholtz resonance of a gap or hollow, Hz (0 = none; 40..4000).
+    pub gap_hz: f32,
+    /// Length of the opening along the flow, m (0.005..3).
+    pub gap_length_m: f32,
+    /// Sharpness of the gap resonance (3..80).
+    pub gap_q: f32,
+    /// Gap tone level (0..3).
+    pub gap: f32,
+    /// Distance to the bulk of the wind source, m (1..3000).
+    pub distance_m: f32,
+    /// How strongly the source follows gusts (0 = mean wind only, 1 = physical, up to 2).
+    pub gust_response: f32,
+    /// Linear output gain (0..8).
+    pub gain: f32,
 }
 
-impl WindSource {
-    /// `timbre` (~0.7..1.3) shifts the spectrum so neighbouring trees sound different.
-    pub fn new(sample_rate: f32, seed: u64, timbre: f32) -> Self {
+impl Default for WindConfig {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            d_min_m: 0.002,
+            d_max_m: 0.15,
+            strouhal: 0.2,
+            level_exponent: 4.6,
+            body: 1.0,
+            tilt_db: 0.0,
+            wire_diameter_m: 0.0,
+            wire_fundamental_hz: 1.0,
+            wires: 0.0,
+            gap_hz: 0.0,
+            gap_length_m: 0.1,
+            gap_q: 25.0,
+            gap: 0.0,
+            distance_m: 10.0,
+            gust_response: 1.0,
+            gain: 1.0,
+        }
+    }
+}
+
+impl WindConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        check("exposure", self.exposure, 0.0, 2.5)?;
+        check("d_min_m", self.d_min_m, 0.0003, 1.0)?;
+        check("d_max_m", self.d_max_m, self.d_min_m, 1.0)?;
+        check("strouhal", self.strouhal, 0.12, 0.3)?;
+        check("level_exponent", self.level_exponent, 3.0, 8.0)?;
+        check("body", self.body, 0.0, 3.0)?;
+        check("tilt_db", self.tilt_db, -9.0, 9.0)?;
+        if self.wire_diameter_m != 0.0 {
+            check("wire_diameter_m", self.wire_diameter_m, 0.0005, 0.05)?;
+        }
+        check("wire_fundamental_hz", self.wire_fundamental_hz, 0.3, 300.0)?;
+        check("wires", self.wires, 0.0, 3.0)?;
+        if self.gap_hz != 0.0 {
+            check("gap_hz", self.gap_hz, 40.0, 4000.0)?;
+        }
+        check("gap_length_m", self.gap_length_m, 0.005, 3.0)?;
+        check("gap_q", self.gap_q, 3.0, 80.0)?;
+        check("gap", self.gap, 0.0, 3.0)?;
+        check("distance_m", self.distance_m, 1.0, 3000.0)?;
+        check("gust_response", self.gust_response, 0.0, 2.0)?;
+        check("gain", self.gain, 0.0, 8.0)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct WireSlot {
+    n: u32,
+    phase: f32,
+    amp: Ramp,
+    target: f32,
+}
+
+pub struct Wind {
+    sample_rate: f32,
+    rng: Rng,
+    cfg: WindConfig,
+    gust: Smooth,
+    u: f32,
+    bands: [Svf; BANDS],
+    band_gain: [Ramp; BANDS],
+    lp1: f32,
+    lp2: f32,
+    lp_coef: f32,
+    turb: Ou,
+    wire_ou: Ou,
+    slots: [WireSlot; WIRE_SLOTS],
+    gap1: Svf,
+    gap2: Svf,
+    gap_gain: Ramp,
+    gap_freq: f32,
+    gap_target: f32,
+    tone_hz: f32,
+    started: bool,
+}
+
+impl Wind {
+    pub fn new(sample_rate: f32, seed: u64, cfg: WindConfig) -> Self {
+        let sr = sample_rate;
         Self {
             sample_rate,
             rng: Rng::new(seed),
-            body: Svf::new(200.0, 0.7, sample_rate),
-            leaves: Svf::new(4200.0 * timbre, 0.9, sample_rate),
-            leaf_env: 0.0,
-            leaf_amp: 0.0,
-            leaf_decay: (-1.0 / (0.0035 * sample_rate)).exp(),
-            gust: 0.0,
-            timbre,
+            gust: Smooth::new(0.0),
+            u: 0.0,
+            bands: [Svf::new(200.0, 1.5, sr); BANDS],
+            band_gain: [Ramp::new(0.0); BANDS],
+            lp1: 0.0,
+            lp2: 0.0,
+            lp_coef: 1.0,
+            turb: Ou::default(),
+            wire_ou: Ou::default(),
+            slots: [WireSlot::default(); WIRE_SLOTS],
+            gap1: Svf::new(cfg.gap_hz.max(40.0), cfg.gap_q, sr),
+            gap2: Svf::new(cfg.gap_hz.max(40.0), cfg.gap_q, sr),
+            gap_gain: Ramp::new(0.0),
+            gap_freq: cfg.gap_hz,
+            gap_target: 0.0,
+            started: false,
+            tone_hz: 0.0,
+            cfg,
         }
     }
 
-    /// `local_gust` comes from the wind field at this source's position.
-    pub fn render(&mut self, out: &mut [f32], local_gust: f32) {
-        self.gust += (local_gust - self.gust) * 0.05;
-        let g = self.gust;
-        if g < 1e-4 && self.leaf_env < 1e-4 {
+    pub fn config(&self) -> &WindConfig {
+        &self.cfg
+    }
+
+    /// Change parameters at run time; all levels and frequencies glide.
+    pub fn set_config(&mut self, cfg: WindConfig) {
+        self.cfg = cfg;
+    }
+
+    /// Wind speed at the source right now, m/s.
+    pub fn speed(&self) -> f32 {
+        self.u
+    }
+
+    /// Open-field breeze close by: grass, shrubs, a few branches.
+    pub fn breeze() -> WindConfig {
+        WindConfig { d_min_m: 0.001, d_max_m: 0.05, tilt_db: -2.0, distance_m: 8.0, ..Default::default() }
+    }
+    /// The roar of a whole forest some distance away.
+    pub fn forest_roar() -> WindConfig {
+        WindConfig { d_min_m: 0.001, d_max_m: 0.4, body: 1.6, tilt_db: 2.0, distance_m: 150.0, gust_response: 0.7, ..Default::default() }
+    }
+    /// Storm through an exposed edge: strong body, a hollow howling in the gusts.
+    pub fn storm() -> WindConfig {
+        WindConfig {
+            exposure: 1.3,
+            d_min_m: 0.001,
+            d_max_m: 0.3,
+            body: 1.5,
+            gap_hz: 180.0,
+            gap_length_m: 0.35,
+            gap_q: 18.0,
+            gap: 0.8,
+            distance_m: 25.0,
+            gust_response: 1.3,
+            ..Default::default()
+        }
+    }
+    /// Overhead power lines: low singing hum with slow beats.
+    pub fn power_lines() -> WindConfig {
+        WindConfig { body: 0.3, wire_diameter_m: 0.02, wire_fundamental_hz: 0.8, wires: 1.2, distance_m: 15.0, ..Default::default() }
+    }
+    /// A taut fence or guy wire: an aeolian harp jumping between harmonics.
+    pub fn fence_wire() -> WindConfig {
+        WindConfig { body: 0.2, wire_diameter_m: 0.003, wire_fundamental_hz: 45.0, wires: 1.0, distance_m: 4.0, ..Default::default() }
+    }
+    /// Wind howling through a gap between rocks or boards.
+    pub fn gap_howl() -> WindConfig {
+        WindConfig { body: 0.5, gap_hz: 240.0, gap_length_m: 0.25, gap_q: 22.0, gap: 1.2, distance_m: 6.0, gust_response: 1.3, ..Default::default() }
+    }
+    /// A hollow trunk or knot hole: low hooting resonance.
+    pub fn hollow_tree() -> WindConfig {
+        WindConfig { body: 0.4, gap_hz: 110.0, gap_length_m: 0.18, gap_q: 30.0, gap: 1.0, distance_m: 5.0, ..Default::default() }
+    }
+    /// A narrow slit: thin whistle.
+    pub fn whistle() -> WindConfig {
+        WindConfig { body: 0.3, gap_hz: 950.0, gap_length_m: 0.012, gap_q: 40.0, gap: 0.8, distance_m: 3.0, ..Default::default() }
+    }
+
+    pub fn preset(name: &str) -> Option<WindConfig> {
+        Some(match name {
+            "breeze" => Self::breeze(),
+            "forest_roar" => Self::forest_roar(),
+            "storm" => Self::storm(),
+            "power_lines" => Self::power_lines(),
+            "fence_wire" => Self::fence_wire(),
+            "gap_howl" => Self::gap_howl(),
+            "hollow_tree" => Self::hollow_tree(),
+            "whistle" => Self::whistle(),
+            _ => return None,
+        })
+    }
+
+    pub const PRESETS: &'static [&'static str] =
+        &["breeze", "forest_roar", "storm", "power_lines", "fence_wire", "gap_howl", "hollow_tree", "whistle"];
+
+    /// Wire shedding frequency for wind speed `u` (m/s).
+    pub fn wire_shedding_hz(&self, u: f32) -> f32 {
+        strouhal_hz(self.cfg.strouhal, u, self.cfg.wire_diameter_m.max(1e-4))
+    }
+
+    fn update_wires(&mut self, u: f32, len: usize, dt: f32) {
+        let c = &self.cfg;
+        let d = c.wire_diameter_m;
+        let mut want = [(0u32, 0.0f32); 3];
+        if d > 0.0 && c.wires > 0.0 {
+            let fs = strouhal_hz(c.strouhal, u, d);
+            let re = reynolds(u, d);
+            let coherent = smoothstep(40.0, 150.0, re) * (1.0 - smoothstep(1e5, 3e5, re));
+            let audible = smoothstep(25.0, 60.0, fs) * (1.0 - smoothstep(9000.0, 14_000.0, fs));
+            // Shedding coherence wanders with small-scale turbulence (singing comes and goes).
+            let wander = (0.75 + 0.35 * self.wire_ou.step(dt, 1.5, 0.6, &mut self.rng)).clamp(0.2, 1.3);
+            let level = c.wires * flow_level(u, U_REF, 6.0) * coherent * audible * wander * 0.05;
+            let f1 = c.wire_fundamental_hz;
+            let n0 = (fs / f1).round().max(1.0) as u32;
+            for (k, w) in want.iter_mut().enumerate() {
+                let n = (n0 + k as u32).saturating_sub(1).max(1);
+                let fnn = n as f32 * f1;
+                let width = 0.06 * fnn + 0.3 * f1;
+                let lock = (-((fs - fnn) / width).powi(2)).exp();
+                *w = (n, level * lock);
+            }
+            self.tone_hz = fs;
+        } else {
+            self.tone_hz = 0.0;
+        }
+        // Keep phases of slots that stay; free slots fade out before reuse.
+        for s in self.slots.iter_mut() {
+            s.target = 0.0;
+        }
+        for &(n, a) in want.iter().filter(|w| w.1 > 0.0) {
+            if let Some(s) = self.slots.iter_mut().find(|s| s.n == n) {
+                s.target = a;
+            } else if let Some(s) = self.slots.iter_mut().find(|s| s.amp.cur < 1e-6 && s.target == 0.0) {
+                s.n = n;
+                s.target = a;
+            }
+        }
+        for s in self.slots.iter_mut() {
+            s.amp.to(s.target, len);
+        }
+    }
+
+    fn update_gap(&mut self, u: f32, len: usize) {
+        let c = &self.cfg;
+        let mut level = 0.0;
+        if c.gap_hz > 0.0 && c.gap > 0.0 {
+            let fh = c.gap_hz;
+            // Rossiter shear-layer modes; the best-matching one drives the cavity.
+            let (mut exc, mut best) = (0.0f32, fh);
+            for m in 1..=3 {
+                let f = 0.57 * (m as f32 - 0.25) * u / c.gap_length_m;
+                let e = (-((f - fh) / (0.25 * fh)).powi(2)).exp();
+                if e > exc {
+                    best = f;
+                }
+                exc += e;
+            }
+            level = c.gap * exc.min(1.0) * flow_level(u, U_REF, 4.0) * 0.06;
+            // The jet pulls the pitch slightly towards the shear-layer frequency.
+            self.gap_freq = fh * (1.0 + 0.04 * ((best - fh) / fh).tanh());
+            let sr = self.sample_rate;
+            self.gap1.set(self.gap_freq, c.gap_q, sr);
+            self.gap2.set(self.gap_freq, c.gap_q, sr);
+            if exc > 0.3 && self.tone_hz == 0.0 {
+                self.tone_hz = self.gap_freq;
+            }
+        }
+        self.gap_target = level;
+        self.gap_gain.to(level, len);
+    }
+}
+
+impl Generator for Wind {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Wind(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
+    fn render(&mut self, out: &mut [f32], ctl: &Controls) {
+        let len = out.len();
+        let sr = self.sample_rate;
+        let dt = len as f32 / sr;
+        let c = self.cfg.clone();
+
+        // Gust at the source, averaged over the area it represents.
+        let mean = wind_slider(ctl.env.wind_ms);
+        let local = mean + (ctl.gust - mean) * c.gust_response;
+        if !self.started {
+            self.started = true;
+            self.gust = Smooth::new(local.max(0.0));
+        }
+        let g = self.gust.step(local.max(0.0), dt, 0.12 + c.distance_m / 40.0);
+        let turb = self.turb.step(dt, 0.25, 0.18, &mut self.rng);
+        self.u = wind_speed_ms(g) * c.exposure * (1.0 + turb).max(0.3);
+        let u = self.u;
+
+        // Body: diameter bands.
+        let level = c.body * flow_level(u, U_REF, c.level_exponent) * 0.012;
+        let re_min = reynolds(u, c.d_min_m);
+        for k in 0..BANDS {
+            let d = c.d_min_m * (c.d_max_m / c.d_min_m).powf(k as f32 / (BANDS - 1) as f32);
+            let f = strouhal_hz(c.strouhal, u, d).clamp(12.0, 16_000.0);
+            let q = 1.3;
+            self.bands[k].set(f, q, sr);
+            let audible = smoothstep(14.0, 45.0, f) * (1.0 - smoothstep(12_000.0, 16_000.0, f));
+            let tilt = 10f32.powf(c.tilt_db * (d / c.d_min_m).log2() / 20.0);
+            let shed = smoothstep(40.0, 200.0, re_min * d / c.d_min_m);
+            self.band_gain[k].to(level * tilt * audible * shed * band_norm(f, q, sr), len);
+        }
+        // Air absorption + area averaging: far wind keeps only the roar.
+        let f_lp = (14_000.0 * (20.0 / c.distance_m.max(20.0)).powf(0.6)).max(300.0);
+        self.lp_coef = one_pole_coef(f_lp, sr);
+        self.update_wires(u, len, dt);
+        self.update_gap(u, len);
+
+        let silent = level < 1e-7
+            && self.band_gain.iter().all(|r| r.cur < 1e-7)
+            && self.slots.iter().all(|s| s.amp.cur < 1e-7 && s.target == 0.0)
+            && self.gap_gain.cur < 1e-7
+            && self.gap_target < 1e-7;
+        if silent {
             out.fill(0.0);
+            for r in self.band_gain.iter_mut() {
+                r.settle(0.0);
+            }
+            self.gap_gain.settle(0.0);
             return;
         }
-        self.body.set((90.0 + 520.0 * g * self.timbre).min(2500.0), 0.7, self.sample_rate);
-        let body_amp = 0.5 * g.powf(1.5);
-        let p_leaf = 1600.0 * (g * g).min(3.0) / self.sample_rate;
-        let leaf_gain = 0.35 * g.min(1.5);
 
-        for o in out.iter_mut() {
-            let (_, body, _) = self.body.process(self.rng.bipolar());
-            if self.rng.uniform() < p_leaf {
-                self.leaf_env = 1.0;
-                self.leaf_amp = self.rng.range(0.15, 1.0);
-            }
-            let (_, rustle, _) = self.leaves.process(self.rng.bipolar());
-            let leaf = rustle * self.leaf_env * self.leaf_amp * leaf_gain;
-            self.leaf_env *= self.leaf_decay;
-            *o = body * body_amp + leaf;
+        let f1 = c.wire_fundamental_hz;
+        let wire_jitter = 1.0 + 0.004 * turb;
+        let mut incs = [0.0f32; WIRE_SLOTS];
+        for (i, s) in self.slots.iter().enumerate() {
+            incs[i] = s.n as f32 * f1 * wire_jitter / sr;
         }
+        let gap_norm = band_norm(self.gap_freq.max(40.0), c.gap_q, sr) * 1.4;
+        let out_gain = c.gain;
+        for o in out.iter_mut() {
+            let white = self.rng.bipolar();
+            let mut body = 0.0;
+            for k in 0..BANDS {
+                let (_, bp, _) = self.bands[k].process(white);
+                body += bp * self.band_gain[k].next();
+            }
+            self.lp1 += (body - self.lp1) * self.lp_coef;
+            self.lp2 += (self.lp1 - self.lp2) * self.lp_coef;
+            let mut v = self.lp2;
+            for (i, s) in self.slots.iter_mut().enumerate() {
+                let a = s.amp.next();
+                s.phase += incs[i];
+                if s.phase >= 1.0 {
+                    s.phase -= 1.0;
+                }
+                if a > 0.0 {
+                    let p = TAU * s.phase;
+                    v += a * (p.sin() + 0.12 * (2.0 * p).sin());
+                }
+            }
+            let (_, g1, _) = self.gap1.process(white);
+            let (_, g2, _) = self.gap2.process(g1);
+            v += g2 * self.gap_gain.next() * gap_norm;
+            *o = v * out_gain;
+        }
+        for k in 0..BANDS {
+            let t = self.band_gain[k].cur;
+            self.band_gain[k].settle(t);
+            self.bands[k].flush();
+        }
+        for s in self.slots.iter_mut() {
+            s.amp.settle(s.amp.cur.max(0.0));
+            if s.target == 0.0 && s.amp.cur < 1e-6 {
+                s.amp.settle(0.0);
+            }
+        }
+        let gg = self.gap_gain.cur;
+        self.gap_gain.settle(gg);
+        self.gap1.flush();
+        self.gap2.flush();
+        self.lp1 = flush(self.lp1);
+        self.lp2 = flush(self.lp2);
+    }
+
+    fn pitch(&self) -> f32 {
+        self.tone_hz
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aeolian_tone_follows_wind_speed() {
+        let w = Wind::new(48_000.0, 1, Wind::fence_wire());
+        // f = St·U/d: doubling the wind doubles the tone; 0.2·10/0.003 = 667 Hz.
+        assert!((w.wire_shedding_hz(10.0) - 666.7).abs() < 1.0);
+        assert!((w.wire_shedding_hz(10.0) / w.wire_shedding_hz(5.0) - 2.0).abs() < 1e-4);
     }
 }
