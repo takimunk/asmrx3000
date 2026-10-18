@@ -101,33 +101,57 @@ enum TerrainMesh {
         let bank = t * t * (3 - 2 * t)
         let bed = wl - 0.42 + 0.12 * dist
         // Outside the channel the ground stays dry, never below the water line.
-        let ground = bed + (Terrain.height(x, y) - bed) * bank
+        let ground = bed + (Terrain.farHeight(x, y) - bed) * bank
         return dist < 2.2 ? (ground, wl, true) : (max(ground, wl + 0.05), wl, false)
     }
 
     static func build(river: [SIMD4<Float>]) -> Mesh? {
-        var verts: [MeshVertex] = []
-        var idx: [UInt32] = []
-        verts.reserveCapacity((rings + 1) * segments + 2 * segments + 1)
-        func surface(_ x: Float, _ y: Float) -> (Float, Float) {
+        GroundMesh.build(segments: segments) { x, y in
             let h = height(x, y, river: river)
             return h.inChannel && h.ground < h.water - 0.02 ? (h.water, Part.water) : (h.ground, Part.ground)
         }
-        func normal(_ x: Float, _ y: Float) -> SIMD3<Float> {
-            let e: Float = 0.08
+    }
+}
+
+/// Ground that runs on to the horizon: a polar grid, dense over the play area and opening up
+/// geometrically beyond it, with no rim or underside (the haze in the engraving swallows the
+/// far edge). Shared by the scene's terrain and anything that streams ground (flight mode):
+/// give it a `surface(x, y) -> (z, part)`.
+enum GroundMesh {
+    /// Rings over the play area (as dense as the old disc) and beyond it.
+    static let innerRings = 110
+    static let outerRings = 44
+    static let farRadius: Float = 220
+
+    static func radius(ring r: Int) -> Float {
+        if r <= innerRings { return Terrain.radius * Float(r) / Float(innerRings) }
+        // Geometric: each ring a fixed ratio further, so screen-space spacing stays even.
+        let step = Terrain.radius / Float(innerRings)
+        let k = Float(r - innerRings) / Float(outerRings)
+        let ratio = farRadius / Terrain.radius
+        return max(Terrain.radius * pow(ratio, k), Terrain.radius + step * Float(r - innerRings))
+    }
+
+    static func build(segments: Int, surface: (Float, Float) -> (Float, Float)) -> Mesh? {
+        let rings = innerRings + outerRings
+        var verts: [MeshVertex] = []
+        var idx: [UInt32] = []
+        verts.reserveCapacity(rings * segments + 1)
+        func normal(_ x: Float, _ y: Float, _ e: Float) -> SIMD3<Float> {
             let dx = surface(x + e, y).0 - surface(x - e, y).0
             let dy = surface(x, y + e).0 - surface(x, y - e).0
             return simd_normalize(SIMD3(-dx, -dy, 2 * e))
         }
         let (cz, cp) = surface(0, 0)
-        verts.append(MeshVertex(SIMD3(0, 0, cz), normal(0, 0), cp))
+        verts.append(MeshVertex(SIMD3(0, 0, cz), normal(0, 0, 0.08), cp))
         for r in 1...rings {
-            let radius = Terrain.radius * Float(r) / Float(rings)
+            let radius = Self.radius(ring: r)
+            let e = max(0.08, (radius - Self.radius(ring: r - 1)) * 0.5)
             for s in 0..<segments {
                 let a = 2 * Float.pi * Float(s) / Float(segments)
                 let x = radius * cos(a), y = radius * sin(a)
                 let (z, part) = surface(x, y)
-                verts.append(MeshVertex(SIMD3(x, y, z), normal(x, y), part))
+                verts.append(MeshVertex(SIMD3(x, y, z), normal(x, y, e), part))
             }
         }
         func ring(_ r: Int, _ s: Int) -> UInt32 { UInt32(1 + (r - 1) * segments + (s % segments)) }
@@ -137,18 +161,6 @@ enum TerrainMesh {
                 let a = ring(r, s), b = ring(r, s + 1), c = ring(r + 1, s), d = ring(r + 1, s + 1)
                 idx += [a, c, b, b, c, d]
             }
-        }
-        // The cut face: from the rim down to the bottom of the block.
-        let wallTop = UInt32(verts.count)
-        for s in 0..<segments {
-            let rim = verts[Int(ring(rings, s))]
-            let n = simd_normalize(SIMD3(rim.position.x, rim.position.y, 0))
-            verts.append(MeshVertex(rim.position, n, Part.section))
-            verts.append(MeshVertex(SIMD3(rim.position.x, rim.position.y, bottom), n, Part.section))
-        }
-        for s in 0..<segments {
-            let a = wallTop + UInt32(2 * s), b = wallTop + UInt32(2 * ((s + 1) % segments))
-            idx += [a, b, a + 1, b, b + 1, a + 1]
         }
         return Mesh.make(verts, idx)
     }

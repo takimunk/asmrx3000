@@ -16,6 +16,7 @@ private struct FrameUniforms {
     var env: SIMD4<Float>
     var gaze: SIMD4<Float>      // dot screen x, y px, px per metre, live (1) or resting (0)
     var gazeHead: SIMD4<Float>  // head screen x, y px, dot distance from the eye, visible
+    var haze: SIMD4<Float>      // horizon y px
 }
 
 private struct Instance {
@@ -48,6 +49,17 @@ final class SceneRenderer {
     static let slender = simd_float4x4(diagonal: SIMD4(0.62, 0.62, 1, 1))
     /// Where the fallen column lies, on the far bank.
     static let ruin = SIMD3<Float>(7.0, -8.6, 0)
+
+    /// Trees scattered from just beyond the play area out to ~70 m, denser near: x, y, scale, model.
+    private static let distantForest: [(Float, Float, Float, String)] = {
+        var rng = SeededGenerator(0x5EED)
+        let names = ["broadleaf", "spruce", "broadleaf_b", "spruce_b", "spruce"]
+        return (0..<56).map { i in
+            let a = Float(i) * 2.399963 + rng.next() * 0.4
+            let r = 24 + pow(rng.next(), 1.4) * 60
+            return (r * cos(a), r * sin(a), 0.8 + rng.next() * 0.45, names[i % names.count])
+        }
+    }()
 
     /// Decorative grove: x, y, scale, model. Never selectable.
     private static let grove: [(Float, Float, Float, String)] = [
@@ -111,8 +123,12 @@ final class SceneRenderer {
             bracket: SIMD4(0, 0, -1, -1), hoverBracket: SIMD4(0, 0, -1, -1),
             plumb: .zero, sun: SIMD4(Self.sun, 0),
             env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0),
-            gaze: .zero, gazeHead: .zero
+            gaze: .zero, gazeHead: .zero, haze: .zero
         )
+        // The horizon: where level ground meets the sky, straight ahead of the camera.
+        let look = cam.target - cam.eye
+        let level = simd_normalize(SIMD3(look.x, look.y, 0))
+        u.haze.x = (proj.project(cam.eye + level * 5000).map { $0.point.y } ?? -1000) * scale
         let gazeAt = stage.gazePoint
         if let d = proj.project(gazeAt), let h = proj.project(SIMD3(0, 0, 0)) {
             let focal = size.y * 0.5 / tan(cam.fovY / 2)
@@ -273,6 +289,12 @@ final class SceneRenderer {
             let wind = localWind(y)
             let m = Self.transform(SIMD3(x, y, Terrain.height(x, y)), yaw: x * 0.7 + y, scale: s) * Self.slender
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, wind * 0.55, 6.6), anim: SIMD4(0, x + y, wind, 1))))
+        }
+        // The forest goes on beyond the play area, thinning out into the haze; none in the river.
+        for (x, y, s, name) in Self.distantForest {
+            guard let mesh = lib[name], abs(x - Stage.riverAt(y, river).x) > 4 else { continue }
+            let m = Self.transform(SIMD3(x, y, Terrain.farHeight(x, y) - 0.1), yaw: x + y * 0.3, scale: s) * Self.slender
+            list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, 0, 6.6), anim: SIMD4(0, x, localWind(y), 1))))
         }
         if let herm = lib["herm"] {
             // The listener: the bust turns with the head.
