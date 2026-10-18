@@ -20,6 +20,7 @@ pub mod math;
 mod nearfield;
 mod num;
 mod physics;
+mod prompt;
 mod propagation;
 mod reverb;
 mod rng;
@@ -263,4 +264,50 @@ pub unsafe extern "C" fn asmr_render_bed(engine: *const Engine, channels: *const
         *o = slice::from_raw_parts_mut(*p, frames as usize);
     }
     (*engine).render_bed(&mut outs[..count as usize], world_locked != 0);
+}
+
+/// Current state as JSON: every control (key, value, unit, range, preset names, overridden),
+/// environment readings and scene objects (docs/prompt-control.md). Writes it NUL-terminated
+/// into `out` if `max` is larger than its length; returns the length in bytes either way (call
+/// with `out` NULL to size the buffer).
+///
+/// # Safety
+/// `out` must be NULL or point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_state_json(engine: *const Engine, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref() {
+        Some(e) => prompt::write_c(&e.state_json(), out, max),
+        None => 0,
+    }
+}
+
+/// Applies a JSON patch `{"glide_s", "changes": [{"key", "value"}], "moves": [{"object",
+/// "position"}]}`: values are clamped, presets may be names, "reset" hands a child back to its
+/// macro, unknown keys are reported. Continuous controls glide. The result JSON (`ok`,
+/// `applied`, `moved`, `errors`, `undo`) is written into `out` if it fits; returns its length.
+///
+/// # Safety
+/// `patch` must be a NUL-terminated string; `out` NULL or `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_apply_patch_json(engine: *const Engine, patch: *const c_char, out: *mut c_char, max: u32) -> u32 {
+    let (Some(e), false) = (engine.as_ref(), patch.is_null()) else { return 0 };
+    let result = match CStr::from_ptr(patch).to_str() {
+        Ok(p) => e.apply_patch_json(p),
+        Err(_) => r#"{"ok":false,"applied":[],"moved":[],"errors":["patch is not UTF-8"],"undo":{"changes":[]}}"#.to_string(),
+    };
+    prompt::write_c(&result, out, max)
+}
+
+/// `{"system", "context", "tool": {"name", "description", "input_schema"}}` for a language
+/// model: static system prompt, the current values as text, the tool schema generated from
+/// the control tree. Same buffer convention as `asmr_get_state_json`.
+///
+/// # Safety
+/// `out` must be NULL or point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_prompt_json(engine: *const Engine, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref() {
+        Some(e) => prompt::write_c(&e.prompt_json(), out, max),
+        None => 0,
+    }
 }

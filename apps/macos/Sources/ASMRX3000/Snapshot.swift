@@ -62,6 +62,13 @@ enum Snapshot {
                 }
             }
         }
+        // --prompt "…": the offline mock answers, as a model would, before the frame is taken.
+        if let words = value("--prompt"),
+           let request = try? PromptRequest(text: words, promptJSON: model.audio.promptJSON(), state: model.audio.stateJSON()),
+           let reply = try? MockProvider().reply(request) {
+            model.prompt.apply(reply)
+            for _ in 0..<Int(fps) { model.audio.simulate(seconds: 1 / fps); stage.step(dt: 1 / fps) }
+        }
         if let h = stage.things.first(where: { $0.kind == .bird && $0.key != stage.selection }) { stage.hover = h.key }
 
         let scale: Float = 2

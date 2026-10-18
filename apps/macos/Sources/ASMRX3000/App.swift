@@ -11,6 +11,10 @@ struct ASMRX3000App: App {
             Snapshot.run(path: CommandLine.arguments[i + 1])
             exit(0)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--prompt-live"), i + 1 < CommandLine.arguments.count {
+            PromptCheck.run(CommandLine.arguments[i + 1])
+            exit(0)
+        }
         if CommandLine.arguments.contains("--bench") {
             Bench.start()
         }
@@ -38,6 +42,7 @@ final class AppModel: ObservableObject {
     let head = HeadTracker()
     let icon = MenuBarIconAnimator()
     lazy var stage = Stage(audio: audio, head: head)
+    @MainActor lazy var prompt = PromptController(audio: audio)
     private var bag = Set<AnyCancellable>()
 
     init() {

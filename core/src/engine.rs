@@ -21,6 +21,7 @@ use crate::fft::fft;
 use crate::headpose::{HeadPoseInput, HeadTracker, PoseSettings, Quat};
 use crate::math::Vec3;
 use crate::physics::ground::GroundType;
+use crate::prompt::{self, Glides};
 use crate::rng::Rng;
 use crate::scene::{object_flags, ObjectBridge, ObjectInfo, SceneDesc, World};
 use crate::windfield::WindField;
@@ -170,6 +171,9 @@ struct Shared {
     wind_field: Box<[AtomicF32]>,
     objects: ObjectBridge,
     controls: ControlBank,
+    /// Prompt control: in-flight glides and object labels (core/src/prompt.rs).
+    glides: Glides,
+    labels: Vec<String>,
     /// Live waveform taps, see `scope`.
     scope: Box<[AtomicF32]>,
     scope_pos: AtomicUsize,
@@ -241,6 +245,8 @@ impl Engine {
             wind_field: atomics(WIND_FIELD_POINTS),
             objects: ObjectBridge::new(&world),
             controls: ControlBank::new(controls::Bases::new(desc, &world), desc),
+            glides: Glides::new(),
+            labels: prompt::labels(&world),
             scope: atomics(SCOPE_TRACKS * SCOPE_LEN),
             scope_pos: AtomicUsize::new(0),
             head: HeadPoseInput::new(),
@@ -319,6 +325,9 @@ impl Engine {
             if value.is_finite() {
                 p.store(value);
                 self.shared.controls.param_set(id);
+                for i in controls::indices_of_param(id) {
+                    self.shared.glides.cancel(i);
+                }
             }
         }
     }
@@ -326,13 +335,38 @@ impl Engine {
     /// Copies the control tree (macros and their physical children) into `out`, returns how
     /// many were written. Any thread.
     pub fn controls(&self, out: &mut [ControlInfo]) -> usize {
+        self.shared.glides.tick(&self.shared.controls, &self.shared.params);
         self.shared.controls.read(&self.shared.params, out)
     }
 
     /// Sets a control (NaN on a child: follow the macro again). Any thread; applied by the
     /// audio thread on the next block.
     pub fn set_control(&self, id: u32, value: f32) {
+        if let Some(i) = controls::index_of_id(id) {
+            self.shared.glides.cancel(i);
+        }
         self.shared.controls.set(id, value, &self.shared.params);
+    }
+
+    fn prompt_view(&self) -> prompt::View<'_> {
+        let s = &self.shared;
+        prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels }
+    }
+
+    /// Controls, environment readings and scene objects as JSON (docs/prompt-control.md).
+    pub fn state_json(&self) -> String {
+        prompt::state_json(&self.prompt_view())
+    }
+
+    /// Applies a JSON patch of control targets (gliding) and object moves; returns the
+    /// result JSON with errors and an undo patch (docs/prompt-control.md).
+    pub fn apply_patch_json(&self, patch: &str) -> String {
+        prompt::apply_patch(&self.prompt_view(), patch)
+    }
+
+    /// System prompt, current-state context and tool schema for a language model.
+    pub fn prompt_json(&self) -> String {
+        prompt::prompt_json(&self.prompt_view())
     }
 
     /// Effective value of one control.
@@ -535,6 +569,8 @@ impl Dsp {
         let sr = self.sample_rate;
         let dt = len as f32 / sr;
         let p = |k: u32| shared.params[k as usize].load();
+        shared.glides.advance(dt);
+        shared.glides.tick(&shared.controls, &shared.params);
 
         let playing = p(param::PLAYING) > 0.5;
         if !playing && self.fade < 1e-4 {
