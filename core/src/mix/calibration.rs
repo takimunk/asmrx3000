@@ -97,6 +97,10 @@ impl SoundClass {
                 Species::WoodPigeon => 0.3,
                 Species::Robin => 0.3,
                 Species::Chaffinch => 0.2,
+                Species::Blackbird => 0.3,
+                Species::Skylark => 0.45,
+                Species::Gull => 0.4,
+                Species::Raven => 0.6,
             },
             SoundClass::Fire => 0.3,
             SoundClass::Insects => 0.1,
@@ -161,7 +165,7 @@ use SoundClass as C;
 
 /// The calibration table. `raw_db` comes from `cargo run --release --example calibrate`.
 #[rustfmt::skip]
-pub static TABLE: [Entry; 14] = [
+pub static TABLE: [Entry; 18] = [
     e(C::Bird(Species::Chaffinch), LaFmax1m, 86.0, 79.7, "full song", "Brumm & Todt 2002; Brumm 2004 review: passerine song 80–95 dB(A) at 1 m"),
     e(C::Bird(Species::Robin), LaFmax1m, 82.0, 77.3, "song", "Brumm & Todt 2002 (robins 78–87 dB at 1 m)"),
     e(C::Bird(Species::SongThrush), LaFmax1m, 88.0, 78.6, "song", "Brackenbury 1979 (thrushes ~90 dB at 1 m)"),
@@ -170,6 +174,10 @@ pub static TABLE: [Entry; 14] = [
     e(C::Bird(Species::Cuckoo), LaFmax1m, 88.0, 79.2, "cu-coo call", "carries 1–2 km; ~85–90 dB at 1 m"),
     e(C::Bird(Species::WoodPigeon), LaFmax1m, 74.0, 77.7, "cooing", "low-pitched coo, ~70–78 dB at 1 m"),
     e(C::Bird(Species::Swallow), LaFmax1m, 74.0, 77.5, "twitter", "soft twittering song, ~70–78 dB at 1 m"),
+    e(C::Bird(Species::Blackbird), LaFmax1m, 84.0, 80.6, "song", "blackbird song ~78–90 dB at 1 m (Brumm 2004 review; Nemeth & Brumm 2009)"),
+    e(C::Bird(Species::Skylark), LaFmax1m, 80.0, 76.8, "song (perched)", "skylark song ~75–85 dB at 1 m, heard from 50 m up"),
+    e(C::Bird(Species::Gull), LaFmax1m, 90.0, 81.0, "long call", "herring gull long call ~85–95 dB at 1 m (estimate)"),
+    e(C::Bird(Species::Raven), LaFmax1m, 86.0, 77.9, "croak", "raven croaks carry >1 km; ~80–90 dB at 1 m (estimate)"),
     e(C::Water, LaEq1m, 57.0, 52.6, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
     e(C::Foliage, LaEqScene, 44.0, 70.5, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
     e(C::Wind, LaEqScene, 36.0, 29.9, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
@@ -208,6 +216,7 @@ pub fn neural_trim_db(species: Species) -> f32 {
         Species::Robin => 9.3,
         Species::SongThrush => 10.1,
         Species::Nightingale => 16.5,
+        Species::Blackbird => 13.1,
         _ => 0.0,
     }
 }

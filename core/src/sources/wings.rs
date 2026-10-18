@@ -3,7 +3,14 @@
 //! clearest spatial cues of a take-off or a close fly-by.
 //!
 //! Small passerines fly in bounds (bursts of flapping, then a closed-wing glide), pigeons
-//! clatter on take-off (wing claps), owls are silent by design of their feathers.
+//! clatter on take-off (wing claps), owls are silent by design of their feathers, gulls and
+//! ravens row slowly with deep whooshing beats, larks flutter.
+//!
+//! Two ways to drive it: `render(out, flap)` with a steady cruising `flap` lets the wings
+//! improvise the bounding rhythm themselves (flight-mode birds); `render_driven` follows the
+//! effort exactly, including 0 for every glide, so the director's flight styles
+//! (`director::flight_motion`) decide when the wings beat and the path rises and falls with
+//! them.
 
 use core::f32::consts::TAU;
 
@@ -20,6 +27,10 @@ pub enum WingStyle {
     Owl,
     /// ~9 Hz, soft, continuous.
     Swallow,
+    /// ~3 Hz, deep whooshing beats (gulls, ravens).
+    Large,
+    /// ~22 Hz, soft fluttering (larks hovering).
+    Lark,
 }
 
 pub struct Wings {
@@ -45,6 +56,8 @@ impl Wings {
             WingStyle::Pigeon => (rng.range(6.0, 8.0), 0.6, 1100.0),
             WingStyle::Owl => (4.0, 0.0, 600.0),
             WingStyle::Swallow => (rng.range(8.0, 10.0), 0.12, 2200.0),
+            WingStyle::Large => (rng.range(2.8, 3.6), 0.5, 650.0),
+            WingStyle::Lark => (rng.range(20.0, 24.0), 0.1, 2600.0),
         };
         Self {
             sample_rate,
@@ -61,15 +74,25 @@ impl Wings {
         }
     }
 
-    /// `flap` 0..1: 0 perched/gliding, ~0.5 cruising, 1 take-off/landing effort.
+    /// `flap` 0..1: 0 perched/gliding, ~0.5 cruising, 1 take-off/landing effort. Small
+    /// passerines add their own flap/glide bouts while cruising.
     pub fn render(&mut self, out: &mut [f32], flap: f32) {
+        self.render_driven(out, flap, false)
+    }
+
+    /// As `render`; with `driven` the effort is followed as given (no own bouts).
+    pub fn render_driven(&mut self, out: &mut [f32], flap: f32, driven: bool) {
         let dt = out.len() as f32 / self.sample_rate;
-        self.flap += (flap.clamp(0.0, 1.0) - self.flap) * (dt / 0.05).min(1.0);
-        if self.gain == 0.0 || self.flap < 1e-3 {
+        // Faster response when driven: a glide must silence the wings within a bound.
+        let (tau, floor) = if driven { (0.012, 0.02) } else { (0.05, 1e-3) };
+        self.flap += (flap.clamp(0.0, 1.0) - self.flap) * (dt / tau).min(1.0);
+        if self.gain == 0.0 || self.flap < floor {
             out.fill(0.0);
             return;
         }
-        if self.style == WingStyle::Passerine {
+        if driven {
+            self.gliding = false;
+        } else if self.style == WingStyle::Passerine {
             self.bout -= dt;
             if self.bout <= 0.0 {
                 // Hard effort keeps flapping; cruising alternates flap and glide bouts.
@@ -80,6 +103,8 @@ impl Wings {
         let amp = if self.gliding { 0.0 } else { self.gain * self.flap.powf(0.8) };
         let inc = self.rate * (0.85 + 0.3 * self.flap) / self.sample_rate;
         let clap_decay = (-1.0 / (0.002 * self.sample_rate)).exp();
+        // Large wings: a long whoosh over most of the downstroke.
+        let large = self.style == WingStyle::Large;
         for o in out.iter_mut() {
             let prev = self.phase;
             self.phase += inc;
@@ -92,7 +117,7 @@ impl Wings {
             }
             // Downstroke is the first half of the cycle.
             let down = if self.phase < 0.5 { (TAU * self.phase).sin().max(0.0) } else { 0.0 };
-            let env = down * down;
+            let env = if large { 0.15 + down } else { down * down };
             let (_, bp, _) = self.band.process(self.rng.bipolar());
             let click = self.clap * self.rng.bipolar();
             self.clap *= clap_decay;
@@ -120,5 +145,20 @@ mod tests {
         assert!(energy(WingStyle::Pigeon) > energy(WingStyle::Passerine));
         assert!(energy(WingStyle::Passerine) > 0.1);
         assert_eq!(energy(WingStyle::Owl), 0.0);
+        assert!(energy(WingStyle::Large) > energy(WingStyle::Lark));
+    }
+
+    #[test]
+    fn driven_glides_are_silent() {
+        let mut w = Wings::new(48_000.0, 5, WingStyle::Passerine);
+        let mut buf = [0.0f32; 64];
+        for _ in 0..100 {
+            w.render_driven(&mut buf, 0.65, true);
+        }
+        assert!(buf.iter().any(|v| v.abs() > 1e-4));
+        for _ in 0..40 {
+            w.render_driven(&mut buf, 0.0, true);
+        }
+        assert!(buf.iter().all(|v| *v == 0.0), "glide must be silent within ~50 ms");
     }
 }

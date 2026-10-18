@@ -42,6 +42,9 @@
     { "kind": "bird", "id": 108, "species": "swallow",
       "behaviour": { "type": "flyby", "first": 20, "interval": [30, 80], "min_distance": 2.5, "height": 1.5 } },
     { "kind": "bird", "id": 109, "species": "swallow",
-      "behaviour": { "type": "circle", "center": [4.0, 0.0, -1.7], "radius": 6, "height": 3.0, "first": 60, "interval": [60, 150] } }
+      "behaviour": { "type": "circle", "center": [4.0, 0.0, -1.7], "radius": 6, "height": 3.0, "first": 60, "interval": [60, 150] } },
+    { "kind": "bird", "id": 110, "species": "blackbird",   "behaviour": { "type": "resident", "home": 3 } },
+    { "kind": "bird", "id": 111, "species": "blackbird",   "behaviour": { "type": "resident", "home": 8, "roam": 0.8 } },
+    { "kind": "bird", "id": 112, "species": "robin",       "behaviour": { "type": "resident", "home": 7, "roam": 0.7 } }
   ]
 }
