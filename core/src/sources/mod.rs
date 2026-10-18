@@ -120,6 +120,12 @@ pub trait Generator: Send {
     fn event_rate(&self) -> f32 {
         0.0
     }
+    /// In the middle of a phrase (song or call) right now. The mix layer counts concurrent
+    /// phrases and holds a new one back by setting `activity` to 0 until a slot frees;
+    /// generators must never cut a phrase they started because of that.
+    fn busy(&self) -> bool {
+        false
+    }
     /// Runtime reconfiguration (audio thread, no allocation). Physical models accept their own
     /// `ModelConfig` variant and glide to it; everything else ignores it.
     fn set_model(&mut self, _cfg: &ModelConfig) {}
@@ -157,6 +163,9 @@ impl Generator for Flyer {
     }
     fn pitch(&self) -> f32 {
         self.voice.pitch()
+    }
+    fn busy(&self) -> bool {
+        self.voice.busy()
     }
 }
 
@@ -330,6 +339,18 @@ impl SoundDesc {
 }
 
 impl ModelConfig {
+    pub fn kind(&self) -> ModelKind {
+        match self {
+            ModelConfig::Wind(_) => ModelKind::Wind,
+            ModelConfig::Foliage(_) => ModelKind::Foliage,
+            ModelConfig::Water(_) => ModelKind::Water,
+            ModelConfig::Rain(_) => ModelKind::Rain,
+            ModelConfig::Thunder(_) => ModelKind::Thunder,
+            ModelConfig::Fire(_) => ModelKind::Fire,
+            ModelConfig::Insects(_) => ModelKind::Insects,
+        }
+    }
+
     pub fn build(self, sr: f32, seed: u64) -> Box<dyn Generator> {
         match self {
             ModelConfig::Wind(c) => Box::new(Wind::new(sr, seed, c)),

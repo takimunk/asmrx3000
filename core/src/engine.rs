@@ -20,6 +20,7 @@ use crate::dsp::soft_clip;
 use crate::fft::fft;
 use crate::headpose::{HeadPoseInput, HeadTracker, PoseSettings, Quat};
 use crate::math::Vec3;
+use crate::mix::{self, EmitterView, Intent, Mix, MixInfo, MixShared};
 use crate::physics::ground::GroundType;
 use crate::prompt::{self, Glides};
 use crate::rng::Rng;
@@ -39,16 +40,8 @@ const WIND_FIELD_POINTS: usize = 64;
 pub const SCOPE_TRACKS: usize = 9;
 const SCOPE_LEN: usize = 4096;
 
-const WATER_GAIN: f32 = 1.0;
-const WIND_GAIN: f32 = 0.6;
-const BIRD_GAIN: f32 = 0.8;
-const RAIN_GAIN: f32 = 1.0;
-/// The thunder emitter is a direction proxy at `director::THUNDER_PROXY_M`; its generator
-/// already includes the long-range attenuation, so undo the proxy's 1/r here.
-const THUNDER_GAIN: f32 = crate::director::THUNDER_PROXY_M;
-const FIRE_GAIN: f32 = 1.0;
-const INSECT_GAIN: f32 = 0.8;
-const MASTER_GAIN: f32 = 1.0;
+// Source levels come from the calibration table (mix/calibration.rs); the mix layer
+// (mix/mod.rs) adds intent, attention, masking-aware ducking and output dynamics.
 
 pub mod param {
     pub const VOLUME: u32 = 0;
@@ -109,7 +102,19 @@ pub mod telemetry {
     pub const HEAD_HORIZON_MS: u32 = 12;
     /// Head-pose samples per second arriving from the host.
     pub const HEAD_RATE: u32 = 13;
-    pub const COUNT: usize = 14;
+    // 14..18: flight mode.
+    /// Mix loudness after the mix dynamics, before VOLUME: momentary (400 ms), short-term
+    /// (3 s) and gated integrated (BS.1770), LUFS.
+    pub const LOUDNESS_MOMENTARY: u32 = 19;
+    pub const LOUDNESS_SHORT: u32 = 20;
+    pub const LOUDNESS_INTEGRATED: u32 = 21;
+    /// Mix dynamics gain (leveller + comfort compressor + limiter), dB.
+    pub const MIX_GAIN_DB: u32 = 22;
+    /// Foreground soloists right now.
+    pub const SOLOISTS: u32 = 23;
+    /// Share of the soloists' loudness lost to masking by the bed, 0..1 (after ducking).
+    pub const MASKING: u32 = 24;
+    pub const COUNT: usize = 25;
 }
 
 #[repr(u32)]
@@ -180,6 +185,8 @@ struct Shared {
     head: HeadPoseInput,
     /// Seconds of audio rendered (f64 bits): the clock head-pose arrivals are stamped with.
     clock: AtomicU64,
+    /// Mix-layer telemetry (`asmr_get_mix`).
+    mix: MixShared,
 }
 
 struct Dsp {
@@ -207,6 +214,9 @@ struct Dsp {
     /// Control values last applied to the generators.
     ctl: ControlState,
     ctl_applied: bool,
+    /// The sound director's mix layer.
+    mix: Mix,
+    gains: [f32; BLOCK],
 }
 
 pub struct Engine {
@@ -251,6 +261,7 @@ impl Engine {
             scope_pos: AtomicUsize::new(0),
             head: HeadPoseInput::new(),
             clock: AtomicU64::new(0),
+            mix: MixShared::new(),
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -303,6 +314,8 @@ impl Engine {
             out_level: 0.0,
             ctl: ControlState::default(),
             ctl_applied: false,
+            mix: Mix::new(sr),
+            gains: [1.0; BLOCK],
         };
         dsp.publish(&shared);
         Ok(Self { shared, dsp: UnsafeCell::new(dsp) })
@@ -460,6 +473,43 @@ impl Engine {
         count
     }
 
+    /// Mix-layer telemetry: loudness, per-group levels and masking, soloists. Any thread.
+    pub fn mix_info(&self) -> MixInfo {
+        self.shared.mix.load()
+    }
+
+    /// Role of emitter `idx` in the mix right now (tests, tools). Not while rendering.
+    pub fn mix_role(&self, idx: usize) -> mix::Role {
+        // SAFETY: tools call this between renders on the render thread.
+        unsafe { &*self.dsp.get() }.mix.role(idx)
+    }
+
+    /// A/B tool: `true` = the mix before the sound director (legacy kind gains, no attention,
+    /// ducking or dynamics; analysis still runs). Call between renders, on the render thread.
+    pub fn set_mix_bypass(&self, on: bool) {
+        // SAFETY: as above.
+        unsafe { &mut *self.dsp.get() }.mix.set_bypass(on);
+    }
+
+    /// Calibration tool: per-emitter A-weighted sound level probes (allocates; between renders).
+    pub fn enable_mix_probes(&self) {
+        // SAFETY: as above.
+        unsafe { &mut *self.dsp.get() }.mix.enable_probes();
+    }
+
+    /// Probe results: (class, LAeq at 1 m, LAFmax at 1 m, mean 1/r²) per emitter.
+    pub fn mix_probes(&self) -> Vec<(mix::SoundClass, f32, f32, f64)> {
+        // SAFETY: as above.
+        let m = &unsafe { &*self.dsp.get() }.mix;
+        m.probes().iter().map(|p| (p.class, p.meter.laeq(), p.meter.lafmax(), p.inv_r2 / p.blocks.max(1) as f64)).collect()
+    }
+
+    /// Restarts the integrated-loudness measurement.
+    pub fn reset_loudness(&self) {
+        // SAFETY: as above.
+        unsafe { &mut *self.dsp.get() }.mix.reset_integrated();
+    }
+
     /// Copies scene objects (trees, rivers, birds) into `out`, returns how many were written.
     pub fn objects(&self, out: &mut [ObjectInfo]) -> usize {
         self.shared.objects.read(out)
@@ -596,6 +646,7 @@ impl Dsp {
             self.ctl = st;
             self.ctl_applied = true;
         }
+        self.mix.begin(Intent::from_controls(&st), dt);
         shared.controls.publish_params(&st, &shared.params);
         let gustiness = st.get(controls::id::WIND_GUSTINESS);
 
@@ -650,22 +701,31 @@ impl Dsp {
         let inv_len = 1.0 / len as f32;
         let mut peaks = [0.0f32; SCOPE_TRACKS];
 
+        let listener = pose.offset;
         for (idx, em) in self.world.emitters.iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
             controls.water = water * em.flow;
             controls.neural = neural;
             controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
-            em.generator.render(tmp, &controls);
-            let kind_gain = match em.kind {
-                SourceKind::Water => WATER_GAIN,
-                SourceKind::Wind => WIND_GAIN,
-                SourceKind::Bird => BIRD_GAIN,
-                SourceKind::Rain => RAIN_GAIN,
-                SourceKind::Thunder => THUNDER_GAIN,
-                SourceKind::Fire => FIRE_GAIN,
-                SourceKind::Insect => INSECT_GAIN,
+            let flying = em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0;
+            let view = EmitterView {
+                key: idx as u64,
+                class: em.class,
+                kind: em.kind,
+                rel: em.position - listener,
+                wants: controls.activity > 0.02,
+                busy: em.generator.busy(),
+                flying,
             };
+            let voice = self.mix.voice(idx, &view);
+            let (kind_gain, send, eq_db) = (voice.gain, voice.send, *voice.eq_db);
+            if !voice.permit {
+                // Density throttle: hold the next phrase back until a slot frees.
+                controls.activity = 0.0;
+            }
+            em.generator.render(tmp, &controls);
+            self.mix.feed(idx, tmp, kind_gain);
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
@@ -680,7 +740,7 @@ impl Dsp {
                 SourceKind::Insect => scope::INSECTS,
             };
             peaks[track] = peaks[track].max(peak);
-            if em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0 {
+            if flying {
                 peaks[scope::FLIGHT] = peaks[scope::FLIGHT].max(peak);
             }
 
@@ -688,11 +748,15 @@ impl Dsp {
             // forest scattering, near field and reverb sends (propagation.rs).
             em.rel = head.apply_transposed(em.position);
             let mut emitter = Emitter::at(em.position, kind_gain);
+            emitter.eq_db = eq_db;
+            emitter.send = send;
             if em.kind == SourceKind::Water {
                 emitter.ground = Some(GroundType::Water);
             }
             self.acoustics.propagate(idx, &emitter, tmp, &mut self.bus);
         }
+
+        self.mix.finish(len);
 
         if self.bed_mode == 0 {
             self.acoustics.render(&mut self.bus, &head, len, &mut self.left[..len], &mut self.right[..len]);
@@ -704,6 +768,8 @@ impl Dsp {
             self.right[..len].copy_from_slice(&self.bed[1][..len]);
         }
 
+        // Output dynamics (pascals at the ears -> digital): leveller, comfort compressor, limiter.
+        self.mix.master(&self.left[..len], &self.right[..len], &mut self.gains[..len]);
         let target_fade = if playing { 1.0 } else { 0.0 };
         let fade_coef = 1.0 - (-1.0 / (0.06 * sr)).exp();
         let vol_coef = 1.0 - (-1.0 / (0.05 * sr)).exp();
@@ -711,7 +777,7 @@ impl Dsp {
         for i in 0..len {
             self.fade += (target_fade - self.fade) * fade_coef;
             self.volume += (volume - self.volume) * vol_coef;
-            let g = self.fade * self.volume * MASTER_GAIN;
+            let g = self.fade * self.volume * self.gains[i];
             if self.bed_mode != 0 {
                 for ch in self.bed.iter_mut() {
                     ch[i] = soft_clip(ch[i] * g);
@@ -772,6 +838,13 @@ impl Dsp {
         t[telemetry::DRIP as usize].store(w.drip_mm_h());
         t[telemetry::HEAD_HORIZON_MS as usize].store(self.head.horizon * 1000.0);
         t[telemetry::HEAD_RATE as usize].store(self.head.rate);
+        let m = self.mix.publish(&shared.mix);
+        t[telemetry::LOUDNESS_MOMENTARY as usize].store(m.loudness_momentary);
+        t[telemetry::LOUDNESS_SHORT as usize].store(m.loudness_short);
+        t[telemetry::LOUDNESS_INTEGRATED as usize].store(m.loudness_integrated);
+        t[telemetry::MIX_GAIN_DB as usize].store(m.gain_db);
+        t[telemetry::SOLOISTS as usize].store(m.soloists as f32);
+        t[telemetry::MASKING as usize].store(m.masking_after);
     }
 }
 

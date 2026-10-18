@@ -29,6 +29,16 @@ const NP: usize = 2 * K + 1;
 /// Least-squares weighting profiles (see `Design::new`).
 const PROFILES: usize = 12;
 
+/// The log-spaced fit grid (20 Hz .. min(0.45 fs, 20 kHz)) of `Design::freqs`.
+pub fn grid_freqs(sample_rate: f32) -> [f64; NF] {
+    let f_hi = (0.45 * sample_rate as f64).min(20_000.0);
+    let mut freqs = [0.0f64; NF];
+    for (i, f) in freqs.iter_mut().enumerate() {
+        *f = 20.0 * (f_hi / 20.0).powf(i as f64 / (NF - 1) as f64);
+    }
+    freqs
+}
+
 pub struct Design {
     pub freqs: [f64; NF],
     pole_re: [f32; K],
@@ -57,11 +67,7 @@ impl Coeffs {
 impl Design {
     pub fn new(sample_rate: f32) -> Self {
         let fs = sample_rate as f64;
-        let f_hi = (0.45 * fs).min(20_000.0);
-        let mut freqs = [0.0f64; NF];
-        for (i, f) in freqs.iter_mut().enumerate() {
-            *f = 20.0 * (f_hi / 20.0).powf(i as f64 / (NF - 1) as f64);
-        }
+        let freqs = grid_freqs(sample_rate);
 
         // Poles: log-spaced, bandwidth from the spacing (Bank 2007).
         let p_lo = 30.0;

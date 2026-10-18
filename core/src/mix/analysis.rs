@@ -1,0 +1,277 @@
+//! Critical-band analysis of the mix tracks and masking-aware ducking.
+//!
+//! Tracks are mono estimates of what reaches the listener: every emitter's calibrated signal
+//! times its mix gain over its distance, summed per mix group (the bed) or kept alone (each
+//! soloist). Every `HOP` samples each track gets a 512-point Hann FFT (two real tracks per
+//! complex FFT) -> Bark band powers -> excitation pattern (loudness.rs). From those:
+//! * which foreground source is masked by which bed group, band by band;
+//! * a duck curve per bed group: a few dB, only in the bands where it hides a foreground
+//!   source, shared among the bed groups by their part of the masker, smoothed (fast
+//!   attack, slow release) so it breathes rather than pumps;
+//! * per-group loudness (sone), level and masking index for telemetry.
+
+use super::loudness::{self, BandModel, BANDS, EDGES, MASK_INDEX_DB};
+use crate::fft::fft;
+
+pub const FFT_N: usize = 512;
+/// Analysis hop, samples (≈ 5 ms at 48 kHz).
+pub const HOP: usize = 256;
+
+/// Per-band duck/attenuation curve, dB (≤ 0 = cut).
+pub type Curve = [f32; BANDS];
+
+pub struct Analysis {
+    pub tracks: usize,
+    ring: Vec<[f32; FFT_N]>,
+    pos: usize,
+    pub since: usize,
+    window: [f32; FFT_N],
+    /// FFT bin range of each band.
+    bins: [(usize, usize); BANDS],
+    norm: f32,
+    re: [f32; FFT_N],
+    im: [f32; FFT_N],
+    /// Band powers at the listener, Pa², per track: raw frame, fast-smoothed (decisions),
+    /// slow-smoothed (telemetry).
+    pub frame: Vec<[f32; BANDS]>,
+    pub fast: Vec<[f32; BANDS]>,
+    pub slow: Vec<[f32; BANDS]>,
+    /// Excitation of `fast`.
+    pub exc: Vec<[f32; BANDS]>,
+    pub model: BandModel,
+    a_fast: [f32; 2],
+    a_slow: f32,
+}
+
+impl Analysis {
+    pub fn new(sample_rate: f32, tracks: usize) -> Self {
+        let tracks = tracks + tracks % 2;
+        let mut window = [0.0f32; FFT_N];
+        let mut w2 = 0.0f32;
+        for (i, w) in window.iter_mut().enumerate() {
+            *w = 0.5 - 0.5 * (core::f32::consts::TAU * i as f32 / FFT_N as f32).cos();
+            w2 += *w * *w;
+        }
+        let bin_hz = sample_rate / FFT_N as f32;
+        let mut bins = [(0usize, 0usize); BANDS];
+        // Each bin belongs to the band its centre falls in (narrow low bands may get none).
+        let first = |f: f32| ((f / bin_hz).ceil() as usize).clamp(1, FFT_N / 2);
+        for z in 0..BANDS {
+            bins[z] = (first(EDGES[z]), first(EDGES[z + 1]));
+        }
+        let hop_s = HOP as f32 / sample_rate;
+        let coef = |tau: f32| 1.0 - (-hop_s / tau).exp();
+        Self {
+            tracks,
+            ring: vec![[0.0; FFT_N]; tracks],
+            pos: 0,
+            since: 0,
+            window,
+            bins,
+            norm: 2.0 / (FFT_N as f32 * w2),
+            re: [0.0; FFT_N],
+            im: [0.0; FFT_N],
+            frame: vec![[0.0; BANDS]; tracks],
+            fast: vec![[0.0; BANDS]; tracks],
+            slow: vec![[0.0; BANDS]; tracks],
+            exc: vec![[0.0; BANDS]; tracks],
+            model: BandModel::new(sample_rate),
+            a_fast: [coef(0.015), coef(0.12)],
+            a_slow: coef(0.8),
+        }
+    }
+
+    /// Appends one block of every track (`taps[t][..len]`). Returns true when a hop is due.
+    pub fn push(&mut self, taps: &[[f32; crate::engine::BLOCK]], len: usize) -> bool {
+        for (t, tap) in taps.iter().enumerate().take(self.tracks) {
+            let r = &mut self.ring[t];
+            for (i, v) in tap[..len].iter().enumerate() {
+                r[(self.pos + i) % FFT_N] = *v;
+            }
+        }
+        self.pos = (self.pos + len) % FFT_N;
+        self.since += len;
+        self.since >= HOP
+    }
+
+    /// Band powers of every track for the newest FFT_N samples, smoothed.
+    pub fn analyse(&mut self) {
+        self.since = 0;
+        let n2 = FFT_N / 2;
+        for t in (0..self.tracks).step_by(2) {
+            let mut energy = [0.0f32; 2];
+            for i in 0..FFT_N {
+                let k = (self.pos + i) % FFT_N;
+                let w = self.window[i];
+                let a = self.ring[t][k] * w;
+                let b = self.ring[t + 1][k] * w;
+                energy[0] += a * a;
+                energy[1] += b * b;
+                self.re[i] = a;
+                self.im[i] = b;
+            }
+            if energy[0] == 0.0 && energy[1] == 0.0 {
+                self.frame[t] = [0.0; BANDS];
+                self.frame[t + 1] = [0.0; BANDS];
+            } else {
+                fft(&mut self.re, &mut self.im);
+                for z in 0..BANDS {
+                    let (k0, k1) = self.bins[z];
+                    let (mut pa, mut pb) = (0.0f32, 0.0f32);
+                    for k in k0..k1.min(n2) {
+                        let (zr, zi, nr, ni) = (self.re[k], self.im[k], self.re[FFT_N - k], self.im[FFT_N - k]);
+                        pa += (zr + nr) * (zr + nr) + (zi - ni) * (zi - ni);
+                        pb += (zr - nr) * (zr - nr) + (zi + ni) * (zi + ni);
+                    }
+                    self.frame[t][z] = 0.25 * pa * self.norm;
+                    self.frame[t + 1][z] = 0.25 * pb * self.norm;
+                }
+            }
+        }
+        for t in 0..self.tracks {
+            for z in 0..BANDS {
+                let x = self.frame[t][z];
+                let f = &mut self.fast[t][z];
+                *f += (x - *f) * if x > *f { self.a_fast[0] } else { self.a_fast[1] };
+                let s = &mut self.slow[t][z];
+                *s += (x - *s) * self.a_slow;
+            }
+            let fast = self.fast[t];
+            self.model.excitation(&fast, &mut self.exc[t]);
+        }
+    }
+
+    /// Masked threshold (Pa²) that the tracks flagged in `from` put on band z.
+    #[inline]
+    pub fn masker(&self, from: &[bool], z: usize, duck: Option<&[Curve]>) -> f32 {
+        let mut m = 0.0f32;
+        for (t, on) in from.iter().enumerate() {
+            if *on {
+                let d = duck.map_or(1.0, |c| db_gain_sq(c[t][z]));
+                m += self.exc[t][z] * d;
+            }
+        }
+        m * MASK_INDEX
+    }
+
+    /// Unmasked and partial loudness (sone) of track `t` against the tracks in `others`,
+    /// with optional duck curves applied to the maskers (and to `t` itself if it is ducked).
+    pub fn partial(&self, t: usize, others: &[bool], duck: Option<&[Curve]>) -> (f32, f32) {
+        let (mut n, mut np) = (0.0, 0.0);
+        let own = |z: usize| duck.map_or(1.0, |c| db_gain_sq(c[t][z]));
+        for z in 0..BANDS {
+            let e = self.exc[t][z] * own(z);
+            if e <= 0.0 {
+                continue;
+            }
+            n += self.model.specific(z, e, 0.0);
+            np += self.model.specific(z, e, self.masker(others, z, duck));
+        }
+        (n, np)
+    }
+}
+
+pub const MASK_INDEX: f32 = 0.398_107_17; // 10^(-MASK_INDEX_DB / 10)
+const _: () = assert!(MASK_INDEX_DB == 4.0);
+
+#[inline]
+pub fn db_gain_sq(db: f32) -> f32 {
+    if db == 0.0 {
+        1.0
+    } else {
+        10f32.powf(0.1 * db)
+    }
+}
+
+/// Settings of one ducking pass.
+#[derive(Clone, Copy, Debug)]
+pub struct DuckParams {
+    /// Signal-to-mask ratio a foreground source should keep in its important bands, dB.
+    pub target_smr_db: f32,
+    /// Deepest cut, dB (positive).
+    pub depth_db: f32,
+}
+
+/// Desired duck (dB ≤ 0) per bed track and band so that every foreground track keeps its
+/// target signal-to-mask ratio in the bands that carry its loudness. `weight[t]` scales how
+/// much foreground track t may ask for (0 = none, 1 = full).
+pub fn duck_targets(a: &Analysis, fg: &[f32], bed: &[bool], p: &DuckParams, out: &mut [Curve]) {
+    let m = &a.model;
+    let mut need = [0.0f32; BANDS];
+    let mut masker = [0.0f32; BANDS];
+    for (z, mz) in masker.iter_mut().enumerate() {
+        *mz = a.masker(bed, z, None);
+    }
+    for (t, &w) in fg.iter().enumerate() {
+        if w <= 0.0 {
+            continue;
+        }
+        // Where does this source's loudness live?
+        let mut spec = [0.0f32; BANDS];
+        let mut total = 0.0;
+        for z in 0..BANDS {
+            spec[z] = m.specific(z, a.exc[t][z], 0.0);
+            total += spec[z];
+        }
+        if total < 0.02 {
+            continue;
+        }
+        for z in 0..BANDS {
+            let share = spec[z] / total;
+            if share < 0.03 {
+                continue;
+            }
+            let smr = 10.0 * (a.exc[t][z] / (masker[z] + m.e_tq[z])).max(1e-9).log10();
+            // Important bands ask for the full target, minor ones for less.
+            let importance = (share / 0.15).min(1.0) * w;
+            let d = ((p.target_smr_db - smr).max(0.0) * importance).min(p.depth_db);
+            need[z] = need[z].max(d);
+        }
+    }
+    // Narrow but not surgical: a band's neighbours get half.
+    let mut spread = need;
+    for z in 0..BANDS {
+        let lo = if z > 0 { need[z - 1] } else { 0.0 };
+        let hi = if z + 1 < BANDS { need[z + 1] } else { 0.0 };
+        spread[z] = need[z].max(0.5 * lo.max(hi));
+    }
+    for (t, c) in out.iter_mut().enumerate() {
+        if !bed.get(t).copied().unwrap_or(false) {
+            *c = [0.0; BANDS];
+            continue;
+        }
+        for z in 0..BANDS {
+            let total = masker[z] / MASK_INDEX;
+            let share = if total > 0.0 { a.exc[t][z] / total } else { 0.0 };
+            // The main maskers take the cut; a group contributing < ~10 % is left alone.
+            let k = ((share - 0.1) / 0.4).clamp(0.0, 1.0);
+            c[z] = -spread[z] * k;
+        }
+    }
+}
+
+/// Bark-band curve -> the propagation's fit grid (`freqs`), dB, linear in band position.
+pub fn to_grid(c: &Curve, freqs: &[f64], out: &mut [f32]) {
+    for (o, &f) in out.iter_mut().zip(freqs) {
+        let f = f as f32;
+        // Fractional band index of f (centre-based).
+        let mut x = 0.0f32;
+        if f <= loudness::centre(0) {
+            x = 0.0;
+        } else if f >= loudness::centre(BANDS - 1) {
+            x = (BANDS - 1) as f32;
+        } else {
+            for z in 0..BANDS - 1 {
+                let (c0, c1) = (loudness::centre(z), loudness::centre(z + 1));
+                if f < c1 {
+                    x = z as f32 + (f / c0).ln() / (c1 / c0).ln();
+                    break;
+                }
+            }
+        }
+        let i = (x.floor() as usize).min(BANDS - 1);
+        let j = (i + 1).min(BANDS - 1);
+        let u = x - i as f32;
+        *o = c[i] * (1.0 - u) + c[j] * u;
+    }
+}

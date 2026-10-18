@@ -68,6 +68,8 @@ struct SpecKey {
     obstructed: bool,
     epoch: u32,
     valid: bool,
+    /// Mix EQ (dB) the filters were fitted with.
+    eq: [f32; NF],
 }
 
 pub struct Propagator {
@@ -123,7 +125,7 @@ impl Propagator {
             started: false,
             idle: 0,
             sleeping: false,
-            key: SpecKey { pos: Vec3::default(), forward: Vec3::default(), r1: 0.0, r2: 0.0, sin_psi: 0.0, obstructed: false, epoch: 0, valid: false },
+            key: SpecKey { pos: Vec3::default(), forward: Vec3::default(), r1: 0.0, r2: 0.0, sin_psi: 0.0, obstructed: false, epoch: 0, valid: false, eq: [0.0; NF] },
             pending: None,
         }
     }
@@ -220,10 +222,11 @@ impl Propagator {
             || (r2 - k.r2).abs() > 0.03 * r2
             || (sin_psi - k.sin_psi).abs() > 0.01
             || moved > if k.obstructed { 0.15 } else { 1.0 }
-            || (em.directivity != Directivity::Omni && forward.dot(k.forward) < 0.995);
+            || (em.directivity != Directivity::Omni && forward.dot(k.forward) < 0.995)
+            || eq_moved(&em.eq_db, &k.eq);
         if need && (!k.valid || phase % 2 == 0) {
             let obstructed = self.refit(ctx, em, s, r1, r2, img, sin_psi);
-            self.key = SpecKey { pos: s, forward, r1, r2, sin_psi, obstructed, epoch: ctx.epoch, valid: true };
+            self.key = SpecKey { pos: s, forward, r1, r2, sin_psi, obstructed, epoch: ctx.epoch, valid: true, eq: em.eq_db };
         }
 
         let tau1 = retarded_time(d1, vel, c) as f64 + self.extra_m / c as f64;
@@ -257,7 +260,7 @@ impl Propagator {
         read_path(&self.delay, start, self.direct.delay, dl1, jump, x, &mut scratch.c[..len]);
         self.direct.delay = dl1;
         if ctx.features.reverb {
-            let target = self.send;
+            let target = self.send * em.send;
             for (o, v) in sends.reverb[..len].iter_mut().zip(x.iter()) {
                 *o += v * target;
             }
@@ -399,6 +402,13 @@ impl Propagator {
             }
         }
 
+        // Mix EQ (masking ducks, distance cues): same on both paths.
+        for i in 0..NF {
+            let a = em.eq_db[i] as f64 * (core::f64::consts::LN_10 / 20.0);
+            ln1[i] += a;
+            ln2[i] += a;
+        }
+
         let co1 = ctx.design.fit_min_phase(&ln1, None);
         let beta = &ctx.beta[em.ground.unwrap_or(ctx.ground) as usize];
         let mut q = [C64::ZERO; NF];
@@ -420,6 +430,12 @@ impl Propagator {
         self.send = ctx.reverb_send * (-(r1 - ext).max(0.0) / ext).exp();
         obstructed
     }
+}
+
+/// Whether the mix EQ moved enough (0.5 dB in any grid band) to refit the path filters.
+#[inline]
+fn eq_moved(a: &[f32; NF], b: &[f32; NF]) -> bool {
+    a.iter().zip(b).any(|(x, y)| (x - y).abs() > 0.5)
 }
 
 /// Fractional-delay read of one path. On a position jump (teleport) the old and new delays

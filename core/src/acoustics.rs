@@ -106,11 +106,16 @@ pub struct Emitter {
     /// Ground under this emitter's reflection path, if it differs from the scene's
     /// (e.g. water under a river segment).
     pub ground: Option<GroundType>,
+    /// Extra spectral gain of the direct and ground paths on the fit grid
+    /// (`shaping::grid_freqs`), dB: the mix layer's masking ducks and distance cues.
+    pub eq_db: [f32; NF],
+    /// Reverb send multiplier (1 = physical).
+    pub send: f32,
 }
 
 impl Emitter {
     pub fn at(position: Vec3, gain: f32) -> Self {
-        Self { position, velocity: None, gain, forward: None, directivity: Directivity::Omni, ground: None }
+        Self { position, velocity: None, gain, forward: None, directivity: Directivity::Omni, ground: None, eq_db: [0.0; NF], send: 1.0 }
     }
 }
 

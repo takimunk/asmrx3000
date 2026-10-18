@@ -17,6 +17,7 @@ mod fftconv;
 pub mod headpose;
 mod hrtf;
 pub mod math;
+pub mod mix;
 mod nearfield;
 mod num;
 mod physics;

@@ -31,6 +31,8 @@ pub mod group {
     pub const ENVIRONMENT: u32 = 6;
     pub const INSECTS: u32 = 7;
     pub const FIRE: u32 = 8;
+    /// Mix intent (the sound director, docs/sound-director.md). 9 is flight mode.
+    pub const MIX: u32 = 10;
 }
 
 /// Mirrors `ASMR_CONTROL_FLAG_*`.
@@ -111,6 +113,17 @@ pub mod id {
     pub const FIRE_HEAT: u32 = 900;
     pub const FIRE_MOISTURE: u32 = 901;
     pub const FIRE_RESIN: u32 = 902;
+    pub const MIX_CLARITY: u32 = 1100;
+    pub const MIX_DENSITY: u32 = 1101;
+    pub const MIX_SOLOISTS: u32 = 1102;
+    pub const MIX_LOUDNESS: u32 = 1103;
+    pub const MIX_DYNAMICS: u32 = 1104;
+    pub const MIX_FOCUS_WATER: u32 = 1105;
+    pub const MIX_FOCUS_WIND: u32 = 1106;
+    pub const MIX_FOCUS_BIRDS: u32 = 1107;
+    pub const MIX_FOCUS_RAIN: u32 = 1108;
+    pub const MIX_FOCUS_INSECTS: u32 = 1109;
+    pub const MIX_FOCUS_FIRE: u32 = 1110;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,7 +160,7 @@ use flags::{DISCRETE as D, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 36;
+const N: usize = 47;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -186,6 +199,17 @@ static DEFS: [Def; N] = [
     def(FIRE_HEAT, g::FIRE, NO_PARENT, M | L, 1.0, 1000.0, "fire.heat", "kW", Store::Local),
     def(FIRE_MOISTURE, g::FIRE, FIRE_HEAT, 0, 0.02, 0.6, "fire.moisture", "", Store::Local),
     def(FIRE_RESIN, g::FIRE, FIRE_HEAT, 0, 0.0, 1.0, "fire.resin", "", Store::Local),
+    def(MIX_CLARITY, g::MIX, NO_PARENT, M, 0.0, 1.0, "mix.clarity", "", Store::Local),
+    def(MIX_DENSITY, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.density", "", Store::Local),
+    def(MIX_SOLOISTS, g::MIX, MIX_CLARITY, 0, 1.0, 4.0, "mix.soloists", "", Store::Local),
+    def(MIX_LOUDNESS, g::MIX, MIX_CLARITY, 0, -36.0, -10.0, "mix.loudness", "LUFS", Store::Local),
+    def(MIX_DYNAMICS, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.dynamics", "", Store::Local),
+    def(MIX_FOCUS_WATER, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.water", "", Store::Local),
+    def(MIX_FOCUS_WIND, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.wind", "", Store::Local),
+    def(MIX_FOCUS_BIRDS, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.birds", "", Store::Local),
+    def(MIX_FOCUS_RAIN, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.rain", "", Store::Local),
+    def(MIX_FOCUS_INSECTS, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.insects", "", Store::Local),
+    def(MIX_FOCUS_FIRE, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.fire", "", Store::Local),
 ];
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -268,6 +292,20 @@ pub fn discharge_ratio(flow: f32) -> f32 {
     (flow.max(0.0) / 0.6).powi(2)
 }
 
+/// Density of bird phrases that follows the clarity macro.
+fn mix_density(clarity: f32) -> f32 {
+    (0.9 - 0.6 * clarity).clamp(0.0, 1.0)
+}
+
+/// Foreground soloists that follow the clarity macro: 3 for a loose mix, 2 for a clear one.
+fn mix_soloists(clarity: f32) -> f32 {
+    if clarity < 0.4 {
+        3.0
+    } else {
+        2.0
+    }
+}
+
 /// Diurnal cycle shape, 1 at 15:00, −1 at 03:00.
 fn diurnal(hour: f32) -> f32 {
     (core::f32::consts::TAU * (hour - 15.0) / 24.0).cos()
@@ -345,6 +383,11 @@ impl ControlBank {
             FIRE_HEAT => b.fire.heat_kw,
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
+            MIX_CLARITY => 0.6,
+            MIX_DENSITY => mix_density(0.6),
+            MIX_SOLOISTS => mix_soloists(0.6),
+            MIX_LOUDNESS => -22.0,
+            MIX_DYNAMICS => 0.7,
             _ => 0.0,
         }
     }
@@ -392,6 +435,9 @@ impl ControlBank {
             ENV_HUMIDITY => (b.humidity - 0.15 * (diurnal(get(ENV_TIME)) - diurnal(b.hour))).clamp(0.0, 1.0),
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
+            // Clearer mixes allow fewer simultaneous phrases and soloists.
+            MIX_DENSITY => mix_density(get(MIX_CLARITY)),
+            MIX_SOLOISTS => mix_soloists(get(MIX_CLARITY)),
             _ => return None,
         })
     }
@@ -548,7 +594,7 @@ pub fn options(id: u32) -> Vec<&'static str> {
 }
 
 pub fn group_name(g: u32) -> &'static str {
-    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire"].get(g as usize).copied().unwrap_or("other")
+    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight", "mix"].get(g as usize).copied().unwrap_or("other")
 }
 
 /// Number of controls.

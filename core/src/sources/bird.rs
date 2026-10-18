@@ -396,6 +396,10 @@ impl Generator for Bird {
         }
     }
 
+    fn busy(&self) -> bool {
+        self.mode != Mode::Idle
+    }
+
     fn pitch(&self) -> f32 {
         self.freq()
     }

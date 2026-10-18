@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::director::Species;
 use crate::engine::{AtomicF32, SourceKind, MAX_SOURCES};
 use crate::math::Vec3;
+use crate::mix::SoundClass;
 use crate::rng::Rng;
 use crate::sources::common::{rain_mm_h, wind_slider};
 use crate::sources::{Bird, Controls, Flyer, Generator, ModelConfig, ModelKind, SoundDesc, Wings};
@@ -508,6 +509,8 @@ pub struct Emitter {
     /// Telemetry: recent RMS and head-relative position.
     pub level: f32,
     pub rel: Vec3,
+    /// Calibration and attention class for the mix layer (mix/calibration.rs).
+    pub class: SoundClass,
 }
 
 pub struct World {
@@ -564,11 +567,13 @@ impl World {
                     variation: [1.0, 1.0, 0.0],
                     level: 0.0,
                     rel: Vec3::default(),
+                    class: SoundClass::of_kind(kind),
                 });
             };
             let set_base = |emitters: &mut Vec<Emitter>, cfg: ModelConfig| {
                 if let Some(e) = emitters.last_mut() {
                     e.base = Some(cfg);
+                    e.class = SoundClass::of_model(cfg.kind());
                 }
             };
             let entity = match e {
@@ -648,6 +653,7 @@ impl World {
                     let voice = crate::director::bird_voice(b.species, procedural, sample_rate, rng.next_u64());
                     let wings = Wings::new(sample_rate, rng.next_u64(), def.wings);
                     push(&mut emitters, SourceKind::Bird, Vec3::default(), Box::new(Flyer::new(voice, wings, b.loudness.clamp(0.0, 8.0))), 1.0);
+                    emitters.last_mut().unwrap().class = SoundClass::Bird(b.species);
                     Entity {
                         id,
                         kind: ObjectKind::Bird,

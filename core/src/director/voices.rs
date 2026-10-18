@@ -39,6 +39,13 @@ impl Generator for BirdVoice {
         }
     }
 
+    fn busy(&self) -> bool {
+        match &self.neural {
+            Some(n) if self.using_neural => n.is_singing(),
+            _ => self.procedural.busy(),
+        }
+    }
+
     fn pitch(&self) -> f32 {
         match &self.neural {
             Some(n) if self.using_neural => {
