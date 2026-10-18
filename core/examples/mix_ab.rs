@@ -10,8 +10,15 @@
 //! numbers compare: BS.1770 loudness of the output, per-group level (LUFS share) and masking
 //! (fraction of the group's loudness hidden by everything else, Zwicker partial loudness),
 //! the masking of the most salient sources (soloists), overlapping bird phrases, and the CPU
-//! time of the mix layer. Writes `<out_dir>/<scene>_{before,after}.wav` and
+//! time of the mix layer. "Is it white noise?" metrics of the output (docs/sound-director.md,
+//! section 9.6): spectral flatness (Wiener entropy), loudness-pattern flatness, critical-band
+//! envelope fluctuation, frames with audible gaps, the texture loudness (sone) and how many
+//! groups are heard as themselves. Writes `<out_dir>/<scene>_{before,after}.wav` and
 //! `<out_dir>/summary.md`.
+//!
+//! Experiments: `MIX_AB_PARAMS="6=3.14,16=40"` sets engine params (id=value) and
+//! `MIX_AB_PATCH='{"glide_s":0,"changes":[{"key":"mix.texture_budget","value":0}]}'` applies a
+//! control patch, both takes; `MIX_TRACE=1` prints a timeline.
 
 use std::fmt::Write as _;
 use std::fs::File;

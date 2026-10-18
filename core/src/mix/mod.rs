@@ -266,6 +266,8 @@ struct Slot {
     /// Smoothed scene-focus gain (front focus, refocus, texture tail), dB: the controller
     /// outputs, divided out of `phys`.
     ctl_db: f32,
+    /// Its attention part (front focus, refocus), dB.
+    attn_db: f32,
     /// Angular velocity seen from the listener, rad/s (smoothed): flybys.
     omega: f32,
     /// Cosine between the head's forward axis and the source; front weight 0..1.
@@ -311,6 +313,7 @@ impl Slot {
             seen: false,
             trim_db: 0.0,
             ctl_db: 0.0,
+            attn_db: 0.0,
             omega: 0.0,
             cos: 1.0,
             front: 0.0,
@@ -766,6 +769,7 @@ impl Mix {
             (tail_cut * s.tail_w + bed_cut) * on
         };
         s.ctl_db += (fcue.db + rcue.db + tail_db - s.ctl_db) * self.a_gain;
+        s.attn_db += (fcue.db + rcue.db - s.attn_db) * self.a_gain;
         let trim = self.intent.level_db[level_index(s.class)];
         s.trim_db += (trim - s.trim_db) * self.a_gain;
 
@@ -823,7 +827,9 @@ impl Mix {
         };
         let tail = !s.protected && !s.anchor && texture_kind(s.class).is_some() && !matches!(s.role, Role::Soloist(_));
         if energy > 0.0 {
-            let raw = p * db_gain_sq(-s.trim_db);
+            // The scene as the budget judges it: without the user's trims and the attention gains
+            // (front focus, refocus), so neither is undone by the bed budget.
+            let raw = p * db_gain_sq(-(s.trim_db + s.attn_db));
             self.trim_pw[track][0] += p;
             self.trim_pw[track][1] += raw;
             if tail {
