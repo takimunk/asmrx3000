@@ -19,16 +19,23 @@ struct ASMRX3000App: App {
         MenuBarExtra {
             Popover(model: model)
         } label: {
-            Image(nsImage: MenuBarIcon.image(active: model.audio.isPlaying))
+            MenuBarLabel(icon: model.icon)
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+/// Menu bar label; observes only the animator so animation frames do not re-render the app scene.
+private struct MenuBarLabel: View {
+    @ObservedObject var icon: MenuBarIconAnimator
+    var body: some View { Image(nsImage: icon.image) }
 }
 
 /// Owns the long-lived pieces so they survive the popover closing.
 final class AppModel: ObservableObject {
     let audio = AudioEngine()
     let head = HeadTracker()
+    let icon = MenuBarIconAnimator()
     lazy var stage = Stage(audio: audio, head: head)
     private var bag = Set<AnyCancellable>()
 
@@ -39,7 +46,10 @@ final class AppModel: ObservableObject {
         // Re-render the menu bar label when playback state changes.
         audio.$isPlaying
             .removeDuplicates()
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] playing in
+                self?.icon.active = playing
+                self?.objectWillChange.send()
+            }
             .store(in: &bag)
     }
 
