@@ -6,6 +6,7 @@
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use core::f32::consts::TAU;
@@ -150,6 +151,7 @@ struct Dsp {
     volume: f32,
     orbit_phase: f32,
     time: f64,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     load: f32,
     out_level: f32,
 }
@@ -259,6 +261,7 @@ impl Engine {
 
     /// Audio thread only.
     pub fn render(&self, left: &mut [f32], right: &mut [f32]) {
+        #[cfg(not(target_arch = "wasm32"))]
         let started = Instant::now();
         // SAFETY: single audio thread, see the type-level comment.
         let dsp = unsafe { &mut *self.dsp.get() };
@@ -277,7 +280,10 @@ impl Engine {
         }
         dsp.publish(&self.shared);
 
+        // Instant::now() traps on wasm32-unknown-unknown; there the shell reports its own load.
+        #[cfg(not(target_arch = "wasm32"))]
         let budget = n as f32 / dsp.sample_rate;
+        #[cfg(not(target_arch = "wasm32"))]
         if budget > 0.0 {
             let load = started.elapsed().as_secs_f32() / budget;
             dsp.load = dsp.load * 0.95 + load * 0.05;

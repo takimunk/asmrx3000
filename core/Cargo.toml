@@ -7,7 +7,7 @@ publish = false
 
 [lib]
 name = "asmr_core"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib", "rlib", "cdylib"]
 
 [profile.release]
 opt-level = 3

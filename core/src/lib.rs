@@ -96,3 +96,21 @@ pub unsafe extern "C" fn asmr_get_wind_field(engine: *const Engine, out: *mut f3
         e.wind_field(slice::from_raw_parts_mut(out, points as usize));
     }
 }
+
+/// Allocates `len` bytes in the module's linear memory (wasm shells copy buffers through this).
+#[no_mangle]
+pub extern "C" fn asmr_alloc(len: u32) -> *mut u8 {
+    let mut v = Vec::<u8>::with_capacity(len as usize);
+    let p = v.as_mut_ptr();
+    std::mem::forget(v);
+    p
+}
+
+/// # Safety
+/// `ptr`/`len` must come from `asmr_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_dealloc(ptr: *mut u8, len: u32) {
+    if !ptr.is_null() {
+        drop(Vec::from_raw_parts(ptr, 0, len as usize));
+    }
+}
