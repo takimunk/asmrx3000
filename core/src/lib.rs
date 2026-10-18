@@ -4,22 +4,42 @@
 
 mod ambisonics;
 mod binaural;
+pub mod director;
 mod dsp;
 mod engine;
 mod fft;
-mod math;
+pub mod math;
 mod rng;
-mod sources;
+pub mod scene;
+pub mod sources;
 mod windfield;
 
-pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, MAX_SOURCES};
+pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, BLOCK, MAX_SOURCES};
+pub use scene::{object_flags, ObjectInfo, ObjectKind, SceneDesc, MAX_OBJECTS};
 
+use std::ffi::{c_char, CStr};
 use std::slice;
 
 /// Creates an engine. Free it with `asmr_engine_free`.
 #[no_mangle]
 pub extern "C" fn asmr_engine_new(sample_rate: f32) -> *mut Engine {
     Box::into_raw(Box::new(Engine::new(sample_rate)))
+}
+
+/// Creates an engine running the scene described by the NUL-terminated JSON `scene_json`
+/// (format: docs/director.md). Returns NULL if the scene does not parse or validate.
+///
+/// # Safety
+/// `scene_json` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_engine_new_with_scene(sample_rate: f32, scene_json: *const c_char) -> *mut Engine {
+    if scene_json.is_null() {
+        return std::ptr::null_mut();
+    }
+    match CStr::from_ptr(scene_json).to_str().map_err(|e| e.to_string()).and_then(|j| Engine::from_json(sample_rate, j)) {
+        Ok(e) => Box::into_raw(Box::new(e)),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// # Safety
@@ -94,5 +114,24 @@ pub unsafe extern "C" fn asmr_get_spectrum(engine: *const Engine, out: *mut f32,
 pub unsafe extern "C" fn asmr_get_wind_field(engine: *const Engine, out: *mut f32, points: u32) {
     if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
         e.wind_field(slice::from_raw_parts_mut(out, points as usize));
+    }
+}
+
+/// # Safety
+/// `out` must point to `max` writable `AsmrObjectInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_objects(engine: *const Engine, out: *mut ObjectInfo, max: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.objects(slice::from_raw_parts_mut(out, max as usize)) as u32,
+        _ => 0,
+    }
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_object_position(engine: *const Engine, id: u32, x: f32, y: f32, z: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.set_object_position(id, x, y, z);
     }
 }

@@ -12,16 +12,17 @@ use core::f32::consts::TAU;
 
 use crate::ambisonics::{self, CHANNELS};
 use crate::binaural::BinauralDecoder;
+use crate::director::{Director, Environment};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
 use crate::math::{Mat3, Vec3};
 use crate::rng::Rng;
-use crate::sources::{Bird, BubbleStream, WindSource};
+use crate::scene::{ObjectBridge, ObjectInfo, SceneDesc, World};
 use crate::windfield::WindField;
 
 /// Control-rate block: source positions and gains update once per block.
 pub const BLOCK: usize = 64;
-pub const MAX_SOURCES: usize = 32;
+pub const MAX_SOURCES: usize = 64;
 /// Half-width of the scene along y (metres) used by the wind front and the UI.
 pub const WIND_SPAN: f32 = 20.0;
 
@@ -44,7 +45,9 @@ pub mod param {
     pub const HEAD_YAW: u32 = 6;
     pub const HEAD_PITCH: u32 = 7;
     pub const HEAD_ROLL: u32 = 8;
-    pub const COUNT: usize = 9;
+    /// Local time of day in hours, 0..24.
+    pub const TIME_OF_DAY: u32 = 9;
+    pub const COUNT: usize = 10;
 }
 
 pub mod telemetry {
@@ -82,18 +85,18 @@ pub struct SourceInfo {
 
 const SOURCE_FIELDS: usize = 9;
 
-struct AtomicF32(AtomicU32);
+pub(crate) struct AtomicF32(AtomicU32);
 
 impl AtomicF32 {
-    fn new(v: f32) -> Self {
+    pub(crate) fn new(v: f32) -> Self {
         Self(AtomicU32::new(v.to_bits()))
     }
     #[inline]
-    fn load(&self) -> f32 {
+    pub(crate) fn load(&self) -> f32 {
         f32::from_bits(self.0.load(Ordering::Relaxed))
     }
     #[inline]
-    fn store(&self, v: f32) {
+    pub(crate) fn store(&self, v: f32) {
         self.0.store(v.to_bits(), Ordering::Relaxed)
     }
 }
@@ -110,34 +113,59 @@ struct Shared {
     sources: Box<[AtomicF32]>,
     source_count: AtomicUsize,
     wind_field: Box<[AtomicF32]>,
+    objects: ObjectBridge,
 }
 
-enum Generator {
-    Water(BubbleStream),
-    Wind(WindSource),
-    Bird(Bird),
-}
-
-struct Slot {
-    kind: SourceKind,
-    home: Vec3,
-    position: Vec3,
-    generator: Generator,
+/// Per-emitter propagation state (one per scene emitter, same index).
+#[derive(Clone, Copy)]
+struct Path {
     sh: [f32; CHANNELS],
-    level: f32,
-    rel: Vec3,
 }
 
-impl Slot {
-    fn new(kind: SourceKind, position: Vec3, generator: Generator) -> Self {
-        Self { kind, home: position, position, generator, sh: [0.0; CHANNELS], level: 0.0, rel: position }
+impl Path {
+    const fn new() -> Self {
+        Self { sh: [0.0; CHANNELS] }
+    }
+}
+
+/// Propagation of one emitter's block to the Ambisonic bus: `rel` is the emitter position in
+/// the head frame, `signal` its dry mono block, `gain` its kind gain.
+/// M0: direction + spherical spreading. Delay/Doppler, air absorption and ground effect
+/// (propagation.rs) replace this function and `Path`.
+fn propagate(path: &mut Path, rel: Vec3, gain: f32, signal: &[f32], bus: &mut [[f32; BLOCK]; CHANNELS]) {
+    let len = signal.len();
+    let dist = rel.length().max(0.3);
+    let dir = rel * (1.0 / dist);
+    let gain = gain / dist.max(0.7);
+
+    let mut target = [0.0f32; CHANNELS];
+    ambisonics::encode(dir, &mut target);
+    if signal.iter().all(|v| *v == 0.0) {
+        for ch in 0..CHANNELS {
+            path.sh[ch] = target[ch] * gain;
+        }
+        return;
+    }
+    let inv_len = 1.0 / len as f32;
+    for ch in 0..CHANNELS {
+        let a = path.sh[ch];
+        let b = target[ch] * gain;
+        let step = (b - a) * inv_len;
+        let mut g = a;
+        let out = &mut bus[ch];
+        for i in 0..len {
+            g += step;
+            out[i] += signal[i] * g;
+        }
+        path.sh[ch] = b;
     }
 }
 
 struct Dsp {
     sample_rate: f32,
-    slots: Vec<Slot>,
-    orbit_slot: usize,
+    world: World,
+    director: Director,
+    paths: Vec<Path>,
     decoder: BinauralDecoder,
     wind: WindField,
     rng: Rng,
@@ -148,7 +176,6 @@ struct Dsp {
     mono: [f32; BLOCK],
     fade: f32,
     volume: f32,
-    orbit_phase: f32,
     time: f64,
     load: f32,
     out_level: f32,
@@ -166,42 +193,20 @@ unsafe impl Send for Engine {}
 
 impl Engine {
     pub fn new(sample_rate: f32) -> Self {
-        let sr = if sample_rate.is_finite() && sample_rate >= 8000.0 { sample_rate } else { 48_000.0 };
-        let mut rng = Rng::new(0xA5A5_3000);
+        Self::with_scene(sample_rate, &SceneDesc::default_scene()).expect("built-in scene is valid")
+    }
 
-        let mut slots = Vec::new();
-        // River: a line ~4 m in front, below ear level, split into decorrelated segments.
-        for i in 0..5 {
-            let y = -8.0 + 4.0 * i as f32;
-            let x = 4.0 + 0.6 * (i as f32 * 1.7).sin();
-            slots.push(Slot::new(
-                SourceKind::Water,
-                Vec3::new(x, y, -1.2),
-                Generator::Water(BubbleStream::new(sr, rng.next_u64(), 350.0)),
-            ));
-        }
-        // Wind in the canopy all around.
-        for i in 0..6 {
-            let a = i as f32 * TAU / 6.0 + 0.3;
-            let z = 3.0 + 1.5 * (i % 2) as f32;
-            slots.push(Slot::new(
-                SourceKind::Wind,
-                Vec3::new(7.0 * a.cos(), 7.0 * a.sin(), z),
-                Generator::Wind(WindSource::new(sr, rng.next_u64(), 0.75 + 0.1 * i as f32)),
-            ));
-        }
-        // Two birds: one perched front-left (it can also orbit the listener), one front-right.
-        let orbit_slot = slots.len();
-        slots.push(Slot::new(
-            SourceKind::Bird,
-            Vec3::new(2.5, 3.0, 3.5),
-            Generator::Bird(Bird::new(sr, rng.next_u64(), 4200.0, 1.0)),
-        ));
-        slots.push(Slot::new(
-            SourceKind::Bird,
-            Vec3::new(5.0, -6.0, 5.0),
-            Generator::Bird(Bird::new(sr, rng.next_u64(), 3300.0, 0.85)),
-        ));
+    /// Engine running the scene in `json` (see docs/director.md).
+    pub fn from_json(sample_rate: f32, json: &str) -> Result<Self, String> {
+        Self::with_scene(sample_rate, &SceneDesc::from_json(json)?)
+    }
+
+    pub fn with_scene(sample_rate: f32, desc: &SceneDesc) -> Result<Self, String> {
+        let sr = if sample_rate.is_finite() && sample_rate >= 8000.0 { sample_rate } else { 48_000.0 };
+        let rng = Rng::new(0xA5A5_3000 ^ desc.seed);
+        let world = World::build(desc, sr)?;
+        let director = Director::new(desc, &world);
+        let paths = vec![Path::new(); world.emitters.len()];
 
         let shared = Shared {
             params: atomics(param::COUNT),
@@ -211,17 +216,21 @@ impl Engine {
             sources: atomics(MAX_SOURCES * SOURCE_FIELDS),
             source_count: AtomicUsize::new(0),
             wind_field: atomics(WIND_FIELD_POINTS),
+            objects: ObjectBridge::new(&world),
         };
+        let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
-        shared.params[param::WIND as usize].store(0.45);
-        shared.params[param::BIRDS as usize].store(0.6);
-        shared.params[param::WATER as usize].store(0.6);
+        shared.params[param::WIND as usize].store(env.wind.unwrap_or(0.45));
+        shared.params[param::BIRDS as usize].store(env.birds.unwrap_or(0.6));
+        shared.params[param::WATER as usize].store(env.water.unwrap_or(0.6));
+        shared.params[param::TIME_OF_DAY as usize].store(env.time_of_day.rem_euclid(24.0));
         shared.telemetry[telemetry::SAMPLE_RATE as usize].store(sr);
 
         let dsp = Dsp {
             sample_rate: sr,
-            slots,
-            orbit_slot,
+            world,
+            director,
+            paths,
             decoder: BinauralDecoder::new(sr),
             wind: WindField::new(sr),
             rng,
@@ -232,13 +241,12 @@ impl Engine {
             mono: [0.0; BLOCK],
             fade: 0.0,
             volume: 0.7,
-            orbit_phase: 0.0,
             time: 0.0,
             load: 0.0,
             out_level: 0.0,
         };
         dsp.publish(&shared);
-        Self { shared, dsp: UnsafeCell::new(dsp) }
+        Ok(Self { shared, dsp: UnsafeCell::new(dsp) })
     }
 
     pub fn set_param(&self, id: u32, value: f32) {
@@ -305,6 +313,16 @@ impl Engine {
         count
     }
 
+    /// Copies scene objects (trees, rivers, birds) into `out`, returns how many were written.
+    pub fn objects(&self, out: &mut [ObjectInfo]) -> usize {
+        self.shared.objects.read(out)
+    }
+
+    /// Moves a user-movable object (applied by the audio thread at the next block).
+    pub fn set_object_position(&self, id: u32, x: f32, y: f32, z: f32) {
+        self.shared.objects.request_move(id, Vec3::new(x, y, z));
+    }
+
     /// Log-frequency magnitude spectrum of the output (40 Hz .. 16 kHz), each band in 0..1.
     pub fn spectrum(&self, out: &mut [f32]) {
         if out.is_empty() {
@@ -365,6 +383,9 @@ impl Dsp {
 
         let playing = p(param::PLAYING) > 0.5;
         if !playing && self.fade < 1e-4 {
+            // Paused: the scene is frozen, but user moves still land.
+            shared.objects.apply_moves(&mut self.world);
+            self.world.update_emitters();
             self.fade = 0.0;
             out_l.fill(0.0);
             out_r.fill(0.0);
@@ -381,71 +402,34 @@ impl Dsp {
         let head = Mat3::from_head(p(param::HEAD_YAW), p(param::HEAD_PITCH), p(param::HEAD_ROLL));
 
         self.wind.step(wind, dt, &mut self.rng);
-        if orbit > 1e-3 {
-            self.orbit_phase = (self.orbit_phase + TAU * orbit * 0.3 * dt) % TAU;
-        }
+        // Scene: user moves in, director moves the animals, emitters follow their owners.
+        shared.objects.apply_moves(&mut self.world);
+        let env = Environment { hour: p(param::TIME_OF_DAY).rem_euclid(24.0), birds, rain: 0.0, orbit };
+        self.director.step(dt, &env, &mut self.world);
+        self.world.update_emitters();
 
         for ch in self.bus.iter_mut() {
             ch[..len].fill(0.0);
         }
         let inv_len = 1.0 / len as f32;
 
-        for (idx, slot) in self.slots.iter_mut().enumerate() {
-            if idx == self.orbit_slot {
-                slot.position = if orbit > 1e-3 {
-                    Vec3::new(3.0 * self.orbit_phase.cos(), 3.0 * self.orbit_phase.sin(), 1.8)
-                } else {
-                    slot.home
-                };
-            }
-
+        for (em, path) in self.world.emitters.iter_mut().zip(self.paths.iter_mut()) {
             let tmp = &mut self.scratch[..len];
-            let kind_gain = match &mut slot.generator {
-                Generator::Water(s) => {
-                    s.render(tmp, water);
-                    WATER_GAIN
-                }
-                Generator::Wind(w) => {
-                    w.render(tmp, self.wind.local(slot.position.y));
-                    WIND_GAIN
-                }
-                Generator::Bird(b) => {
-                    b.render(tmp, birds);
-                    BIRD_GAIN
-                }
+            let mut controls = em.controls;
+            controls.water = water * em.flow;
+            controls.gust = self.wind.local(em.position.y);
+            em.generator.render(tmp, &controls);
+            let kind_gain = match em.kind {
+                SourceKind::Water => WATER_GAIN,
+                SourceKind::Wind => WIND_GAIN,
+                SourceKind::Bird => BIRD_GAIN,
             };
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
-            slot.level = slot.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
+            em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
 
-            // Propagation (M0): direction + spherical spreading. M1 adds delay/Doppler,
-            // air absorption and ground effect here.
-            let rel = head.apply_transposed(slot.position);
-            let dist = rel.length().max(0.3);
-            let dir = rel * (1.0 / dist);
-            let gain = kind_gain / dist.max(0.7);
-            slot.rel = rel;
-
-            let mut target = [0.0f32; CHANNELS];
-            ambisonics::encode(dir, &mut target);
-            if energy == 0.0 {
-                for ch in 0..CHANNELS {
-                    slot.sh[ch] = target[ch] * gain;
-                }
-                continue;
-            }
-            for ch in 0..CHANNELS {
-                let a = slot.sh[ch];
-                let b = target[ch] * gain;
-                let step = (b - a) * inv_len;
-                let mut g = a;
-                let out = &mut self.bus[ch];
-                for i in 0..len {
-                    g += step;
-                    out[i] += tmp[i] * g;
-                }
-                slot.sh[ch] = b;
-            }
+            em.rel = head.apply_transposed(em.position);
+            propagate(path, em.rel, kind_gain, tmp, &mut self.bus);
         }
 
         self.decoder.process(&self.bus, len, &mut self.left[..len], &mut self.right[..len]);
@@ -471,12 +455,9 @@ impl Dsp {
     }
 
     fn publish(&self, shared: &Shared) {
-        let count = self.slots.len().min(MAX_SOURCES);
-        for (i, s) in self.slots.iter().take(count).enumerate() {
-            let freq = match &s.generator {
-                Generator::Bird(b) => b.freq(),
-                _ => 0.0,
-            };
+        let count = self.world.emitters.len().min(MAX_SOURCES);
+        for (i, s) in self.world.emitters.iter().take(count).enumerate() {
+            let freq = s.generator.pitch();
             let fields = [
                 s.kind as u32 as f32,
                 s.position.x,
@@ -499,14 +480,8 @@ impl Dsp {
             shared.wind_field[i].store(self.wind.local(y));
         }
 
-        let bubble_rate: f32 = self
-            .slots
-            .iter()
-            .map(|s| match &s.generator {
-                Generator::Water(w) => w.rate(),
-                _ => 0.0,
-            })
-            .sum();
+        let bubble_rate: f32 = self.world.emitters.iter().map(|s| s.generator.event_rate()).sum();
+        shared.objects.publish(&self.world);
         let t = &shared.telemetry;
         t[telemetry::GUST as usize].store(self.wind.gust());
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
@@ -539,10 +514,37 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 13);
+        assert_eq!(engine.sources(&mut src), 23);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
+    }
+
+    #[test]
+    fn objects_report_and_move() {
+        use crate::scene::{object_flags, ObjectKind};
+        let engine = Engine::new(48_000.0);
+        assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
+        let mut objs = [ObjectInfo::default(); 64];
+        let n = engine.objects(&mut objs);
+        assert_eq!(n, 19);
+        let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
+        assert_eq!(tree.kind, ObjectKind::Tree as u32);
+        assert_ne!(tree.flags & object_flags::MOVABLE, 0);
+        engine.set_object_position(2, 0.0, 10.0, -1.7);
+        let (mut l, mut r) = ([0.0f32; 256], [0.0f32; 256]);
+        engine.render(&mut l, &mut r);
+        engine.objects(&mut objs);
+        let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
+        assert_eq!((tree.x, tree.y, tree.z), (0.0, 10.0, -1.7));
+        // Birds cannot be dragged.
+        let bird = *objs[..n].iter().find(|o| o.kind == ObjectKind::Bird as u32).unwrap();
+        engine.set_object_position(bird.id, 0.0, 0.0, 0.0);
+        engine.render(&mut l, &mut r);
+        engine.objects(&mut objs);
+        let after = objs[..n].iter().find(|o| o.id == bird.id).unwrap();
+        assert!((after.x, after.y, after.z) != (0.0, 0.0, 0.0));
+        assert!(Engine::from_json(48_000.0, "{\"name\":1}").is_err());
     }
 
     #[test]

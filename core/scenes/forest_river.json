@@ -1,0 +1,33 @@
+{
+  "name": "Forest by the river",
+  "seed": 3000,
+  "environment": { "time_of_day": 9.0, "season": "summer", "rain": 0.0, "ground_z": -1.7 },
+  "director": { "flock_interval": [60, 150] },
+  "entities": [
+    { "kind": "river", "id": 50, "flow": 1.0, "segments": 5, "bubble_rate": 350,
+      "path": [[4.0, -10.0, -1.2], [4.5, -5.0, -1.2], [3.6, 0.0, -1.2], [4.4, 5.0, -1.2], [4.1, 10.0, -1.2]] },
+
+    { "kind": "tree", "id": 1, "species": "alder",  "position": [ 6.7,   2.1, -1.7], "canopy_height": 4.7 },
+    { "kind": "tree", "id": 2, "species": "birch",  "position": [ 1.5,   6.8, -1.7], "canopy_height": 6.2 },
+    { "kind": "tree", "id": 3, "species": "oak",    "position": [-5.2,   4.7, -1.7], "canopy_height": 4.7, "canopy_radius": 3.0 },
+    { "kind": "tree", "id": 4, "species": "spruce", "position": [-6.7,  -2.1, -1.7], "canopy_height": 6.2 },
+    { "kind": "tree", "id": 5, "species": "birch",  "position": [-1.5,  -6.8, -1.7], "canopy_height": 4.7 },
+    { "kind": "tree", "id": 6, "species": "willow", "position": [ 5.2,  -4.7, -1.7], "canopy_height": 6.2 },
+    { "kind": "tree", "id": 7, "species": "oak",    "position": [-14.0, 12.0, -1.7], "canopy_height": 7.0, "canopy_radius": 3.5 },
+    { "kind": "tree", "id": 8, "species": "spruce", "position": [ 14.0, -16.0, -1.7], "canopy_height": 8.0 },
+
+    { "kind": "bird", "id": 100, "species": "chaffinch",   "behaviour": { "type": "resident", "home": 2, "orbit": true } },
+    { "kind": "bird", "id": 101, "species": "robin",       "behaviour": { "type": "resident", "home": 6 } },
+    { "kind": "bird", "id": 102, "species": "song_thrush", "behaviour": { "type": "resident", "home": 4 } },
+    { "kind": "bird", "id": 103, "species": "wood_pigeon", "behaviour": { "type": "resident", "home": 7, "roam": 0.6 } },
+    { "kind": "bird", "id": 104, "species": "nightingale", "behaviour": { "type": "resident", "home": 3, "roam": 0.5 } },
+    { "kind": "bird", "id": 105, "species": "tawny_owl",   "behaviour": { "type": "resident", "home": 8, "roam": 0.5 } },
+    { "kind": "bird", "id": 106, "species": "chaffinch",   "behaviour": { "type": "resident", "home": 2 } },
+    { "kind": "bird", "id": 107, "species": "cuckoo",
+      "behaviour": { "type": "approach", "first": 40, "interval": [90, 200], "far": 40, "near": 6, "hops": 3 } },
+    { "kind": "bird", "id": 108, "species": "swallow",
+      "behaviour": { "type": "flyby", "first": 20, "interval": [30, 80], "min_distance": 2.5, "height": 1.5 } },
+    { "kind": "bird", "id": 109, "species": "swallow",
+      "behaviour": { "type": "circle", "center": [4.0, 0.0, -1.7], "radius": 6, "height": 3.0, "first": 60, "interval": [60, 150] } }
+  ]
+}

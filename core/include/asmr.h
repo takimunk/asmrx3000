@@ -21,6 +21,7 @@ enum {
     ASMR_PARAM_HEAD_YAW = 6,   /* + = turned left */
     ASMR_PARAM_HEAD_PITCH = 7, /* + = looking up */
     ASMR_PARAM_HEAD_ROLL = 8,  /* + = right ear down */
+    ASMR_PARAM_TIME_OF_DAY = 9, /* local time, hours 0..24; picks active species (dawn chorus, owls at night) */
 };
 
 /* Telemetry (asmr_get_telemetry). */
@@ -48,7 +49,30 @@ typedef struct AsmrSourceInfo {
     float freq;                      /* dominant pitch if known (birds), else 0 */
 } AsmrSourceInfo;
 
+/* Scene objects (asmr_get_objects). */
+enum {
+    ASMR_OBJECT_TREE = 0,
+    ASMR_OBJECT_RIVER = 1,
+    ASMR_OBJECT_BIRD = 2,
+};
+
+enum {
+    ASMR_OBJECT_FLAG_MOVABLE = 1u << 0, /* the user may drag it with asmr_set_object_position */
+    ASMR_OBJECT_FLAG_MOVING = 1u << 1,  /* currently moving on its own (flying) */
+    ASMR_OBJECT_FLAG_ABSENT = 1u << 2,  /* off stage: silent, do not draw */
+};
+
+/* Position: trees = trunk base, rivers = polyline centroid, birds = the bird. Same frame as above. */
+typedef struct AsmrObjectInfo {
+    uint32_t id;    /* stable for the lifetime of the scene */
+    uint32_t kind;  /* ASMR_OBJECT_* */
+    float x, y, z;
+    uint32_t flags; /* ASMR_OBJECT_FLAG_* */
+} AsmrObjectInfo;
+
 AsmrEngine *asmr_engine_new(float sample_rate);
+/* Engine running a JSON scene description (docs/director.md). NULL if it does not validate. */
+AsmrEngine *asmr_engine_new_with_scene(float sample_rate, const char *scene_json);
 void asmr_engine_free(AsmrEngine *engine);
 
 /* Audio thread only. Non-interleaved stereo. */
@@ -61,6 +85,10 @@ float asmr_get_telemetry(const AsmrEngine *engine, uint32_t which);
 uint32_t asmr_get_sources(const AsmrEngine *engine, AsmrSourceInfo *out, uint32_t max);
 void asmr_get_spectrum(const AsmrEngine *engine, float *out, uint32_t bands); /* 40 Hz..16 kHz, log bands, 0..1 */
 void asmr_get_wind_field(const AsmrEngine *engine, float *out, uint32_t points); /* left -> right */
+uint32_t asmr_get_objects(const AsmrEngine *engine, AsmrObjectInfo *out, uint32_t max);
+/* Moves a MOVABLE object (a tree carries its canopy and perched birds; a river translates its
+   polyline). Lock-free; applied by the audio thread on the next asmr_render. Ignored otherwise. */
+void asmr_set_object_position(const AsmrEngine *engine, uint32_t id, float x, float y, float z);
 
 #ifdef __cplusplus
 }

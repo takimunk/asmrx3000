@@ -1,0 +1,713 @@
+//! Scene graph: what exists in the world and which sound emitters each object owns.
+//!
+//! Two layers:
+//! * [`SceneDesc`] — the declarative, serialisable description (JSON). This is what a future
+//!   LLM prompt produces; it is validated by [`World::build`].
+//! * [`World`] — the runtime graph built from it: entities with stable `u32` ids, a
+//!   transform/geometry each, and the emitters they own (a tree owns its canopy wind, a river
+//!   its segment streams, a bird its voice + wings). Emitter positions are derived from their
+//!   owner every block, so moving a tree moves its rustle, moving a river translates its
+//!   polyline.
+//!
+//! Coordinates are the engine's: listener's head at the origin, +x forward, +y left, +z up,
+//! metres. The ground is at `environment.ground_z` (default -1.7, i.e. ear height 1.7 m).
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use serde::{Deserialize, Serialize};
+
+use crate::director::Species;
+use crate::engine::{AtomicF32, SourceKind, MAX_SOURCES};
+use crate::math::Vec3;
+use crate::rng::Rng;
+use crate::sources::{Bird, BubbleStream, Controls, Flyer, Generator, WindSource, Wings};
+
+/// The default scene: forest by a river.
+pub const DEFAULT_SCENE_JSON: &str = include_str!("../scenes/forest_river.json");
+/// Spatial-audio demonstration: fly-bys, a flock changing trees, an approach/recede, circling.
+pub const DEMO_SCENE_JSON: &str = include_str!("../scenes/demo_flyby.json");
+
+pub const MAX_OBJECTS: usize = 64;
+
+// ---------------------------------------------------------------------------------------
+// Description (data)
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneDesc {
+    pub name: String,
+    /// Seed for every stochastic choice (voices, timings, paths). Same seed, same scene.
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default)]
+    pub environment: EnvironmentDesc,
+    #[serde(default)]
+    pub director: DirectorDesc,
+    pub entities: Vec<EntityDesc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct EnvironmentDesc {
+    /// Local time, hours 0..24. Drives which species sing and fly.
+    pub time_of_day: f32,
+    pub season: Season,
+    /// Rain 0..1 (placeholder: birds sing and fly less; no rain sound yet).
+    pub rain: f32,
+    /// Initial slider values (0..1); omitted = engine defaults.
+    pub wind: Option<f32>,
+    pub birds: Option<f32>,
+    pub water: Option<f32>,
+    /// Ground height relative to the listener's ears.
+    pub ground_z: f32,
+}
+
+impl Default for EnvironmentDesc {
+    fn default() -> Self {
+        Self { time_of_day: 9.0, season: Season::Summer, rain: 0.0, wind: None, birds: None, water: None, ground_z: -1.7 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Season {
+    Spring,
+    #[default]
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// Scene-wide director policy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DirectorDesc {
+    /// Seconds between flock events (several birds leave one tree for another together).
+    pub flock_interval: [f32; 2],
+    /// Time of the first flock event; omitted = drawn from `flock_interval`.
+    pub first_flock: Option<f32>,
+}
+
+impl Default for DirectorDesc {
+    fn default() -> Self {
+        Self { flock_interval: [60.0, 150.0], first_flock: None }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EntityDesc {
+    Tree(TreeDesc),
+    River(RiverDesc),
+    Bird(BirdDesc),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TreeDesc {
+    /// Stable id; omitted = assigned (1000 + index).
+    #[serde(default)]
+    pub id: Option<u32>,
+    /// Trunk base, normally on the ground.
+    pub position: [f32; 3],
+    #[serde(default)]
+    pub species: TreeSpecies,
+    /// Height of the canopy centre above the base, metres.
+    #[serde(default = "default_canopy_height")]
+    pub canopy_height: f32,
+    /// Horizontal radius of the canopy; birds perch within it.
+    #[serde(default = "default_canopy_radius")]
+    pub canopy_radius: f32,
+}
+
+fn default_canopy_height() -> f32 {
+    5.0
+}
+fn default_canopy_radius() -> f32 {
+    2.0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TreeSpecies {
+    #[default]
+    Birch,
+    Oak,
+    Spruce,
+    Willow,
+    Alder,
+}
+
+impl TreeSpecies {
+    /// Leaf-rustle spectral tilt (see `WindSource::new`).
+    fn timbre(self) -> f32 {
+        match self {
+            TreeSpecies::Birch => 1.1,
+            TreeSpecies::Oak => 0.85,
+            TreeSpecies::Spruce => 0.7,
+            TreeSpecies::Willow => 1.25,
+            TreeSpecies::Alder => 0.95,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiverDesc {
+    #[serde(default)]
+    pub id: Option<u32>,
+    /// Centre line, at least two points.
+    pub path: Vec<[f32; 3]>,
+    /// Flow scale relative to the WATER slider.
+    #[serde(default = "one")]
+    pub flow: f32,
+    /// Number of decorrelated emitters along the path.
+    #[serde(default = "default_segments")]
+    pub segments: u32,
+    /// Bubbles per second per segment at full flow.
+    #[serde(default = "default_bubble_rate")]
+    pub bubble_rate: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+fn default_segments() -> u32 {
+    5
+}
+fn default_bubble_rate() -> f32 {
+    350.0
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BirdDesc {
+    #[serde(default)]
+    pub id: Option<u32>,
+    pub species: Species,
+    pub behaviour: BehaviourDesc,
+    /// Voice pitch override, Hz (default: species typical, jittered per individual).
+    #[serde(default)]
+    pub pitch: Option<f32>,
+    #[serde(default = "one")]
+    pub tempo: f32,
+    /// Linear gain on voice and wings (1 = species default).
+    #[serde(default = "one")]
+    pub loudness: f32,
+}
+
+/// How a bird behaves over time. See docs/director.md for the state machines.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BehaviourDesc {
+    /// Lives in the trees: perched -> sings -> takes off -> flies a curved path -> lands on
+    /// another tree. Joins flock events.
+    Resident {
+        /// Tree id it starts on.
+        home: u32,
+        /// Scales how often it changes trees (1 = species default).
+        #[serde(default = "one")]
+        roam: f32,
+        /// Follows the ORBIT slider: circles the listener while ORBIT > 0.
+        #[serde(default)]
+        orbit: bool,
+    },
+    /// Off stage most of the time; now and then flies straight past the listener, calling.
+    Flyby {
+        #[serde(default = "default_first")]
+        first: f32,
+        #[serde(default = "default_flyby_interval")]
+        interval: [f32; 2],
+        /// m/s; omitted = species range.
+        #[serde(default)]
+        speed: Option<f32>,
+        /// Closest approach to the listener's head, metres.
+        #[serde(default = "default_min_distance")]
+        min_distance: f32,
+        /// Height of the pass relative to the ears, metres.
+        #[serde(default = "one")]
+        height: f32,
+        /// Half-length of the pass, metres (starts and ends this far from the closest point).
+        #[serde(default = "default_reach")]
+        reach: f32,
+    },
+    /// Flies in, circles a point (default: the listener's head) for a few laps, leaves.
+    Circle {
+        #[serde(default)]
+        center: [f32; 3],
+        #[serde(default = "default_radius")]
+        radius: f32,
+        #[serde(default = "one")]
+        height: f32,
+        #[serde(default)]
+        speed: Option<f32>,
+        #[serde(default = "default_laps")]
+        laps: [f32; 2],
+        #[serde(default = "default_first")]
+        first: f32,
+        #[serde(default = "default_circle_interval")]
+        interval: [f32; 2],
+        /// Tree to rest on between rounds; omitted = leaves the stage.
+        #[serde(default)]
+        home: Option<u32>,
+    },
+    /// Appears far away, comes closer in hops (singing at each stop), lingers near the
+    /// listener, then recedes in another direction and leaves.
+    Approach {
+        #[serde(default = "default_first")]
+        first: f32,
+        #[serde(default = "default_approach_interval")]
+        interval: [f32; 2],
+        #[serde(default = "default_far")]
+        far: f32,
+        #[serde(default = "default_near")]
+        near: f32,
+        #[serde(default = "default_hops")]
+        hops: u32,
+        /// Seconds singing at each stop.
+        #[serde(default = "default_linger")]
+        linger: [f32; 2],
+        #[serde(default)]
+        speed: Option<f32>,
+    },
+}
+
+fn default_first() -> f32 {
+    10.0
+}
+fn default_flyby_interval() -> [f32; 2] {
+    [30.0, 90.0]
+}
+fn default_min_distance() -> f32 {
+    2.0
+}
+fn default_reach() -> f32 {
+    40.0
+}
+fn default_radius() -> f32 {
+    4.0
+}
+fn default_laps() -> [f32; 2] {
+    [1.5, 3.0]
+}
+fn default_circle_interval() -> [f32; 2] {
+    [40.0, 120.0]
+}
+fn default_approach_interval() -> [f32; 2] {
+    [60.0, 180.0]
+}
+fn default_far() -> f32 {
+    35.0
+}
+fn default_near() -> f32 {
+    3.0
+}
+fn default_hops() -> u32 {
+    3
+}
+fn default_linger() -> [f32; 2] {
+    [3.0, 6.0]
+}
+
+impl SceneDesc {
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| format!("scene: {e}"))
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    pub fn default_scene() -> Self {
+        Self::from_json(DEFAULT_SCENE_JSON).expect("built-in scene is valid")
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Runtime graph
+// ---------------------------------------------------------------------------------------
+
+/// Mirrors the `ASMR_OBJECT_*` constants in asmr.h.
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ObjectKind {
+    Tree = 0,
+    River = 1,
+    Bird = 2,
+}
+
+pub mod object_flags {
+    /// The user may drag it (`asmr_set_object_position`).
+    pub const MOVABLE: u32 = 1 << 0;
+    /// Currently moving on its own (flying).
+    pub const MOVING: u32 = 1 << 1;
+    /// Off stage: exists in the scene but is not audible / should not be drawn.
+    pub const ABSENT: u32 = 1 << 2;
+}
+
+/// Mirrors `AsmrObjectInfo` in asmr.h.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ObjectInfo {
+    pub id: u32,
+    pub kind: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub flags: u32,
+}
+
+#[derive(Clone, Debug)]
+pub enum Geometry {
+    Point,
+    Tree { canopy_height: f32, canopy_radius: f32 },
+    /// Polyline relative to the entity position (its centroid at load time).
+    River { path: Vec<Vec3>, flow: f32 },
+}
+
+pub struct Entity {
+    pub id: u32,
+    pub kind: ObjectKind,
+    pub position: Vec3,
+    pub geometry: Geometry,
+    pub flags: u32,
+    /// Indices into `World::emitters`.
+    pub emitters: core::ops::Range<usize>,
+}
+
+impl Entity {
+    /// Centre of the canopy for trees, the position otherwise.
+    pub fn canopy(&self) -> Vec3 {
+        match self.geometry {
+            Geometry::Tree { canopy_height, .. } => self.position + Vec3::new(0.0, 0.0, canopy_height),
+            _ => self.position,
+        }
+    }
+}
+
+pub struct Emitter {
+    pub owner: usize,
+    pub kind: SourceKind,
+    /// Position relative to the owner.
+    pub offset: Vec3,
+    /// World position, refreshed by `World::update_emitters`.
+    pub position: Vec3,
+    pub generator: Box<dyn Generator>,
+    /// Behavioural controls written by the director (activity, calling, flap).
+    pub controls: Controls,
+    /// Scale of the WATER drive for river emitters.
+    pub flow: f32,
+    /// Telemetry: recent RMS and head-relative position.
+    pub level: f32,
+    pub rel: Vec3,
+}
+
+pub struct World {
+    pub entities: Vec<Entity>,
+    pub emitters: Vec<Emitter>,
+    pub ground_z: f32,
+}
+
+fn v3(a: [f32; 3]) -> Vec3 {
+    Vec3::new(a[0], a[1], a[2])
+}
+
+fn finite(a: &[f32]) -> bool {
+    a.iter().all(|v| v.is_finite())
+}
+
+impl World {
+    /// Validates `desc` and instantiates every entity and its emitters. Not real-time safe
+    /// (allocates); call off the audio thread.
+    pub fn build(desc: &SceneDesc, sample_rate: f32) -> Result<World, String> {
+        let mut rng = Rng::new(desc.seed ^ 0xA5A5_3000);
+        let mut entities = Vec::new();
+        let mut emitters: Vec<Emitter> = Vec::new();
+        let mut ids = Vec::new();
+
+        let id_for = |explicit: Option<u32>, index: usize| explicit.unwrap_or(1000 + index as u32);
+        for (i, e) in desc.entities.iter().enumerate() {
+            let id = match e {
+                EntityDesc::Tree(t) => id_for(t.id, i),
+                EntityDesc::River(r) => id_for(r.id, i),
+                EntityDesc::Bird(b) => id_for(b.id, i),
+            };
+            if ids.contains(&id) {
+                return Err(format!("entity {i}: duplicate id {id}"));
+            }
+            ids.push(id);
+        }
+
+        for (i, e) in desc.entities.iter().enumerate() {
+            let id = ids[i];
+            let first = emitters.len();
+            let push = |emitters: &mut Vec<Emitter>, kind, offset, generator, flow| {
+                emitters.push(Emitter {
+                    owner: i,
+                    kind,
+                    offset,
+                    position: Vec3::default(),
+                    generator,
+                    controls: Controls::default(),
+                    flow,
+                    level: 0.0,
+                    rel: Vec3::default(),
+                });
+            };
+            let entity = match e {
+                EntityDesc::Tree(t) => {
+                    if !finite(&t.position) || !finite(&[t.canopy_height, t.canopy_radius]) {
+                        return Err(format!("tree {id}: non-finite geometry"));
+                    }
+                    let timbre = t.species.timbre() * rng.range(0.92, 1.08);
+                    let gen = Box::new(WindSource::new(sample_rate, rng.next_u64(), timbre));
+                    push(&mut emitters, SourceKind::Wind, Vec3::new(0.0, 0.0, t.canopy_height), gen, 1.0);
+                    Entity {
+                        id,
+                        kind: ObjectKind::Tree,
+                        position: v3(t.position),
+                        geometry: Geometry::Tree { canopy_height: t.canopy_height, canopy_radius: t.canopy_radius.max(0.2) },
+                        flags: object_flags::MOVABLE,
+                        emitters: 0..0,
+                    }
+                }
+                EntityDesc::River(r) => {
+                    if r.path.len() < 2 || !r.path.iter().all(|p| finite(p)) {
+                        return Err(format!("river {id}: path needs at least two finite points"));
+                    }
+                    if r.segments == 0 || r.segments > 16 {
+                        return Err(format!("river {id}: segments must be 1..16"));
+                    }
+                    let pts: Vec<Vec3> = r.path.iter().map(|p| v3(*p)).collect();
+                    let centroid = pts.iter().fold(Vec3::default(), |a, p| a + *p) * (1.0 / pts.len() as f32);
+                    let rel: Vec<Vec3> = pts.iter().map(|p| *p - centroid).collect();
+                    for k in 0..r.segments {
+                        let at = sample_polyline(&rel, (k as f32 + 0.5) / r.segments as f32);
+                        let gen = Box::new(BubbleStream::new(sample_rate, rng.next_u64(), r.bubble_rate));
+                        push(&mut emitters, SourceKind::Water, at, gen, r.flow.clamp(0.0, 2.0));
+                    }
+                    Entity {
+                        id,
+                        kind: ObjectKind::River,
+                        position: centroid,
+                        geometry: Geometry::River { path: rel, flow: r.flow },
+                        flags: object_flags::MOVABLE,
+                        emitters: 0..0,
+                    }
+                }
+                EntityDesc::Bird(b) => {
+                    let def = b.species.def();
+                    let pitch = b.pitch.unwrap_or_else(|| Bird::default_pitch(def.voice) * rng.range(0.93, 1.07));
+                    let voice = Box::new(Bird::new(sample_rate, rng.next_u64(), def.voice, pitch, b.tempo.clamp(0.3, 3.0)));
+                    let wings = Wings::new(sample_rate, rng.next_u64(), def.wings);
+                    push(&mut emitters, SourceKind::Bird, Vec3::default(), Box::new(Flyer::new(voice, wings, b.loudness.clamp(0.0, 8.0))), 1.0);
+                    Entity {
+                        id,
+                        kind: ObjectKind::Bird,
+                        position: Vec3::new(0.0, 0.0, 30.0),
+                        geometry: Geometry::Point,
+                        flags: 0,
+                        emitters: 0..0,
+                    }
+                }
+            };
+            entities.push(Entity { emitters: first..emitters.len(), ..entity });
+        }
+
+        // Cross references.
+        for e in &desc.entities {
+            if let EntityDesc::Bird(b) = e {
+                let home = match b.behaviour {
+                    BehaviourDesc::Resident { home, .. } => Some(home),
+                    BehaviourDesc::Circle { home, .. } => home,
+                    _ => None,
+                };
+                if let Some(h) = home {
+                    let ok = entities.iter().any(|t| t.id == h && t.kind == ObjectKind::Tree);
+                    if !ok {
+                        return Err(format!("bird {:?}: home {h} is not a tree", b.id));
+                    }
+                }
+            }
+        }
+        if entities.len() > MAX_OBJECTS {
+            return Err(format!("too many objects ({} > {MAX_OBJECTS})", entities.len()));
+        }
+        if emitters.len() > MAX_SOURCES {
+            return Err(format!("too many emitters ({} > {MAX_SOURCES})", emitters.len()));
+        }
+
+        let mut world = World { entities, emitters, ground_z: desc.environment.ground_z };
+        world.update_emitters();
+        Ok(world)
+    }
+
+    pub fn index_of(&self, id: u32) -> Option<usize> {
+        self.entities.iter().position(|e| e.id == id)
+    }
+
+    /// User move. Ignored for objects that are not movable.
+    pub fn set_position(&mut self, index: usize, p: Vec3) {
+        if let Some(e) = self.entities.get_mut(index) {
+            if e.flags & object_flags::MOVABLE != 0 && finite(&[p.x, p.y, p.z]) {
+                e.position = p;
+            }
+        }
+    }
+
+    /// Derives emitter world positions from their owners. Real-time safe.
+    pub fn update_emitters(&mut self) {
+        for em in self.emitters.iter_mut() {
+            em.position = self.entities[em.owner].position + em.offset;
+        }
+    }
+
+    pub fn object_info(&self, index: usize) -> ObjectInfo {
+        let e = &self.entities[index];
+        ObjectInfo { id: e.id, kind: e.kind as u32, x: e.position.x, y: e.position.y, z: e.position.z, flags: e.flags }
+    }
+}
+
+/// Point at fraction `u` (0..1) of the polyline's arc length.
+fn sample_polyline(pts: &[Vec3], u: f32) -> Vec3 {
+    let total: f32 = pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let mut want = u.clamp(0.0, 1.0) * total;
+    for w in pts.windows(2) {
+        let l = (w[1] - w[0]).length();
+        if want <= l && l > 0.0 {
+            return w[0] + (w[1] - w[0]) * (want / l);
+        }
+        want -= l;
+    }
+    *pts.last().unwrap()
+}
+
+// ---------------------------------------------------------------------------------------
+// Thread bridge: object telemetry out, user moves in. Lock-free, fixed size.
+// ---------------------------------------------------------------------------------------
+
+pub struct ObjectBridge {
+    ids: Box<[u32]>,
+    kinds: Box<[u32]>,
+    pos: Box<[AtomicF32]>,
+    flags: Box<[AtomicU32]>,
+    moves: Box<[AtomicF32]>,
+    /// Per object: 1 while a user move waits to be applied by the audio thread.
+    pending: Box<[AtomicU32]>,
+}
+
+impl ObjectBridge {
+    pub fn new(world: &World) -> Self {
+        let n = world.entities.len();
+        let f = |k: usize| (0..k).map(|_| AtomicF32::new(0.0)).collect::<Box<[_]>>();
+        let u = |k: usize| (0..k).map(|_| AtomicU32::new(0)).collect::<Box<[_]>>();
+        let bridge = Self {
+            ids: world.entities.iter().map(|e| e.id).collect(),
+            kinds: world.entities.iter().map(|e| e.kind as u32).collect(),
+            pos: f(n * 3),
+            flags: u(n),
+            moves: f(n * 3),
+            pending: u(n),
+        };
+        bridge.publish(world);
+        bridge
+    }
+
+    /// Any thread.
+    pub fn request_move(&self, id: u32, p: Vec3) {
+        if !finite(&[p.x, p.y, p.z]) {
+            return;
+        }
+        if let Some(i) = self.ids.iter().position(|&x| x == id) {
+            self.moves[i * 3].store(p.x);
+            self.moves[i * 3 + 1].store(p.y);
+            self.moves[i * 3 + 2].store(p.z);
+            self.pending[i].store(1, Ordering::Release);
+        }
+    }
+
+    /// Audio thread.
+    pub fn apply_moves(&self, world: &mut World) {
+        for (i, flag) in self.pending.iter().enumerate() {
+            if flag.load(Ordering::Relaxed) != 0 && flag.swap(0, Ordering::Acquire) != 0 {
+                let p = Vec3::new(self.moves[i * 3].load(), self.moves[i * 3 + 1].load(), self.moves[i * 3 + 2].load());
+                world.set_position(i, p);
+            }
+        }
+    }
+
+    /// Audio thread.
+    pub fn publish(&self, world: &World) {
+        for (i, e) in world.entities.iter().enumerate() {
+            self.pos[i * 3].store(e.position.x);
+            self.pos[i * 3 + 1].store(e.position.y);
+            self.pos[i * 3 + 2].store(e.position.z);
+            self.flags[i].store(e.flags, Ordering::Release);
+        }
+    }
+
+    /// Any thread.
+    pub fn read(&self, out: &mut [ObjectInfo]) -> usize {
+        let n = self.ids.len().min(out.len());
+        for (i, o) in out.iter_mut().take(n).enumerate() {
+            *o = ObjectInfo {
+                id: self.ids[i],
+                kind: self.kinds[i],
+                flags: self.flags[i].load(Ordering::Acquire),
+                x: self.pos[i * 3].load(),
+                y: self.pos[i * 3 + 1].load(),
+                z: self.pos[i * 3 + 2].load(),
+            };
+        }
+        n
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_scenes_build() {
+        for json in [DEFAULT_SCENE_JSON, DEMO_SCENE_JSON] {
+            let desc = SceneDesc::from_json(json).unwrap();
+            let world = World::build(&desc, 48_000.0).unwrap();
+            assert!(world.entities.iter().any(|e| e.kind == ObjectKind::Tree));
+            assert!(world.entities.iter().any(|e| e.kind == ObjectKind::Bird));
+            // Round trip through JSON keeps the scene.
+            let again = SceneDesc::from_json(&desc.to_json()).unwrap();
+            assert_eq!(again.entities.len(), desc.entities.len());
+        }
+    }
+
+    #[test]
+    fn validation_rejects_bad_scenes() {
+        let bad = [
+            r#"{"name":"x","entities":[{"kind":"tree","id":1,"position":[0,0,0]},{"kind":"tree","id":1,"position":[1,0,0]}]}"#,
+            r#"{"name":"x","entities":[{"kind":"river","path":[[0,0,0]]}]}"#,
+            r#"{"name":"x","entities":[{"kind":"bird","species":"robin","behaviour":{"type":"resident","home":7}}]}"#,
+            r#"{"name":"x","entities":[{"kind":"tree","position":[0,0,0],"colour":"green"}]}"#,
+            r#"{"name":"x","entities":[{"kind":"bird","species":"dodo","behaviour":{"type":"flyby"}}]}"#,
+        ];
+        for json in bad {
+            let r = SceneDesc::from_json(json).and_then(|d| World::build(&d, 48_000.0).map(|_| ()));
+            assert!(r.is_err(), "accepted: {json}");
+        }
+    }
+
+    #[test]
+    fn moving_a_river_translates_its_segments() {
+        let desc = SceneDesc::default_scene();
+        let mut world = World::build(&desc, 48_000.0).unwrap();
+        let river = world.entities.iter().position(|e| e.kind == ObjectKind::River).unwrap();
+        let before: Vec<Vec3> = world.entities[river].emitters.clone().map(|i| world.emitters[i].position).collect();
+        let p = world.entities[river].position + Vec3::new(2.0, -1.0, 0.0);
+        world.set_position(river, p);
+        world.update_emitters();
+        for (k, i) in world.entities[river].emitters.clone().enumerate() {
+            let d = world.emitters[i].position - before[k];
+            assert!((d - Vec3::new(2.0, -1.0, 0.0)).length() < 1e-4);
+        }
+    }
+}
