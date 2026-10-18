@@ -28,6 +28,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ASMR X3000 слушает микрофон, только пока вы держите или нажали кнопку микрофона в строке запроса: ваши слова превращаются в текст (fal.ai Whisper) и меняют звуковую сцену.</string>
     <key>NSMotionUsageDescription</key>
     <string>ASMR X3000 uses your AirPods' head tracking to keep the soundscape fixed in space as you turn your head.</string>
 </dict>
