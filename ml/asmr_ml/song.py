@@ -35,7 +35,7 @@ def resample(x: np.ndarray, n: int = P) -> np.ndarray:
 def syllables(key: str, val_every: int = 6):
     """Per recording: list of songs, each a list of syllable dicts."""
     recs = []
-    for i, p in enumerate(sorted((prep.CLEAN / key).glob("*.npz"))):
+    for i, p in enumerate(prep.prepared_files(prep.CLEAN / key)):
         d = np.load(p)
         songs: dict[int, list] = {}
         for (a, b), s in zip(d["syl"], d["song"]):

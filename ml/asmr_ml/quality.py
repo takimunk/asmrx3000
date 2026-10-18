@@ -27,7 +27,7 @@ OUT = ML / "out" / "quality"
 
 
 def val_files(key: str, val_every: int = 6) -> list[Path]:
-    files = sorted((prep.CLEAN / key).glob("*.npz"))
+    files = prep.prepared_files(prep.CLEAN / key)
     return [p for i, p in enumerate(files) if i % val_every == val_every - 1]
 
 

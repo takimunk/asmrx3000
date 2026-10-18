@@ -62,6 +62,11 @@ cargo test --manifest-path ../core/Cargo.toml
 uv run python -m asmr_ml.quality chaffinch   # out/quality/chaffinch/{real,resynth,generated,other} + perch.json
 ```
 
+Обучение, экспорт и оценка читают только файлы, принятые в `data/clean/<вид>/prep.json`.
+Повторный `prep` сначала готовит новую версию во временной папке, затем атомарно заменяет
+манифест и удаляет устаревшие `.npz`. Прерванная до замены манифеста подготовка сохраняет
+предыдущий набор. Для старой папки без `prep.json` нужно повторить `prep`.
+
 Первая итерация (отдельная модель на вид, банк образцов) осталась в `train_voice.py`, `song.py`,
 `export.py`, `listen.py` — для сравнения; движок использует только базу + адаптеры.
 

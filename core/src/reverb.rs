@@ -171,7 +171,7 @@ impl ForestReverb {
             // 2nd-order Butterworth high-pass at ka = 1.
             let fc = (c / (2.0 * PI * radius as f64)).min(0.4 * fs);
             let k = (PI * fc / fs).tan();
-            let q = 0.7071;
+            let q = core::f64::consts::FRAC_1_SQRT_2;
             let norm = 1.0 / (1.0 + k / q + k * k);
             self.trunk_hp_c[j] = [
                 norm as f32,

@@ -27,7 +27,7 @@ use crate::propagation::Propagator;
 use crate::reverb::{self, ForestGeometry, ForestReverb, Sends, ER_TRUNKS};
 use crate::rng::Rng;
 use crate::rotation::ShRotator;
-use crate::shaping::{Design, FilterBank, NF};
+use crate::shaping::{Coeffs, Design, FilterBank, NF};
 
 /// Trunks closer than this to the listener are explicit diffracting obstacles; beyond it the
 /// forest acts statistically (excess attenuation), so nothing is counted twice.
@@ -225,6 +225,7 @@ pub struct Acoustics {
     analytic: BinauralDecoder,
     active: HrtfModel,
     env: Option<Environment>,
+    environment_elapsed: f32,
     trees: Vec<Trunk>,
     procedural: bool,
     fixed_obstacles: Vec<Obstacle>,
@@ -232,6 +233,7 @@ pub struct Acoustics {
     sigma_tr: [f64; NF],
     floor_alpha: [[f64; NF]; GROUND_TYPES],
     foliage_iso: [f64; NF],
+    reverb_shape: Coeffs,
     block: u64,
     stereo: [[f32; BLOCK]; 2],
 }
@@ -320,6 +322,10 @@ impl Acoustics {
         let reverb = ForestReverb::new(sample_rate, &ctx.design);
         let props = (0..emitters).map(|_| Propagator::new(&ctx)).collect();
         let bank = FilterBank::new(&ctx.design, 2 * emitters);
+        // This spectral shape depends only on the fixed trunk model and fitting grid.
+        let i1k = freqs.iter().position(|f| *f >= 1000.0).unwrap_or(NF / 2);
+        let shape = std::array::from_fn(|i| 0.5 * (sigma_tr[i] / sigma_tr[i1k]).max(1e-6).ln());
+        let reverb_shape = ctx.design.fit_min_phase(&shape, None);
         let mut a = Self {
             ctx,
             sends: Sends::new(),
@@ -334,6 +340,7 @@ impl Acoustics {
             analytic,
             active: HrtfModel::Measured,
             env: None,
+            environment_elapsed: 0.0,
             trees: Vec::with_capacity(MAX_TREES),
             procedural: true,
             fixed_obstacles: Vec::with_capacity(MAX_OBSTACLES),
@@ -341,6 +348,7 @@ impl Acoustics {
             sigma_tr,
             floor_alpha,
             foliage_iso,
+            reverb_shape,
             block: 0,
             stereo: [[0.0; BLOCK]; 2],
         };
@@ -381,9 +389,7 @@ impl Acoustics {
         if let Some(t) = trees {
             self.trees.extend_from_slice(&t[..t.len().min(MAX_TREES)]);
         }
-        self.env = None; // force a rebuild
-        let env = Environment::default();
-        self.set_environment(&env);
+        self.rebuild_geometry();
     }
 
     /// Real-time safe update for a streaming world (flight mode): replaces the explicit trunks
@@ -452,13 +458,7 @@ impl Acoustics {
             env.foliage as f64,
             c,
         );
-        let i1k = ctx.design.freqs.iter().position(|f| *f >= 1000.0).unwrap_or(NF / 2);
-        let mut shape = [0.0f64; NF];
-        for i in 0..NF {
-            shape[i] = 0.5 * (self.sigma_tr[i] / self.sigma_tr[i1k]).max(1e-6).ln();
-        }
-        let shape = ctx.design.fit_min_phase(&shape, None);
-        self.reverb.configure_tail(tp, shape, env.reverb);
+        self.reverb.configure_tail(tp, self.reverb_shape, env.reverb);
         ctx.reverb_send = if n > 0.0 { 1.0 } else { 0.0 };
         ctx.tail_extent = tp.extent as f32;
 
@@ -467,6 +467,24 @@ impl Acoustics {
             self.rebuild_geometry();
         }
         self.ctx.epoch = self.ctx.epoch.wrapping_add(1);
+    }
+
+    /// Continuous weather controls only need spectral redesign at 50 Hz. Path coefficients
+    /// interpolate at audio rate; discrete renderer/ground and geometry edits land immediately.
+    /// Streaming flight geometry continues to use `set_environment` directly.
+    pub fn update_environment(&mut self, env: &Environment, dt: f32) {
+        const INTERVAL: f32 = 0.02;
+        self.environment_elapsed = (self.environment_elapsed + dt.max(0.0)).min(INTERVAL);
+        let env = env.sanitized();
+        if self.env == Some(env) { return; }
+        let immediate = self.env.map_or(true, |old| {
+            old.hrtf != env.hrtf || old.ground != env.ground || old.ear_height != env.ear_height
+                || old.tree_density_per_ha != env.tree_density_per_ha
+        });
+        if immediate || self.environment_elapsed >= INTERVAL {
+            self.set_environment(&env);
+            self.environment_elapsed = 0.0;
+        }
     }
 
     /// Trunks -> explicit obstacles near the listener + the early-reflection set.
@@ -642,6 +660,39 @@ fn generate_forest(out: &mut Vec<Trunk>, density: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_trees_preserves_the_environment() {
+        let mut acoustics = Acoustics::new(48_000.0, 0);
+        let environment = Environment { temperature_c: 35.0, ear_height: 2.4,
+            humidity_pct: 40.0, reverb: 0.3, ..Environment::default() };
+        acoustics.set_environment(&environment);
+        let speed = acoustics.context().speed_of_sound;
+        acoustics.set_trees(Some(&[]));
+        assert_eq!(acoustics.env, Some(environment));
+        assert_eq!(acoustics.context().speed_of_sound, speed);
+        assert_eq!(acoustics.context().ground_z, -2.4);
+        acoustics.set_trees(None);
+        assert_eq!(acoustics.env, Some(environment));
+    }
+
+    #[test]
+    fn weather_redesign_is_bounded_but_renderer_changes_are_immediate() {
+        let mut acoustics = Acoustics::new(48_000.0, 0);
+        let epoch = acoustics.context().epoch;
+        let mut environment = Environment::default();
+        for step in 1..20 {
+            environment.temperature_c = 15.0 + step as f32 * 0.1;
+            acoustics.update_environment(&environment, 0.001);
+        }
+        assert_eq!(acoustics.context().epoch, epoch);
+        acoustics.update_environment(&environment, 0.002);
+        assert_ne!(acoustics.context().epoch, epoch);
+        assert_eq!(acoustics.env, Some(environment));
+        environment.hrtf = HrtfModel::Analytic;
+        acoustics.update_environment(&environment, 0.001);
+        assert_eq!(acoustics.env.unwrap().hrtf, HrtfModel::Analytic);
+    }
     use crate::physics::ground;
     use core::f64::consts::PI;
 

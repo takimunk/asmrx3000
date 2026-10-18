@@ -250,7 +250,7 @@ impl Path {
         let mut pts = vec![PathPt::default(); PATH_CAP].into_boxed_slice();
         pts[0] = PathPt::default();
         let mut r = Stream::new(hash(seed, 0, 0, 0x9A7));
-        let phases = [r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64];
+        let phases = [r.range(0.0, core::f32::consts::TAU) as f64, r.range(0.0, core::f32::consts::TAU) as f64, r.range(0.0, core::f32::consts::TAU) as f64];
         Self { pts, last: 0, phases }
     }
 
@@ -777,7 +777,7 @@ impl Land {
         let tan = r.range(-0.75, 0.75);
         let amp = r.range(3.0, 12.0);
         let wavelength = r.range(60.0, 130.0);
-        let phase = r.range(0.0, 6.283);
+        let phase = r.range(0.0, core::f32::consts::TAU);
         let shape = Shape { s, u: 0.0, a: tan, b: amp, c: wavelength, d: phase, e: 0.5 * width };
         let centre = |u: f32| s + (u * tan) as f64 + (amp * (core::f32::consts::TAU * u / wavelength + phase).sin()) as f64;
         let mut pts = [(0.0f64, 0.0f32); PATH_POINTS];
@@ -1000,7 +1000,7 @@ impl Land {
                     let edge = c < 0.6;
                     let bw = bird_weights(SPECIES[sp], edge);
                     let species = pick(&bw, t.uniform()) as u8;
-                    let a = t.range(0.0, 6.283);
+                    let a = t.range(0.0, core::f32::consts::TAU);
                     let rr = t.range(0.2, 0.8) * crown_r;
                     let z = crown_z + t.range(-0.4, 0.9) * crown_r;
                     let pos3 = [pos[0] + (rr * a.cos()) as f64, pos[1] + (rr * a.sin()) as f64, z as f64];

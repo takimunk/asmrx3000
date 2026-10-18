@@ -81,7 +81,7 @@ def rounded(model):
 def write_parity(key, voice, slot, song, vae, sp_slot):
     from . import prep
 
-    d = np.load(sorted((prep.CLEAN / key).glob("*.npz"))[0])
+    d = np.load(prep.prepared_files(prep.CLEAN / key)[0])
     a = int(d["syl"][0, 0])
     sl = slice(a, a + 120)
     f0 = torch.from_numpy(d["f0"][sl])[None]

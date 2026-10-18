@@ -5,14 +5,14 @@
 //! (params, telemetry, spectrum) may be called from any thread; it only touches atomics.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use core::f32::consts::TAU;
 
 use crate::bed;
-use crate::acoustics::{Acoustics, Emitter, Environment as Acoustic, HrtfModel};
+use crate::acoustics::{Acoustics, Emitter, Environment as Acoustic, HrtfModel, Trunk};
 use crate::ambisonics::CHANNELS;
 use crate::controls::{self, ControlBank, ControlInfo, ControlState};
 use crate::director::{Director, Environment};
@@ -24,7 +24,7 @@ use crate::math::Vec3;
 use crate::physics::ground::GroundType;
 use crate::prompt::{self, Glides};
 use crate::rng::Rng;
-use crate::scene::{object_flags, ObjectBridge, ObjectInfo, SceneDesc, World};
+use crate::scene::{object_flags, Geometry, ObjectBridge, ObjectInfo, SceneDesc, World, MAX_OBJECTS};
 use crate::windfield::WindField;
 
 /// Control-rate block: source positions and gains update once per block.
@@ -234,6 +234,8 @@ struct Dsp {
     world: World,
     director: Director,
     acoustics: Acoustics,
+    scene_trees: Vec<Trunk>,
+    scene_geometry_initialized: bool,
     head: HeadTracker,
     /// 0 = binaural (our decoder), 1 = 7.1.4 bed rotated by our head pose, 2 = world-locked bed.
     bed_mode: u8,
@@ -261,11 +263,12 @@ struct Dsp {
 
 pub struct Engine {
     shared: Shared,
+    rendering: AtomicBool,
     dsp: UnsafeCell<Dsp>,
 }
 
-// SAFETY: `dsp` is only touched by `render`, which the API contract restricts to a single
-// thread. Everything reachable from other threads is atomic.
+// SAFETY: render/render_bed acquire `rendering` before accessing `dsp`. Overlapping calls
+// return silence without waiting. Everything reachable from other threads is atomic.
 unsafe impl Sync for Engine {}
 unsafe impl Send for Engine {}
 
@@ -326,7 +329,7 @@ impl Engine {
             (param::TREE_DENSITY, env.tree_density_per_ha),
             (param::FOLIAGE, env.foliage),
             (param::REVERB, env.reverb),
-            (param::EAR_HEIGHT, env.ear_height),
+            (param::EAR_HEIGHT, -world.ground_z),
             (param::HRTF, env.hrtf as u32 as f32),
             (param::OUTPUT_LATENCY, 0.15),
             (param::HEAD_PREDICTION, 1.0),
@@ -335,12 +338,20 @@ impl Engine {
             shared.params[id as usize].store(v);
         }
 
-        let acoustics = Acoustics::new(sr, world.emitters.len());
-        let dsp = Dsp {
+        let mut acoustics = Acoustics::new(sr, world.emitters.len());
+        acoustics.set_environment(&Acoustic {
+            temperature_c: desc.environment.temperature_c,
+            humidity_pct: desc.environment.humidity * 100.0,
+            ear_height: -world.ground_z,
+            ..Acoustic::default()
+        });
+        let mut dsp = Dsp {
             sample_rate: sr,
             world,
             director,
             acoustics,
+            scene_trees: Vec::with_capacity(MAX_OBJECTS),
+            scene_geometry_initialized: false,
             head: HeadTracker::new(),
             bed_mode: 0,
             bed: [[0.0; BLOCK]; bed::CHANNELS],
@@ -361,8 +372,9 @@ impl Engine {
             flight: None,
             flight_mix: 0.0,
         };
+        dsp.sync_scene_trees();
         dsp.publish(&shared);
-        let mut engine = Self { shared, dsp: UnsafeCell::new(dsp) };
+        let mut engine = Self { shared, rendering: AtomicBool::new(false), dsp: UnsafeCell::new(dsp) };
         if let Some(f) = &desc.flight {
             if f.apply(&engine)? {
                 // Starts in the air, at cruising speed: no cross-fade from the scene.
@@ -413,6 +425,7 @@ impl Engine {
     }
 
     pub fn set_param(&self, id: u32, value: f32) {
+        let guard = self.shared.glides.edit();
         if let Some(p) = self.shared.params.get(id as usize) {
             if value.is_finite() {
                 p.store(value);
@@ -420,10 +433,11 @@ impl Engine {
                 for i in controls::indices_of_param(id) {
                     self.shared.glides.cancel(i);
                 }
-                if id == param::FLIGHT && value > 0.5 {
-                    self.prepare_flight();
-                }
             }
+        }
+        drop(guard);
+        if id == param::FLIGHT && value.is_finite() && value > 0.5 {
+            self.prepare_flight();
         }
     }
 
@@ -437,6 +451,7 @@ impl Engine {
     /// Sets a control (NaN on a child: follow the macro again). Any thread; applied by the
     /// audio thread on the next block.
     pub fn set_control(&self, id: u32, value: f32) {
+        let _guard = self.shared.glides.edit();
         if let Some(i) = controls::index_of_id(id) {
             self.shared.glides.cancel(i);
         }
@@ -479,9 +494,14 @@ impl Engine {
 
     /// Audio thread only.
     pub fn render(&self, left: &mut [f32], right: &mut [f32]) {
+        let Some(_guard) = self.begin_render() else {
+            left.fill(0.0);
+            right.fill(0.0);
+            return;
+        };
         #[cfg(not(target_arch = "wasm32"))]
         let started = Instant::now();
-        // SAFETY: single audio thread, see the type-level comment.
+        // SAFETY: the render guard grants exclusive access to the DSP state.
         let dsp = unsafe { &mut *self.dsp.get() };
         let n = left.len().min(right.len());
         let mut off = 0;
@@ -513,7 +533,11 @@ impl Engine {
     /// `bed::LAYOUT`, L R C LFE Ls Rs Rls Rrs Vhl Vhr Ltr Rtr) for an external binaural renderer.
     /// `world_locked`: skip our head rotation (the renderer applies AirPods tracking itself).
     pub fn render_bed(&self, out: &mut [&mut [f32]], world_locked: bool) {
-        // SAFETY: single audio thread, see the type-level comment.
+        let Some(_guard) = self.begin_render() else {
+            for channel in out { channel.fill(0.0); }
+            return;
+        };
+        // SAFETY: the render guard grants exclusive access to the DSP state.
         let dsp = unsafe { &mut *self.dsp.get() };
         dsp.bed_mode = if world_locked { 2 } else { 1 };
         let n = out.iter().map(|c| c.len()).min().unwrap_or(0);
@@ -533,6 +557,11 @@ impl Engine {
         }
         dsp.bed_mode = 0;
         dsp.publish(&self.shared);
+    }
+
+    fn begin_render(&self) -> Option<RenderGuard<'_>> {
+        self.rendering.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok().map(|_| RenderGuard(&self.rendering))
     }
 
     /// Copies source telemetry into `out`, returns how many were written.
@@ -575,8 +604,8 @@ impl Engine {
         }
         let sr = self.telemetry(telemetry::SAMPLE_RATE);
         let pos = self.shared.spectrum_pos.load(Ordering::Acquire);
-        let mut re = vec![0.0f32; SPECTRUM_FFT];
-        let mut im = vec![0.0f32; SPECTRUM_FFT];
+        let mut re = [0.0f32; SPECTRUM_FFT];
+        let mut im = [0.0f32; SPECTRUM_FFT];
         for (i, v) in re.iter_mut().enumerate() {
             let idx = (pos.wrapping_sub(SPECTRUM_FFT).wrapping_add(i)) % SPECTRUM_RING;
             let w = 0.5 - 0.5 * (TAU * i as f32 / SPECTRUM_FFT as f32).cos();
@@ -671,24 +700,57 @@ fn push_scope(shared: &Shared, peaks: &[f32; SCOPE_TRACKS]) {
     shared.scope_pos.store(pos.wrapping_add(1), Ordering::Release);
 }
 
+struct RenderGuard<'a>(&'a AtomicBool);
+
+impl Drop for RenderGuard<'_> {
+    fn drop(&mut self) { self.0.store(false, Ordering::Release); }
+}
+
 impl Dsp {
+    /// Reuse storage reserved at construction; moving a tree invalidates the path fits.
+    fn sync_scene_trees(&mut self) {
+        let mut i = 0;
+        let mut changed = false;
+        for entity in &self.world.entities {
+            if let Geometry::Tree { canopy_height, canopy_radius } = entity.geometry {
+                // Scene trees store crown dimensions; estimate trunk radius from the crown.
+                let trunk = Trunk { x: entity.position.x, y: entity.position.y,
+                    radius: (canopy_radius * 0.08).clamp(0.05, 0.6),
+                    height: canopy_height + entity.position.z - self.world.ground_z };
+                if self.scene_trees.get(i) != Some(&trunk) {
+                    changed = true;
+                    if i < self.scene_trees.len() { self.scene_trees[i] = trunk; }
+                    else { self.scene_trees.push(trunk); }
+                }
+                i += 1;
+            }
+        }
+        changed |= self.scene_trees.len() != i;
+        self.scene_trees.truncate(i);
+        if changed || !self.scene_geometry_initialized {
+            self.acoustics.update_geometry(&self.scene_trees, &[], true);
+            self.scene_geometry_initialized = true;
+        }
+    }
+
     fn process_block(&mut self, shared: &Shared, out_l: &mut [f32], out_r: &mut [f32]) {
         let len = out_l.len();
         let sr = self.sample_rate;
         let dt = len as f32 / sr;
         let p = |k: u32| shared.params[k as usize].load();
         shared.glides.advance(dt);
-        shared.glides.tick(&shared.controls, &shared.params);
 
         let playing = p(param::PLAYING) > 0.5;
         if !playing && self.fade < 1e-4 {
             // Paused: the scene is frozen, but user moves still land.
             shared.objects.apply_moves(&mut self.world);
             self.world.update_emitters();
+            self.sync_scene_trees();
             self.fade = 0.0;
             out_l.fill(0.0);
             out_r.fill(0.0);
             self.mono[..len].fill(0.0);
+            for channel in &mut self.bed { channel[..len].fill(0.0); }
             self.out_level = 0.0;
             push_scope(shared, &[0.0; SCOPE_TRACKS]);
             return;
@@ -709,7 +771,12 @@ impl Dsp {
         let scene_emitters = if self.flight_mix >= 1.0 { 0 } else { self.world.emitters.len() };
 
         // Controls: macros and their physical children -> generator configs (only on change).
-        let st = shared.controls.state(&shared.params);
+        let st = if let Some(_guard) = shared.glides.try_edit() {
+            shared.glides.tick_locked(&shared.controls, &shared.params);
+            let st = shared.controls.state(&shared.params);
+            shared.controls.publish_params(&st, &shared.params);
+            st
+        } else { self.ctl };
         if !self.ctl_applied || st != self.ctl {
             controls::apply(&mut self.world, &st, &shared.controls.bases);
             let w = self.director.weather_mut();
@@ -718,7 +785,6 @@ impl Dsp {
             self.ctl = st;
             self.ctl_applied = true;
         }
-        shared.controls.publish_params(&st, &shared.params);
         let gustiness = st.get(controls::id::WIND_GUSTINESS);
 
         let wind = p(param::WIND).clamp(0.0, 1.0);
@@ -754,7 +820,8 @@ impl Dsp {
         };
         self.director.step(dt, &env, &mut self.world);
         self.world.update_emitters();
-        self.acoustics.set_environment(&Acoustic {
+        self.sync_scene_trees();
+        self.acoustics.update_environment(&Acoustic {
             temperature_c: env.temperature_c,
             humidity_pct: env.humidity * 100.0,
             pressure_kpa: p(param::PRESSURE),
@@ -764,7 +831,7 @@ impl Dsp {
             reverb: p(param::REVERB),
             ear_height: p(param::EAR_HEIGHT),
             hrtf: if p(param::HRTF) > 0.5 { HrtfModel::Analytic } else { HrtfModel::Measured },
-        });
+        }, dt);
 
         for ch in self.bus.iter_mut() {
             ch[..len].fill(0.0);
@@ -973,6 +1040,85 @@ impl Dsp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlapping_render_calls_return_silence_without_touching_dsp() {
+        let engine = Engine::new(48_000.0);
+        let guard = engine.begin_render().unwrap();
+        let mut l = [1.0; BLOCK];
+        let mut r = [1.0; BLOCK];
+        engine.render(&mut l, &mut r);
+        assert_eq!(l, [0.0; BLOCK]);
+        assert_eq!(r, [0.0; BLOCK]);
+        let mut channel = [1.0; BLOCK];
+        engine.render_bed(&mut [&mut channel], false);
+        assert_eq!(channel, [0.0; BLOCK]);
+        drop(guard);
+        assert!(engine.begin_render().is_some());
+    }
+
+    #[test]
+    fn a_busy_control_transaction_does_not_block_audio() {
+        let engine = Engine::new(48_000.0);
+        engine.set_param(param::PLAYING, 1.0);
+        let mut l = [0.0; BLOCK];
+        let mut r = [0.0; BLOCK];
+        engine.render(&mut l, &mut r);
+        let _editing = engine.shared.glides.edit();
+        engine.render(&mut l, &mut r);
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn scene_geometry_tracks_tree_moves_and_ground_height() {
+        let engine = Engine::new(48_000.0);
+        assert!((engine.param(param::EAR_HEIGHT) - 1.7).abs() < 1e-5);
+        let mut objects = [ObjectInfo::default(); MAX_OBJECTS];
+        let n = engine.objects(&mut objects);
+        let tree = objects[..n].iter().find(|o| o.kind == crate::ObjectKind::Tree as u32).unwrap();
+        engine.set_object_position(tree.id, 1.0, 0.0, -1.7);
+        engine.render(&mut [0.0; BLOCK], &mut [0.0; BLOCK]);
+        let _guard = engine.begin_render().unwrap();
+        // SAFETY: the render guard excludes all other DSP access.
+        let dsp = unsafe { &*engine.dsp.get() };
+        assert!(dsp.acoustics.context().obstacles.iter().any(|obstacle| {
+            matches!(obstacle, crate::physics::diffraction::Obstacle::Cylinder { x, y, .. }
+                if *x == 1.0 && *y == 0.0)
+        }));
+    }
+
+    #[test]
+    fn bed_is_exactly_silent_after_pause() {
+        let engine = Engine::new(48_000.0);
+        let mut channels = [[0.0; BLOCK]; bed::CHANNELS];
+        engine.set_param(param::PLAYING, 1.0);
+        for _ in 0..1000 {
+            let mut outputs: Vec<_> = channels.iter_mut().map(|c| &mut c[..]).collect();
+            engine.render_bed(&mut outputs, false);
+        }
+        engine.set_param(param::PLAYING, 0.0);
+        for _ in 0..700 {
+            let mut outputs: Vec<_> = channels.iter_mut().map(|c| &mut c[..]).collect();
+            engine.render_bed(&mut outputs, false);
+        }
+        assert!(channels.iter().flatten().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn a_manual_control_survives_concurrent_glide_readers() {
+        use std::sync::Arc;
+        let engine = Arc::new(Engine::new(48_000.0));
+        engine.apply_patch_json(r#"{"glide_s":120,"changes":[{"key":"master.volume","value":0.1}]}"#);
+        let reader = Arc::clone(&engine);
+        let thread = std::thread::spawn(move || {
+            let mut controls = [ControlInfo::default(); controls::COUNT];
+            for _ in 0..1000 { reader.controls(&mut controls); }
+        });
+        for _ in 0..1000 { engine.set_control(controls::id::MASTER_VOLUME, 0.73); }
+        thread.join().unwrap();
+        engine.render(&mut [0.0; BLOCK], &mut [0.0; BLOCK]);
+        assert_eq!(engine.control(controls::id::MASTER_VOLUME), 0.73);
+    }
 
     #[test]
     fn renders_finite_audible_output() {

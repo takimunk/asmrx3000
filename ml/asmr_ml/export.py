@@ -42,7 +42,7 @@ def write_asnw(path: Path, tensors: dict[str, tuple[np.ndarray, int]]) -> int:
 def data_stats(key: str) -> tuple[float, float, float]:
     """Loudness and effort between syllables (what the voice hears as 'silence') and median song interval."""
     quiet, quiet_eff, intervals = [], [], []
-    for p in sorted((prep.CLEAN / key).glob("*.npz")):
+    for p in prep.prepared_files(prep.CLEAN / key):
         d = np.load(p)
         on = np.zeros(len(d["loud"]), bool)
         for a, b in d["syl"]:
@@ -61,7 +61,7 @@ def write_parity(key: str, voice: Voice) -> None:
     """Reference frame outputs for the Rust parity test, computed with f16-rounded weights."""
     q = Voice(hidden=voice.gru.hidden_size)
     q.load_state_dict({k: (v.half().float() if k != "norm" else v) for k, v in voice.state_dict().items()})
-    d = np.load(sorted((prep.CLEAN / key).glob("*.npz"))[0])
+    d = np.load(prep.prepared_files(prep.CLEAN / key)[0])
     a = int(d["syl"][0, 0])
     sl = slice(a, a + 120)
     f0 = torch.from_numpy(d["f0"][sl])[None]

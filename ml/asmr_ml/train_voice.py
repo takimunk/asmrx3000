@@ -31,7 +31,7 @@ class Data:
     def __init__(self, key: str, frames: int, val_every: int = 6):
         self.frames = frames
         self.items = []
-        for i, p in enumerate(sorted((prep.CLEAN / key).glob("*.npz"))):
+        for i, p in enumerate(prep.prepared_files(prep.CLEAN / key)):
             d = dict(np.load(p))
             active = np.zeros(len(d["loud"]), np.float32)
             for a, b in d["syl"]:
