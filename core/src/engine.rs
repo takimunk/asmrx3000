@@ -463,6 +463,12 @@ impl Engine {
         prompt::prompt_json(&self.prompt_view())
     }
 
+    /// Effective values of every control (tests).
+    #[cfg(test)]
+    pub(crate) fn shared_state(&self) -> ControlState {
+        self.shared.controls.state(&self.shared.params)
+    }
+
     /// Effective value of one control.
     pub fn control(&self, id: u32) -> f32 {
         self.shared.controls.state(&self.shared.params).get(id)
@@ -845,7 +851,7 @@ impl Dsp {
                 controls.activity = 0.0;
             }
             em.generator.render(tmp, &controls);
-            self.mix.feed(idx, tmp, kind_gain);
+            self.mix.feed(idx, tmp, kind_gain, em.generator.busy());
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;

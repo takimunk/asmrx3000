@@ -185,7 +185,7 @@ pub static TABLE: [Entry; 14] = [
 pub static THUNDER: Entry = Entry {
     class: C::Thunder,
     metric: LaFmaxScene,
-    target_db: 88.0,
+    target_db: 84.0,
     raw_db: 71.5,
     post: crate::director::THUNDER_PROXY_M,
     condition: "storm 1, loudest clap in 4 min",

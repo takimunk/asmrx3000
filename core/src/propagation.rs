@@ -260,7 +260,8 @@ impl Propagator {
         read_path(&self.delay, start, self.direct.delay, dl1, jump, x, &mut scratch.c[..len]);
         self.direct.delay = dl1;
         if ctx.features.reverb {
-            let target = self.send * em.send;
+            // The emitter's level scales its tail like its direct and early sound.
+            let target = self.send * em.send * em.gain;
             for (o, v) in sends.reverb[..len].iter_mut().zip(x.iter()) {
                 *o += v * target;
             }

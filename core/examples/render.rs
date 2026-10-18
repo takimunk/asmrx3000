@@ -119,18 +119,11 @@ fn main() -> std::io::Result<()> {
                 db(win_l),
                 db(win_r),
             );
-            // Rough at-ear level per source kind (emitter RMS × kind gain / distance).
-            let mut src = [SourceInfo::default(); MAX_SOURCES];
-            let ns = engine.sources(&mut src);
-            let mut kinds = [0.0f64; 7];
-            for s in &src[..ns] {
-                let d = (s.rel_x * s.rel_x + s.rel_y * s.rel_y + s.rel_z * s.rel_z).sqrt().max(0.7);
-                let g = [1.0, 0.6, 0.8, 1.0, 40.0, 1.0, 0.8][s.kind as usize % 7];
-                kinds[s.kind as usize % 7] += ((s.level * g / d) as f64).powi(2);
-            }
-            let names = ["water", "wind", "birds", "rain", "thunder", "fire", "insects"];
-            let parts: Vec<String> = (0..7).filter(|&k| k != 5).map(|k| format!("{} {:4.0}", names[k], 10.0 * kinds[k].max(1e-12).log10())).collect();
-            println!("          dsp {:4.1}%   {}", engine.telemetry(telemetry::DSP_LOAD) * 100.0, parts.join("  "));
+            // Per-group level in the output (sound director analysis, LUFS) and masking.
+            let m = engine.mix_info();
+            let names = asmr_core::mix::calibration::group::NAMES;
+            let parts: Vec<String> = (0..names.len()).filter(|&g| m.group_lufs[g] > -69.0).map(|g| format!("{} {:5.1} ({:2.0}% masked)", names[g], m.group_lufs[g], 100.0 * m.group_masking[g])).collect();
+            println!("          dsp {:4.1}%   {:5.1} LUFS   {}", engine.telemetry(telemetry::DSP_LOAD) * 100.0, m.loudness_short, parts.join("  "));
             (win_l, win_r, win_n) = (0.0, 0.0, 0);
         }
         let flash = engine.telemetry(telemetry::LIGHTNING);

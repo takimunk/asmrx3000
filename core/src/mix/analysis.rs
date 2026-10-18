@@ -41,6 +41,12 @@ pub struct Analysis {
     pub model: BandModel,
     a_fast: [f32; 2],
     a_slow: f32,
+    /// Band 0 (20–100 Hz) is below the FFT's resolution: a time-domain band pass per track
+    /// (one-pole high pass at 20 Hz, two one-pole low passes at 80 Hz) and its energy.
+    lf: Vec<[f32; 3]>,
+    lf_energy: Vec<f32>,
+    lf_n: usize,
+    lf_coef: [f32; 2],
 }
 
 impl Analysis {
@@ -78,17 +84,41 @@ impl Analysis {
             model: BandModel::new(sample_rate),
             a_fast: [coef(0.015), coef(0.12)],
             a_slow: coef(0.8),
+            lf: vec![[0.0; 3]; tracks],
+            lf_energy: vec![0.0; tracks],
+            lf_n: 0,
+            lf_coef: [1.0 - (-core::f32::consts::TAU * 20.0 / sample_rate).exp(), 1.0 - (-core::f32::consts::TAU * 80.0 / sample_rate).exp()],
         }
     }
 
     /// Appends one block of every track (`taps[t][..len]`). Returns true when a hop is due.
     pub fn push(&mut self, taps: &[[f32; crate::engine::BLOCK]], len: usize) -> bool {
+        let [hp, lp] = self.lf_coef;
         for (t, tap) in taps.iter().enumerate().take(self.tracks) {
             let r = &mut self.ring[t];
             for (i, v) in tap[..len].iter().enumerate() {
                 r[(self.pos + i) % FFT_N] = *v;
             }
+            let s = &mut self.lf[t];
+            if s[0] == 0.0 && s[1] == 0.0 && s[2] == 0.0 && tap[..len].iter().all(|v| *v == 0.0) {
+                continue;
+            }
+            let mut e = 0.0f32;
+            for v in &tap[..len] {
+                s[0] += (v - s[0]) * hp;
+                let x = v - s[0];
+                s[1] += (x - s[1]) * lp;
+                s[2] += (s[1] - s[2]) * lp;
+                e += s[2] * s[2];
+            }
+            for q in s.iter_mut() {
+                if q.abs() < 1e-20 {
+                    *q = 0.0;
+                }
+            }
+            self.lf_energy[t] += e;
         }
+        self.lf_n += len;
         self.pos = (self.pos + len) % FFT_N;
         self.since += len;
         self.since >= HOP
@@ -128,6 +158,13 @@ impl Analysis {
                 }
             }
         }
+        // Band 0 from the time-domain band pass (×1.6: the 2-pole skirt is narrower than 80 Hz).
+        let n = self.lf_n.max(1) as f32;
+        for t in 0..self.tracks {
+            self.frame[t][0] = 1.6 * self.lf_energy[t] / n;
+            self.lf_energy[t] = 0.0;
+        }
+        self.lf_n = 0;
         for t in 0..self.tracks {
             for z in 0..BANDS {
                 let x = self.frame[t][z];
@@ -248,18 +285,15 @@ pub fn duck_targets(a: &Analysis, fg: &[f32], bed: &[bool], p: &DuckParams, out:
         if w <= 0.0 {
             continue;
         }
-        // Where does this source's loudness live?
-        let mut spec = [0.0f32; BANDS];
-        let mut total = 0.0;
-        for z in 0..BANDS {
-            spec[z] = m.specific(z, a.exc[t][z], 0.0);
-            total += spec[z];
-        }
-        if total < 0.02 {
+        // Is it audible at all, and where does its energy live? (Its own excitation spreads
+        // over neighbouring bands; cutting the bed there would not unmask it.)
+        let loud: f32 = (0..BANDS).map(|z| m.specific(z, a.exc[t][z], 0.0)).sum();
+        let total: f32 = a.fast[t].iter().sum();
+        if loud < 0.02 || total <= 0.0 {
             continue;
         }
         for z in 0..BANDS {
-            let share = spec[z] / total;
+            let share = a.fast[t][z] / total;
             if share < 0.03 {
                 continue;
             }

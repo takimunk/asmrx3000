@@ -19,8 +19,8 @@ pub struct DynParams {
 const MAX_BOOST_DB: f32 = 9.0;
 const MAX_CUT_DB: f32 = 20.0;
 /// Comfort compressor: threshold above the target (LU), ratio.
-const COMFORT_LU: f32 = 7.0;
-const COMFORT_RATIO: f32 = 3.0;
+const COMFORT_LU: f32 = 6.0;
+const COMFORT_RATIO: f32 = 4.0;
 /// Peak ceiling, linear (−1 dBFS).
 const CEILING: f32 = 0.891;
 
@@ -84,8 +84,9 @@ impl Dynamics {
         self.pre.process(&l[..len], &r[..len], Some(&pbv[..len]));
         let dt = len as f32 / self.fs;
 
-        // Leveller: partial correction of short-term loudness, held while (nearly) silent.
-        let st = self.pre.short_term;
+        // Leveller: correction of the robust 10 s loudness (bursts are clipped out of it and
+        // left to the compressor, so a clap does not leave a hole), held while nearly silent.
+        let st = self.pre.long_term;
         if st > -55.0 {
             // Too loud comes down nearly all the way (comfort); too quiet is lifted partly and
             // at most MAX_BOOST_DB, so a still night keeps its stillness.

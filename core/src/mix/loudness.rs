@@ -144,16 +144,26 @@ pub struct Meter {
     step: usize,
     acc: f32,
     n: usize,
-    /// Last 30 sub-blocks (3 s) of mean square, ring.
-    ring: [f32; 30],
+    /// Last 100 sub-blocks (10 s) of mean square, ring.
+    ring: [f32; LONG],
+    /// The same, each clipped to 4× (6 dB over) the running long-term mean.
+    robust: [f32; LONG],
+    lt_mean: f32,
     pos: usize,
     filled: usize,
     hist: Box<[u32; HIST_BINS]>,
     hist_energy: Box<[f64; HIST_BINS]>,
     pub momentary: f32,
     pub short_term: f32,
+    /// Robust 10 s energy mean: each 100 ms block counts at most 6 dB above the running mean,
+    /// so a thunder clap does not hold a leveller down for ten seconds (what a leveller
+    /// should follow; bursts are a compressor's job).
+    pub long_term: f32,
     pub integrated: f32,
 }
+
+const LONG: usize = 100;
+const SHORT: usize = 30;
 
 impl Meter {
     pub fn new(fs: f32) -> Self {
@@ -163,13 +173,16 @@ impl Meter {
             step: ((0.1 * fs) as usize).max(1),
             acc: 0.0,
             n: 0,
-            ring: [0.0; 30],
+            ring: [0.0; LONG],
+            robust: [0.0; LONG],
+            lt_mean: 0.0,
             pos: 0,
             filled: 0,
             hist: Box::new([0; HIST_BINS]),
             hist_energy: Box::new([0.0; HIST_BINS]),
             momentary: -70.0,
             short_term: -70.0,
+            long_term: -70.0,
             integrated: -70.0,
         }
     }
@@ -202,13 +215,19 @@ impl Meter {
 
     fn push(&mut self, ms: f32) {
         self.ring[self.pos] = ms;
+        let clip = if self.filled == 0 { ms } else { ms.min(4.0 * self.lt_mean.max(1e-12)) };
+        self.robust[self.pos] = clip;
         self.pos = (self.pos + 1) % self.ring.len();
         self.filled = (self.filled + 1).min(self.ring.len());
         let back = |k: usize| self.ring[(self.pos + self.ring.len() - 1 - k) % self.ring.len()];
         let m: f32 = (0..SUB_BLOCKS.min(self.filled)).map(back).sum::<f32>() / SUB_BLOCKS as f32;
-        let s: f32 = (0..self.filled).map(back).sum::<f32>() / self.ring.len() as f32;
+        let s: f32 = (0..SHORT.min(self.filled)).map(back).sum::<f32>() / SHORT as f32;
+        let rb = |k: usize| self.robust[(self.pos + LONG - 1 - k) % LONG];
+        let lt: f32 = (0..self.filled).map(rb).sum::<f32>() / self.filled.max(1) as f32;
+        self.lt_mean = lt;
         self.momentary = lufs(m).max(-70.0);
         self.short_term = lufs(s).max(-70.0);
+        self.long_term = lufs(lt).max(-70.0);
         // Gating block = the momentary block (75 % overlap).
         if self.filled >= SUB_BLOCKS {
             let l = lufs(m);

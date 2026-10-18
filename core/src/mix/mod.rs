@@ -208,7 +208,7 @@ pub struct EmitterView {
     pub rel: Vec3,
     /// The director wants it to sing (activity > 0).
     pub wants: bool,
-    /// In a phrase right now (`Generator::busy`).
+    /// In a phrase right now, before this block renders (`Generator::busy`).
     pub busy: bool,
     /// Flying (calls in flight are never held).
     pub flying: bool,
@@ -483,16 +483,12 @@ impl Mix {
         s.dist = dist;
         s.wants = v.wants;
         s.flying = v.flying;
-        if v.busy && !s.busy {
-            self.last_start = self.time;
-        }
         s.busy = v.busy;
-        if v.busy {
-            self.phrases += 1;
-        }
         if self.bypass {
             s.gain_db = 0.0;
-            return (legacy_gain(v.kind), None, 1.0, true);
+            // The old propagation fed the late reverb without the emitter gain: keep that.
+            let g = legacy_gain(v.kind);
+            return (g, None, 1.0 / g, true);
         }
 
         // Level and cues from the role and the intent.
@@ -518,7 +514,8 @@ impl Mix {
         }
         s.gain_db += (gain_db - s.gain_db) * self.a_gain;
         s.send += (send - s.send) * self.a_gain;
-        let permit = s.permit || v.flying || matches!(s.role, Role::Soloist(_));
+        // Calls in flight are short and carry motion: never held.
+        let permit = s.permit || v.flying;
         let gain = s.cal * 10f32.powf(s.gain_db / 20.0);
         let eq = match s.role {
             Role::Soloist(_) => None,
@@ -527,16 +524,24 @@ impl Mix {
         (gain, eq, s.send, permit)
     }
 
-    /// After emitter `idx` rendered `signal` (raw generator output, before `Voice::gain`).
-    pub fn feed(&mut self, idx: usize, signal: &[f32], gain: f32) {
+    /// After emitter `idx` rendered `signal` (raw generator output; `gain` = what goes to the
+    /// propagation); `busy` = in a phrase after this block.
+    pub fn feed(&mut self, idx: usize, signal: &[f32], gain: f32, busy: bool) {
         let t0 = self.clock();
-        self.feed_inner(idx, signal, gain);
+        self.feed_inner(idx, signal, gain, busy);
         self.lap(t0);
     }
 
-    fn feed_inner(&mut self, idx: usize, signal: &[f32], gain: f32) {
+    fn feed_inner(&mut self, idx: usize, signal: &[f32], gain: f32, busy: bool) {
         let pb = if self.bypass { 1.0 / self.dynamics_playback_nominal() } else { 1.0 };
         let Some(s) = self.slots.get_mut(idx) else { return };
+        if busy && !s.busy {
+            self.last_start = self.time;
+        }
+        s.busy = busy;
+        if busy && matches!(s.class, SoundClass::Bird(_)) && !s.flying {
+            self.phrases += 1;
+        }
         let len = signal.len().min(BLOCK);
         // Listener estimate: 1/r spreading plus the ground reflection.
         let k = gain / s.dist;
@@ -744,7 +749,8 @@ impl Mix {
                 if !s.used || !matches!(s.class, SoundClass::Bird(_)) || s.busy || !s.wants || taken[..granted].contains(&i) {
                     continue;
                 }
-                let prio = 1.0 / (1.0 + s.dist / 10.0) + s.class.rarity() + (s.waiting / 20.0).min(1.0) + 0.5 * self.intent.focus[s.group].max(0.0);
+                let solo = if matches!(s.role, Role::Soloist(_)) { 1.0 } else { 0.0 };
+                let prio = 1.0 / (1.0 + s.dist / 10.0) + s.class.rarity() + (s.waiting / 20.0).min(1.0) + 0.5 * self.intent.focus[s.group].max(0.0) + solo;
                 if best.map_or(true, |(_, p)| prio > p) {
                     best = Some((i, prio));
                 }

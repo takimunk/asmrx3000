@@ -561,7 +561,7 @@ impl Flight {
             let d = rel.length();
             let spread = d / (d * d + slot.extent * slot.extent).sqrt().max(1e-3);
             let g = gain * slot.fade * slot.gain * spread;
-            mixer.feed(MIX_SLOT0 + idx, tmp, g * (mix * core::f32::consts::FRAC_PI_2).sin());
+            mixer.feed(MIX_SLOT0 + idx, tmp, g * (mix * core::f32::consts::FRAC_PI_2).sin(), em.generator.busy());
             let mut src = Source::at(rel, g);
             src.eq_db = eq_db;
             src.send = send;
