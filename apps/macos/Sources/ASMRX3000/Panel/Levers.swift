@@ -139,11 +139,18 @@ struct LeverPanel: View {
 
     // MARK: World
 
+    /// Russian name of the current flight landscape (flight.biome preset).
+    static func biomeName(_ all: [Control]) -> String {
+        guard let c = all.first(where: { $0.key == "flight.biome" }) else { return "лес" }
+        let i = Int(c.value.rounded())
+        return i >= 0 && i < c.options.count ? ControlText.option(c.options[i]) : "лес"
+    }
+
     private func world(hour: Float?) -> some View {
         let split = Self.split(controls.macros, flying: audio.flying)
         let shown = showAll ? split.shown + split.more : split.shown
         return VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(title: "Мир", note: audio.flying ? "полёт над лесом" : "что происходит в лесу")
+            SectionHeader(title: "Мир", note: audio.flying ? "полёт: " + Self.biomeName(controls.controls) : "что происходит в лесу")
             ZStack(alignment: .topLeading) {
                 Group {
                     if let stills {
@@ -292,7 +299,8 @@ enum ControlText {
         "spring": "весна", "summer": "лето", "autumn": "осень", "winter": "зима",
         // flight.biome
         "mixed": "смешанный лес", "broadleaf": "дубрава", "taiga": "тайга", "river_valley": "речная долина",
-        "meadows": "луга", "highlands": "нагорье",
+        "meadows": "луга", "highlands": "нагорье", "desert": "пустыня", "snowy_mountains": "снежные горы",
+        "lake_shore": "берег озера", "sea_coast": "морской берег", "big_river": "большая река",
         // flight.steer_by_head
         "off": "нет", "yaw": "поворотом", "yaw_pitch": "поворотом и наклоном",
     ]
