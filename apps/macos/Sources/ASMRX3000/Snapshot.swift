@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1]
-///  [--azimuth rad] [--set key=value ...] [--scene file.json]`
+///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -20,6 +20,10 @@ enum Snapshot {
         model.audio.orbit = value("--orbit").flatMap(Float.init) ?? 0
         model.audio.birds = value("--birds").flatMap(Float.init) ?? 1
         if let az = value("--azimuth").flatMap(Float.init) { stage.camera.azimuth = az }
+        // --gaze yaw,pitch in degrees (yaw + = left, pitch + = up), as if AirPods were on.
+        if let g = value("--gaze")?.split(separator: ",").compactMap({ Float($0) }), g.count == 2 {
+            stage.gazeOverride = (g[0] * .pi / 180, g[1] * .pi / 180)
+        }
 
         // --set key=value (repeatable) sets any control, e.g. --set rain.rate=8 --set env.time_of_day=22.
         var tree: [Control] = []
@@ -62,6 +66,8 @@ enum Snapshot {
 
         let scale: Float = 2
         let sceneSize = SIMD2(Float(Popover.width), Float(Popover.sceneHeight))
+        stage.sceneSize = sceneSize
+        stage.updateLabels()
         let specSize = SIMD2(Float(Popover.width - 32), Float(Popover.spectrogramHeight))
         let sceneRenderer = SceneRenderer(stage: stage)
         let specRenderer = SpectrogramRenderer(stage: stage)

@@ -513,7 +513,9 @@ enum Ink {
     static let graphite = Color(white: 0.55)
     static let ash = Color(white: 0.2)
 
-    /// Cochin: cut from 18th-century French copperplate lettering.
-    static func text(_ size: CGFloat = 12) -> Font { .custom("Cochin", size: size) }
-    static func italic(_ size: CGFloat = 12) -> Font { .custom("Cochin-Italic", size: size) }
+    /// Coppice Mono: the app's own literary serif on a terminal grid (tools/font/coppice.py), bundled via
+    /// ATSApplicationFontsPath. One upright style only: `italic` is kept so call sites read the same, but it
+    /// resolves to the same face so styles never mix.
+    static func text(_ size: CGFloat = 12) -> Font { .custom("CoppiceMono-Regular", size: size) }
+    static func italic(_ size: CGFloat = 12) -> Font { text(size) }
 }

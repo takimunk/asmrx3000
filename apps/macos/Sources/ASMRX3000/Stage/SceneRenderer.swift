@@ -14,6 +14,8 @@ private struct FrameUniforms {
     var plumb: SIMD4<Float>
     var sun: SIMD4<Float>
     var env: SIMD4<Float>
+    var gaze: SIMD4<Float>      // dot screen x, y px, px per metre, live (1) or resting (0)
+    var gazeHead: SIMD4<Float>  // head screen x, y px, dot distance from the eye, visible
 }
 
 private struct Instance {
@@ -104,12 +106,19 @@ final class SceneRenderer {
             viewProj: vp, sunViewProj: Self.sunMatrix(),
             cam: SIMD4(cam.eye, time),
             view: SIMD4(Float(target.width), Float(target.height), scale, cam.fovY / Float(target.height)),
-            head: SIMD4(Float(stage.head.yaw), 0, 0, stage.audio.isPlaying ? 1 : 0),
+            head: SIMD4(stage.headPose.yaw, 0, 0, stage.audio.isPlaying ? 1 : 0),
             counts: .zero,
             bracket: SIMD4(0, 0, -1, -1), hoverBracket: SIMD4(0, 0, -1, -1),
             plumb: .zero, sun: SIMD4(Self.sun, 0),
-            env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0)
+            env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0),
+            gaze: .zero, gazeHead: .zero
         )
+        let gazeAt = stage.gazePoint
+        if let d = proj.project(gazeAt), let h = proj.project(SIMD3(0, 0, 0)) {
+            let focal = size.y * 0.5 / tan(cam.fovY / 2)
+            u.gaze = SIMD4(d.point.x * scale, d.point.y * scale, focal / d.w * scale, stage.headPose.live ? 1 : 0)
+            u.gazeHead = SIMD4(h.point.x * scale, h.point.y * scale, simd_distance(cam.eye, gazeAt), 1)
+        }
         let instances = buildInstances(time: time, river: river, proj: proj, scale: scale, u: &u)
         if let t = stage.thing(stage.selection) {
             if let b = proj.bounds(min: t.boxMin, max: t.boxMax) { u.bracket = snapped(b, scale: scale) }
@@ -267,7 +276,7 @@ final class SceneRenderer {
         }
         if let herm = lib["herm"] {
             // The listener: the bust turns with the head.
-            let m = Self.transform(SIMD3(0, 0, 0), yaw: Float(stage.head.yaw), scale: Self.hermScale)
+            let m = Self.transform(SIMD3(0, 0, 0), yaw: stage.headPose.yaw, scale: Self.hermScale)
             list.append((herm, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
         }
         if let ruin = lib["ruin"] {

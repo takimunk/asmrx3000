@@ -47,6 +47,8 @@ enum Shaders {
         float4 plumb;        // bird and ground point in px, for a selected bird
         float4 sun;          // direction to the sun xyz, plumb on
         float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
+        float4 gaze;         // gaze dot screen x, y px, px per metre, live 1 / resting 0
+        float4 gazeHead;     // head screen x, y px, dot distance from the eye, visible
     };
 
     struct Inst {
@@ -520,7 +522,34 @@ enum Shaders {
         float3 c = wash * (1.0 - g) + ink * g + fireLight;
         // A lightning strike lights the whole plate for a moment, cold.
         c += float3(0.8, 0.85, 1.0) * F.env.z * (0.1 + 0.25 * g);
-        return float4(min(c, float3(1.0)), 1.0);
+        c = min(c, float3(1.0));
+
+        // The gaze: the one coloured thing on the plate. A violet point floating where the head
+        // looks, with a bloom around it and a dotted thread back to the listener.
+        if (F.gazeHead.w > 0.5) {
+            float live = F.gaze.w;
+            float strength = mix(0.38, 1.0, live);
+            float2 dp = F.gaze.xy;
+            float ppm = F.gaze.z;
+            float hidden = (mat != M_VOID && dist < F.gazeHead.z - 0.4) ? 0.35 : 1.0;
+            float d = length(px - dp);
+            float core = max(0.11 * ppm, 2.6 * s);
+            float pulse = 0.92 + 0.08 * sin(time * 2.4);
+            float3 violet = float3(0.56, 0.36, 1.0);
+            float halo = exp(-pow(d / (core * 4.5), 2.0)) * 0.55 + exp(-d / (core * 9.0)) * 0.22;
+            float disc = smoothstep(core + s, core - s, d);
+            float3 glow = violet * halo * pulse + mix(violet, float3(1.0, 0.94, 1.0), 0.65) * disc;
+            // The thread: dotted, fading towards the head.
+            float2 hp = F.gazeHead.xy;
+            float2 ab = dp - hp;
+            float hh = clamp(dot(px - hp, ab) / max(dot(ab, ab), 1.0), 0.0, 1.0);
+            float ld = length(px - (hp + ab * hh));
+            float dots = step(fract(hh * length(ab) / (5.0 * s)), 0.45);
+            glow *= hidden;
+            glow += violet * cut(ld, 1.2 * s) * dots * smoothstep(0.05, 0.6, hh) * 0.8 * step(hh, 0.96);
+            c = 1.0 - (1.0 - c) * (1.0 - min(glow * strength, float3(1.0)));
+        }
+        return float4(c, 1.0);
     }
 
     // ---- spectrogram ---------------------------------------------------------------------------

@@ -40,6 +40,16 @@ final class ControlsModel: ObservableObject {
     func children(of id: UInt32) -> [Control] { controls.filter { $0.parent == id } }
 }
 
+/// Small orientation labels over the scene; published only when their text or place changes.
+final class SceneLabels: ObservableObject {
+    /// Where "ahead" sits on the ground in front of the listener, in scene points.
+    @Published var ahead: CGPoint?
+    /// Time of day, e.g. "21:30".
+    @Published var time = ""
+    /// Where the head is turned, e.g. "35° left, 15° up", or nil while head tracking is off.
+    @Published var gaze: String?
+}
+
 final class Meters: ObservableObject {
     /// Tracks that are audible right now; changes only when one starts or stops sounding.
     @Published var audible: Set<Track> = []
@@ -65,6 +75,9 @@ final class Stage {
     let head: HeadTracker
     let readout = SceneReadout()
     let meters = Meters()
+    let labels = SceneLabels()
+    /// Size of the scene view in points (set by the view as it draws).
+    var sceneSize: SIMD2<Float> = .zero
     let controls = ControlsModel()
     private var controlBuffer: [Control] = []
 
@@ -128,6 +141,7 @@ final class Stage {
         if now - lastMeter > 1 / 10 {
             lastMeter = now
             publishMeters()
+            updateLabels()
         }
     }
 
@@ -162,6 +176,23 @@ final class Stage {
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
     }
 
+    /// Head pose as the scene shows it (engine convention: yaw + = left, pitch + = up, radians)
+    /// and whether it is live. `gazeOverride` stands in for AirPods in snapshots.
+    var gazeOverride: (yaw: Float, pitch: Float)?
+    var headPose: (yaw: Float, pitch: Float, live: Bool) {
+        if let g = gazeOverride { return (g.yaw, g.pitch, true) }
+        let live = head.enabled && head.active
+        return live ? (Float(head.yaw), Float(head.pitch), true) : (0, 0, false)
+    }
+
+    /// Where the listener looks: head (origin) + forward × `gazeDistance` metres. Same rotation
+    /// as Mat3::from_head in the engine, so the dot points where the sound is centred.
+    static let gazeDistance: Float = 3.5
+    var gazePoint: SIMD3<Float> {
+        let p = headPose
+        return Stage.gazeDistance * SIMD3(cos(p.pitch) * cos(p.yaw), cos(p.pitch) * sin(p.yaw), sin(p.pitch))
+    }
+
     /// The scene's time of day, hours.
     var hour: Float { controls.controls.first { $0.key == "env.time_of_day" }?.value ?? 12 }
 
@@ -185,6 +216,30 @@ final class Stage {
                 scopes[base + c] = (max(scopeRaw[2 * c], scopeRaw[2 * c + 1]) / m).squareRoot()
             }
         }
+    }
+
+    func updateLabels() {
+        guard sceneSize.x > 0 else { return }
+        let proj = Projector(camera: camera, size: sceneSize)
+        let a = SIMD3<Float>(2.4, 0, Terrain.height(2.4, 0))
+        let point = proj.project(a).map { CGPoint(x: CGFloat($0.point.x.rounded()), y: CGFloat($0.point.y.rounded())) }
+        if labels.ahead != point { labels.ahead = point }
+
+        let h = hour
+        let minutes = Int((h * 60).rounded()) % (24 * 60)
+        let time = String(format: "%02d:%02d", minutes / 60, minutes % 60)
+        if labels.time != time { labels.time = time }
+
+        let p = headPose
+        var gaze: String?
+        if p.live {
+            // Rounded to 5° so the text holds still while the head drifts.
+            let yaw = Int((p.yaw * 180 / .pi / 5).rounded()) * 5
+            let pitch = Int((p.pitch * 180 / .pi / 5).rounded()) * 5
+            let side = yaw == 0 ? "straight ahead" : "\(abs(yaw))° \(yaw > 0 ? "left" : "right")"
+            gaze = pitch == 0 ? side : "\(side), \(abs(pitch))° \(pitch > 0 ? "up" : "down")"
+        }
+        if labels.gaze != gaze { labels.gaze = gaze }
     }
 
     private func publishMeters() {
