@@ -26,11 +26,13 @@ pub struct BirdControls {
     pub loudness: f32,
     /// 0..2: spread of syllable shapes and sampling temperature of the song model.
     pub variation: f32,
+    /// Do not start a song now (a neighbour is singing); the pause keeps running.
+    pub wait: bool,
 }
 
 impl Default for BirdControls {
     fn default() -> Self {
-        Self { activity: 0.5, pitch: 0.0, tempo: 1.0, effort: 0.0, loudness: 0.0, variation: 1.0 }
+        Self { activity: 0.5, pitch: 0.0, tempo: 1.0, effort: 0.0, loudness: 0.0, variation: 1.0, wait: false }
     }
 }
 
@@ -119,6 +121,14 @@ impl NeuralBird {
         self.singing
     }
 
+    /// Between songs: start the next one within about `within_s` seconds (counter-singing).
+    pub fn hurry(&mut self, within_s: f32) {
+        if !self.singing {
+            let soon = self.rng.range(0.3, within_s.max(0.4)) * self.sample_rate;
+            self.timer = self.timer.min(soon);
+        }
+    }
+
     pub fn model(&self) -> &NeuralModel {
         &self.model
     }
@@ -149,16 +159,26 @@ impl NeuralBird {
         let mut i = 0;
         while i < out.len() {
             if !self.singing {
-                let n = (out.len() - i).min(self.timer.max(0.0).ceil() as usize);
+                let a = controls.activity.clamp(0.0, 1.0);
+                if a <= 0.02 || controls.wait {
+                    // Held (silent bird, or the mix's phrase permit): the pause keeps running;
+                    // an expired one is re-drawn short (no burst, no starvation).
+                    out[i..].iter_mut().for_each(|o| *o = 0.0);
+                    self.timer -= (out.len() - i) as f32 * 0.6 / 4.6;
+                    if self.timer <= 0.0 {
+                        self.timer = self.rng.range(0.1, 1.5) * self.sample_rate * 0.6;
+                    }
+                    break;
+                }
+                // The pause between songs runs faster the more eager the bird is right now
+                // (`timer` is in units of the activity-1 pause).
+                let rate = 0.6 / (0.6 + 4.0 * (1.0 - a));
+                let n = (out.len() - i).min((self.timer.max(0.0) / rate).ceil() as usize);
                 out[i..i + n].iter_mut().for_each(|o| *o = 0.0);
                 i += n;
-                self.timer -= n as f32;
+                self.timer -= n as f32 * rate;
                 if self.timer <= 0.0 {
-                    if controls.activity > 0.02 {
-                        self.start_song();
-                    } else {
-                        self.timer = self.sample_rate * 0.5;
-                    }
+                    self.start_song();
                 }
                 continue;
             }
@@ -174,8 +194,8 @@ impl NeuralBird {
             if self.phrase.done {
                 self.singing = false;
                 self.voice.active = false;
-                let a = controls.activity.clamp(0.0, 1.0);
-                let mean = m.song_interval_s * (0.6 + 4.0 * (1.0 - a));
+                // Pause in activity-1 units (0.6 x the training-data interval).
+                let mean = m.song_interval_s * 0.6;
                 self.timer = mean * self.rng.range(0.5, 1.5) * self.sample_rate;
             }
         }

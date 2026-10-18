@@ -279,6 +279,11 @@ final class AudioEngine: ObservableObject {
     /// Actual rain (or snow) rate, mm/h, for the precipitation drawn over the scene.
     var rainRate: Float { telemetry(ASMR_TELEMETRY_RAIN_RATE) }
 
+    /// What each scene bird is doing (species, state, flight style, wingbeat): Stage/Birds.swift.
+    func readBirds(_ out: inout [AsmrBirdInfo]) -> Int {
+        out.withUnsafeMutableBufferPointer { Int(asmr_get_birds(core, $0.baseAddress, UInt32($0.count))) }
+    }
+
     /// Shape of a streamed object (river bed, lake shore, ridge line), listener-relative.
     func readObjectPath(_ id: UInt32, into out: inout [SIMD3<Float>]) {
         var raw = [Float](repeating: 0, count: 3 * 32)
@@ -357,7 +362,15 @@ final class AudioEngine: ObservableObject {
         guard let resultPointer = asmr_apply_patch_json_alloc(core, text) else { return [:] }
         defer { asmr_string_free(resultPointer) }
         let result = String(cString: resultPointer)
-        return (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] ?? [:]
+        let parsed = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] ?? [:]
+        // A patch may switch flight on or off (the core already set the parameter): keep the
+        // published state, the transport button and rebuilds in step.
+        if let f = (parsed["switched"] as? [String: Any])?["flight.on"] as? String {
+            let on = f == "on"
+            let sync = { [weak self] in if let self, self.flying != on { self.flying = on } }
+            if Thread.isMainThread { sync() } else { DispatchQueue.main.async(execute: sync) }
+        }
+        return parsed
     }
 
     /// Calls a "length-returning" ABI function twice: once to size, once to fill.

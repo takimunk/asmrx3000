@@ -13,6 +13,11 @@
 //!   bank), in every flow regime and across the WATER macro, and the birds alone for
 //!   reference; prints RMS per regime and writes the takes to the output WAV.
 //! * `levels` prints the weather and an approximate at-ear level per source kind every 5 s.
+//! * `life` (or `life:HOUR`, e.g. `life:5.0` for the dawn chorus) prints the birds' life:
+//!   every behaviour change (singing on a post, foraging on the ground, flying with its
+//!   species' style, soaring, song flight, alarm), then per species the share of time in each
+//!   state, song phrases, how often a neighbour answered, and how many birds sang at once.
+//!   `life:5.0:free` lifts the mix layer's phrase limit (A/B of the density throttle).
 //! * `weather` runs the default scene at dusk through a weather change: calm with crickets →
 //!   wind rising → thunderstorm and heavy rain while it cools → rain stops, the canopy keeps
 //!   dripping, a gust shakes down a shower → crickets resume, slower. Weather stores run 20×
@@ -24,6 +29,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
 
+use asmr_core::director::{bird_flags, bird_state, BirdInfo, Species};
 use asmr_core::scene::DEMO_SCENE_JSON;
 use asmr_core::{object_flags, param, telemetry, Engine, ObjectInfo, ObjectKind, SceneDesc, SourceInfo, MAX_OBJECTS, MAX_SOURCES};
 
@@ -36,6 +42,7 @@ fn main() -> std::io::Result<()> {
     let flyby = mode == "flyby";
     let weather = mode == "weather";
     let levels = weather || mode == "levels";
+    let life = mode.starts_with("life");
 
     let sr = 48_000.0f32;
     let scene = match args.get(4) {
@@ -57,6 +64,16 @@ fn main() -> std::io::Result<()> {
     engine.set_param(param::PLAYING, 1.0);
     engine.set_param(param::VOLUME, 0.8);
     println!("scene: {} ({} entities, {:.1} h)", desc.name, desc.entities.len(), engine.param(param::TIME_OF_DAY));
+    if let Some(h) = mode.strip_prefix("life:").and_then(|h| h.split(':').next()).and_then(|h| h.parse::<f32>().ok()) {
+        engine.set_param(param::TIME_OF_DAY, h);
+        println!("time of day {h:.2} h");
+    }
+    if life && mode.ends_with(":free") {
+        // A/B: no phrase limit in the mix (every bird sings when its own life says so).
+        engine.set_control(asmr_core::controls::id::MIX_DENSITY, 1.0);
+        println!("mix phrase limit off");
+    }
+    let mut log = LifeLog::new();
     if mode.contains("orbit") {
         engine.set_param(param::ORBIT, 1.0);
         engine.set_param(param::BIRDS, 1.0);
@@ -131,6 +148,9 @@ fn main() -> std::io::Result<()> {
             println!("{t:6.1}s  ⚡ lightning");
         }
         last_flash = flash;
+        if life {
+            log.update(t, &engine);
+        }
         if flyby {
             engine.objects(&mut objs);
             let mut bird_no = 0;
@@ -177,6 +197,9 @@ fn main() -> std::io::Result<()> {
     }
     let elapsed = started.elapsed().as_secs_f32();
     let rms = (energy / pcm.len().max(1) as f64).sqrt();
+    if life {
+        log.summary(seconds);
+    }
 
     write_wav(&path, sr as u32, &pcm)?;
     println!(
@@ -187,6 +210,118 @@ fn main() -> std::io::Result<()> {
         engine.telemetry(telemetry::DSP_LOAD) * 100.0,
     );
     Ok(())
+}
+
+/// Bird behaviour timeline from `asmr_get_birds` (`life` mode).
+struct LifeLog {
+    prev: Vec<BirdInfo>,
+    /// Per bird: seconds in each state, song phrases, answers, last song end.
+    time: Vec<[f32; 9]>,
+    songs: Vec<u32>,
+    answers: Vec<u32>,
+    song_end: Vec<f32>,
+    flight: Vec<(f32, [f32; 3])>,
+    concurrent: [f32; 8],
+    last_t: f32,
+}
+
+impl LifeLog {
+    fn new() -> Self {
+        Self { prev: Vec::new(), time: Vec::new(), songs: Vec::new(), answers: Vec::new(), song_end: Vec::new(), flight: Vec::new(), concurrent: [0.0; 8], last_t: 0.0 }
+    }
+
+    fn update(&mut self, t: f32, engine: &Engine) {
+        let mut b = [BirdInfo::default(); MAX_OBJECTS];
+        let n = engine.birds(&mut b);
+        let mut objs = [ObjectInfo::default(); MAX_OBJECTS];
+        let no = engine.objects(&mut objs);
+        let dt = t - self.last_t;
+        self.last_t = t;
+        if self.prev.len() != n {
+            self.prev = b[..n].to_vec();
+            self.time = vec![[0.0; 9]; n];
+            self.songs = vec![0; n];
+            self.answers = vec![0; n];
+            self.song_end = vec![-100.0; n];
+            self.flight = vec![(0.0, [0.0; 3]); n];
+            for (i, x) in b[..n].iter().enumerate() {
+                println!("{:6.1}s  {:<12} #{:<4} {}", t, Species::ALL[x.species as usize].name(), x.id, bird_state::NAMES[x.state as usize]);
+                let _ = i;
+            }
+            return;
+        }
+        let song = |x: &BirdInfo| x.flags & bird_flags::VOCAL != 0 && x.flags & bird_flags::CALLING == 0;
+        let mut singing = 0;
+        for i in 0..n {
+            let (x, p) = (b[i], self.prev[i]);
+            self.time[i][x.state as usize] += dt;
+            if song(&x) {
+                singing += 1;
+            }
+            if song(&x) && !song(&p) {
+                self.songs[i] += 1;
+                // An answer: starts 0.2-4 s after a same-species neighbour stopped.
+                let answered = (0..n).any(|j| j != i && b[j].species == x.species && (0.2..4.0).contains(&(t - self.song_end[j])));
+                if answered {
+                    self.answers[i] += 1;
+                }
+            }
+            if !song(&x) && song(&p) {
+                self.song_end[i] = t;
+            }
+            if x.state != p.state || (x.flags & bird_flags::ALARM != 0) != (p.flags & bird_flags::ALARM != 0) {
+                let o = objs[..no].iter().find(|o| o.id == x.id).copied().unwrap_or_default();
+                let d = (o.x * o.x + o.y * o.y + o.z * o.z).sqrt();
+                let az = o.y.atan2(o.x).to_degrees();
+                let sp = Species::ALL[x.species as usize];
+                let style = ["bounding", "direct", "swooping", "clatter", "silent", "soaring", "hovering"][x.flight as usize];
+                if x.state == bird_state::FLYING {
+                    self.flight[i] = (t, [o.x, o.y, o.z]);
+                }
+                let what = match x.state {
+                    s if s == bird_state::FLYING => format!("takes off ({style})"),
+                    s if p.state == bird_state::FLYING => {
+                        let (t0, a) = self.flight[i];
+                        let l = ((o.x - a[0]).powi(2) + (o.y - a[1]).powi(2) + (o.z - a[2]).powi(2)).sqrt();
+                        format!("{} ({l:.0} m in {:.1} s)", bird_state::NAMES[s as usize], t - t0)
+                    }
+                    s => bird_state::NAMES[s as usize].to_string(),
+                };
+                let alarm = if x.flags & bird_flags::ALARM != 0 { "  ALARM" } else { "" };
+                println!("{t:6.1}s  {:<12} #{:<4} {what:<30} at {d:5.1} m, az {az:+5.0}°, h {:+5.1} m{alarm}", sp.name(), x.id, o.z);
+            }
+        }
+        self.concurrent[singing.min(7)] += dt;
+        self.prev = b[..n].to_vec();
+    }
+
+    fn summary(&self, secs: f32) {
+        println!("\nper bird: share of time per state, song phrases (answers)");
+        print!("{:<20}", "");
+        for name in bird_state::NAMES {
+            print!("{name:>12}");
+        }
+        println!("{:>14}", "songs (ans)");
+        for (i, x) in self.prev.iter().enumerate() {
+            print!("{:<20}", format!("{} #{}", Species::ALL[x.species as usize].name(), x.id));
+            for k in 0..9 {
+                let v = 100.0 * self.time[i][k] / secs;
+                if v > 0.05 {
+                    print!("{:>11.0}%", v);
+                } else {
+                    print!("{:>12}", "-");
+                }
+            }
+            println!("{:>9} ({})", self.songs[i], self.answers[i]);
+        }
+        print!("songs at once (share of time):");
+        for (k, v) in self.concurrent.iter().enumerate() {
+            if *v > 0.0 {
+                print!("  {k}: {:.0}%", 100.0 * v / secs);
+            }
+        }
+        println!();
+    }
 }
 
 /// calm → wind rising → storm and rain, cooling → rain stops, dripping, a gust → calm.

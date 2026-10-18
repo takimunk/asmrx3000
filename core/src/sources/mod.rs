@@ -102,6 +102,17 @@ pub struct Controls {
     pub calling: bool,
     /// Wingbeat effort, 0 = perched / gliding, 1 = take-off clatter.
     pub flap: f32,
+    /// With `calling`: alarm calls (blackbird "chink", robin "tic", …) instead of contact calls.
+    pub alarm: bool,
+    /// The director drives the wingbeat rhythm itself (every glide is `flap = 0`); the wings
+    /// must not add their own flap/glide bouts.
+    pub wings_driven: bool,
+    /// Counter-singing: a neighbour just finished, reply soon (the next song starts within
+    /// about a second instead of after the usual pause).
+    pub reply: bool,
+    /// Counter-singing: a neighbour of the same species is singing; do not start a phrase
+    /// now (the bird still wants to: the mix keeps its place in the queue).
+    pub wait: bool,
     /// Weather and environment (director).
     pub env: Ambient,
     /// Prefer trained neural voices where a species has one (ASMR_PARAM_NEURAL_BIRDS).
@@ -156,7 +167,7 @@ impl Generator for Flyer {
         while off < out.len() {
             let len = (out.len() - off).min(self.scratch.len());
             let tmp = &mut self.scratch[..len];
-            self.wings.render(tmp, c.flap);
+            self.wings.render_driven(tmp, c.flap, c.wings_driven);
             for (o, w) in out[off..off + len].iter_mut().zip(tmp.iter()) {
                 *o = (*o + *w) * self.gain;
             }

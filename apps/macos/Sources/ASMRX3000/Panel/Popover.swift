@@ -13,8 +13,9 @@ struct StillFrames {
     var spectrogramOpen = false
 }
 
-/// The popover, top to bottom: the scene (most of it), one transport row, the prompt, a few
-/// macro levers (or one group's drawer), and the spectrogram as a quiet strip.
+/// The popover, top to bottom: the scene (most of it), one transport row, the prompt, the levers
+/// in two sections (sound: loudness per group; world: what happens in the forest) or one group's
+/// drawer, and the spectrogram as a quiet strip. All text is Russian, in Coppice Mono.
 struct Popover: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
@@ -23,16 +24,23 @@ struct Popover: View {
     var stills: StillFrames?
 
     static let width: CGFloat = 540
-    static let sceneHeight: CGFloat = 384
+    static let sceneHeight: CGFloat = 336
     static let gutter: CGFloat = Grid.x4
-    static let leverHeight: CGFloat = 28
+    /// World levers: pictogram, name, slider (the waveform), value, chevron.
+    static let leverHeight: CGFloat = 26
     static let childHeight: CGFloat = 28
-    static let iconColumn: CGFloat = 36
-    static let chevronColumn: CGFloat = 28
+    static let iconColumn: CGFloat = 26
+    static let nameColumn: CGFloat = 150
+    static let valueColumn: CGFloat = 72
+    static let chevronColumn: CGFloat = 20
+    /// Sound levels: two columns of compact rows.
+    static let soundRowHeight: CGFloat = 22
+    static let soundColumnGap: CGFloat = Grid.x4
+    static var soundColumnWidth: CGFloat { (width - 2 * gutter - soundColumnGap) / 2 }
     static let spectrogramClosed: CGFloat = 24
     static let spectrogramOpen: CGFloat = 96
     /// The levers' slider width (the track scopes are drawn to it).
-    static var sliderWidth: CGFloat { width - 2 * gutter - iconColumn - chevronColumn }
+    static var sliderWidth: CGFloat { width - 2 * gutter - iconColumn - nameColumn - valueColumn - chevronColumn }
     static var stripWidth: CGFloat { width - 2 * gutter }
 
     init(model: AppModel, stills: StillFrames? = nil) {
@@ -82,7 +90,7 @@ private struct SceneArea: View {
                 }
             }
             .frame(width: Popover.width, height: Popover.sceneHeight)
-            .accessibilityLabel("Scene")
+            .accessibilityLabel("Сцена")
 
             SelectionChip(readout: model.stage.readout, meters: model.stage.meters, showHint: hovering || stills != nil)
                 .padding(Grid.x3)
@@ -110,15 +118,15 @@ private struct SelectionChip: View {
                             .font(Ink.text(Ink.Size.caption))
                             .foregroundStyle(Ink.graphite)
                     }
-                    Text(!s.movable ? "Flying on its own. Land to move it."
-                         : s.kind == .bird ? "← → ↑ ↓ move   ⇧↑ ⇧↓ height   esc let go"
-                         : "← → ↑ ↓ move   esc let go")
+                    Text(!s.movable ? "Летит сама: подвинуть можно, когда сядет"
+                         : s.kind == .bird ? "← → ↑ ↓ двигать   ⇧↑ ⇧↓ высота   esc отпустить"
+                         : "← → ↑ ↓ двигать   esc отпустить")
                         .font(Ink.text(Ink.Size.caption))
                         .foregroundStyle(Ink.graphite)
                 }
                 .chip()
             } else if showHint {
-                Text("Click a tree, a bird or the river to move it")
+                Text("Нажмите на дерево, птицу или реку, чтобы подвинуть")
                     .font(Ink.text(Ink.Size.caption))
                     .foregroundStyle(Ink.graphite)
                     .chip()
@@ -130,18 +138,18 @@ private struct SelectionChip: View {
 
     private func name(_ kind: Thing.Kind) -> String {
         switch kind {
-        case .tree: return "Tree"
-        case .bird: return "Bird"
-        case .river: return "River"
+        case .tree: return "Дерево"
+        case .bird: return "Птица"
+        case .river: return "Река"
         }
     }
 
     /// Relative to the listener. Trees and the river stand on the ground, so only birds get a height.
     private func coordinates(_ p: SIMD3<Float>, withHeight: Bool) -> String {
         func f(_ v: Float) -> String { String(format: "%.1f", v) }
-        let ahead = p.x >= 0 ? "\(f(p.x)) m ahead" : "\(f(-p.x)) m behind"
-        let side = p.y >= 0 ? "\(f(p.y)) m left" : "\(f(-p.y)) m right"
-        return withHeight ? "\(ahead), \(side), \(f(p.z)) m up" : "\(ahead), \(side)"
+        let ahead = p.x >= 0 ? "\(f(p.x)) м впереди" : "\(f(-p.x)) м сзади"
+        let side = p.y >= 0 ? "\(f(p.y)) м слева" : "\(f(-p.y)) м справа"
+        return withHeight ? "\(ahead), \(side), \(f(p.z)) м вверх" : "\(ahead), \(side)"
     }
 }
 
@@ -156,8 +164,8 @@ private extension View {
 
 // MARK: - Transport
 
-/// Play, volume, flight, recenter, head tracking; the status text on the right names whatever
-/// the pointer is over, with its key.
+/// Play, volume, where the listener is (on the ground or flying), head tracking and recenter;
+/// the status text on the right names whatever the pointer is over, with its key.
 private struct Transport: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
@@ -169,7 +177,7 @@ private struct Transport: View {
 
     var body: some View {
         HStack(spacing: Grid.x1) {
-            ToolButton(icon: audio.isPlaying ? .pause : .play, name: audio.isPlaying ? "Pause" : "Play", key: "space",
+            ToolButton(icon: audio.isPlaying ? .pause : .play, name: audio.isPlaying ? "Пауза" : "Играть", key: "пробел",
                        style: audio.isPlaying ? .plain : .primary, hint: $hint, action: act { model.togglePlay() })
             if let volume = controls.macros.first(where: { Int($0.group) == ASMR_GROUP_MASTER }) {
                 VolumeSlider(control: volume, hint: $hint) { v in
@@ -179,15 +187,18 @@ private struct Transport: View {
                 }
                 .padding(.trailing, Grid.x2)
             }
-            ToolButton(icon: .flight, name: audio.flying ? "Land" : "Fly over the forest", key: "F",
-                       style: audio.flying ? .on : .plain, live: meters.live, hint: $hint, action: act { audio.flying.toggle() })
-            ToolButton(icon: .headphones, name: head.enabled ? "Turn head tracking off" : "Turn head tracking on", key: "H",
-                       style: head.enabled ? .on : .plain, hint: $hint, action: act { head.enabled.toggle() })
-            ToolButton(icon: .recenter, name: "Recenter: look ahead now", key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
+            ModeSwitch(flying: audio.flying, hint: $hint) { fly in
+                act { if audio.flying != fly { audio.flying = fly } }()
+            }
+            .padding(.trailing, Grid.x1)
+            LabeledToggle(icon: .head, title: "Голова", on: head.enabled,
+                          name: head.enabled ? "Трекинг головы включён: выключить" : "Трекинг головы по AirPods: включить",
+                          key: "H", hint: $hint, action: act { head.enabled.toggle() })
+            ToolButton(icon: .recenter, name: "Смотреть вперёд отсюда", key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
                 .disabled(!head.enabled)
             Spacer(minLength: Grid.x2)
             status
-            ToolButton(icon: .power, name: "Quit ASMR X3000", key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
+            ToolButton(icon: .power, name: "Выйти из ASMR X3000", key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
                 .padding(.leading, Grid.x1)
         }
@@ -210,15 +221,119 @@ private struct Transport: View {
                     Circle()
                         .fill(Ink.violet.opacity(labels.gaze == nil ? 0.35 : 1))
                         .frame(width: 5, height: 5)
-                    Text(labels.gaze.map { "looking \($0)" } ?? (head.connected ? "head tracking" : "no AirPods"))
+                    Text(labels.gaze.map(Self.russian) ?? (head.connected ? "AirPods" : "нет AirPods"))
                         .foregroundStyle(Ink.graphite)
+                } else {
+                    // The hour is also the world's "Время суток" lever; here only when there is room.
+                    Text(labels.time).foregroundStyle(Ink.ash)
                 }
-                Text(labels.time).foregroundStyle(Ink.ash)
             }
         }
         .font(Ink.text(Ink.Size.caption))
         .lineLimit(1)
+        .truncationMode(.head)
         .accessibilityHidden(true)
+    }
+
+    /// The scene's gaze label ("35° left, 15° up", Stage.swift), short and language-free:
+    /// "← 35° ↑ 15°"; "straight ahead" is "прямо".
+    static func russian(_ gaze: String) -> String {
+        let arrows = ["left": "←", "right": "→", "up": "↑", "down": "↓", "straight ahead": "прямо"]
+        return gaze.components(separatedBy: ", ").map { part in
+            let words = part.split(separator: " ", maxSplits: 1).map(String.init)
+            guard words.count == 2, let arrow = arrows[words[1]] else { return arrows[part] ?? part }
+            return "\(arrow) \(words[0])"
+        }.joined(separator: " ")
+    }
+}
+
+/// Where the listener is: "На земле | Полёт", the current one raised. Clicking the other one
+/// switches; F toggles. Says plainly which mode is on and what a click does.
+private struct ModeSwitch: View {
+    let flying: Bool
+    @Binding var hint: String?
+    let set: (Bool) -> Void
+    @State private var hovered: Bool?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            segment(fly: false, title: "На земле")
+            segment(fly: true, title: "Полёт")
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Режим")
+    }
+
+    private func segment(fly: Bool, title: String) -> some View {
+        let on = flying == fly
+        return Button { set(fly) } label: {
+            HStack(spacing: Grid.x1) {
+                Text(title)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(on ? Ink.paper : hovered == fly ? Ink.paper : Ink.graphite)
+                    .fixedSize()
+            }
+            .padding(.horizontal, Grid.x2 - 1)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(on ? Ink.pressed : hovered == fly ? Ink.raised : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { h in
+            hovered = h ? fly : (hovered == fly ? nil : hovered)
+            hint = h ? (on ? (fly ? "Сейчас: полёт над лесом" : "Сейчас: на земле")
+                           : (fly ? "Взлететь над лесом   F" : "Приземлиться   F")) : nil
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// A toggle with its name written next to the pictogram: raised and bright when on, the
+/// pictogram struck through when off.
+private struct LabeledToggle: View {
+    let icon: Icon
+    let title: String
+    let on: Bool
+    let name: String
+    var key: String?
+    @Binding var hint: String?
+    let action: () -> Void
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Grid.x1 + 2) {
+                IconView(icon: icon, color: on || hovering ? Ink.paper : Ink.graphite, size: 18,
+                         animating: hovering && on, struck: !on)
+                Text(title)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(on || hovering ? Ink.paper : Ink.graphite)
+                    .fixedSize()
+                if on {
+                    Circle().fill(Ink.violet).frame(width: 5, height: 5)
+                }
+            }
+            .padding(.horizontal, Grid.x2)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ToolStyle(style: on ? .on : .plain, hovering: hovering, focused: focused))
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onHover { h in
+            hovering = h
+            hint = h ? (key.map { "\(name)   \($0)" } ?? name) : nil
+        }
+        .help(name)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -290,7 +405,7 @@ private struct ToolStyle: ButtonStyle {
     }
 }
 
-/// The master level, small, next to play.
+/// The master level, small, next to play (the one loudness that is not in the sound section).
 private struct VolumeSlider: View {
     let control: Control
     @Binding var hint: String?
@@ -317,18 +432,18 @@ private struct VolumeSlider: View {
                     .onChanged { g in
                         dragging = true
                         set(control.value(atFraction: Float(g.location.x / w)))
-                        hint = "Volume   \(Int((control.fraction * 100).rounded())) %"
+                        hint = "Громкость   \(Int((control.fraction * 100).rounded())) %"
                     }
                     .onEnded { _ in dragging = false; if !hovering { hint = nil } })
             }
-            .frame(width: 64, height: 32)
+            .frame(width: 52, height: 32)
         }
         .onHover { h in
             hovering = h
-            hint = h ? "Volume   \(Int((control.fraction * 100).rounded())) %" : (dragging ? hint : nil)
+            hint = h ? "Громкость   \(Int((control.fraction * 100).rounded())) %" : (dragging ? hint : nil)
         }
         .accessibilityElement()
-        .accessibilityLabel("Volume")
+        .accessibilityLabel("Громкость")
         .accessibilityValue("\(Int(control.fraction * 100)) %")
         .accessibilityAdjustableAction { dir in
             set(control.value(atFraction: control.fraction + (dir == .increment ? 0.05 : -0.05)))
@@ -367,13 +482,13 @@ private struct SpectrogramStrip: View {
             }
             .frame(width: w, height: h)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .accessibilityLabel("Spectrogram")
+            .accessibilityLabel("Спектрограмма")
 
             if open {
                 ForEach([100, 1000, 10_000], id: \.self) { hz in
                     let y = yFor(Float(hz), h: h)
                     if y > 7 && y < h - 7 {
-                        Text(hz >= 1000 ? "\(hz / 1000) kHz" : "\(hz) Hz")
+                        Text(hz >= 1000 ? "\(hz / 1000) кГц" : "\(hz) Гц")
                             .font(Ink.text(Ink.Size.caption - 1))
                             .foregroundStyle(Ink.ash)
                             .fixedSize()
@@ -398,7 +513,7 @@ private struct SpectrogramStrip: View {
                 Button { openStored = true } label: { Color.clear.contentShape(Rectangle()) }
                     .buttonStyle(.plain)
                     .frame(width: w, height: h)
-                    .accessibilityLabel("Open the spectrogram")
+                    .accessibilityLabel("Открыть спектрограмму")
             }
 
             Button { openStored.toggle() } label: {
@@ -410,11 +525,11 @@ private struct SpectrogramStrip: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.top, open ? 2 : 1)
-            .accessibilityLabel(open ? "Close the spectrogram" : "Open the spectrogram")
+            .accessibilityLabel(open ? "Закрыть спектрограмму" : "Открыть спектрограмму")
         }
         .frame(width: w, height: h)
         .onHover { hovering = $0 }
-        .help(open ? "Click to hold, scroll to zoom, double-click to reset" : "Spectrogram")
+        .help(open ? "Щелчок: остановить, колесо: масштаб, двойной щелчок: сброс" : "Спектрограмма")
         .onAppear { zoom = stage.zoom }
     }
 
@@ -430,8 +545,8 @@ private struct SpectrogramStrip: View {
         let back = Int((w - p.x) / w * Float(SpectrogramRenderer.visibleColumns))
         let v = stage.historyValue(column: back, band: frac)
         let db = Int((v * 70 - 90).rounded())
-        let freq = hz >= 1000 ? String(format: "%.2f kHz", hz / 1000) : String(format: "%.0f Hz", hz)
-        let level = "\(db) dB".replacingOccurrences(of: "-", with: "−")
-        return "\(freq)  \(level)\(frozen ? "  held" : "")"
+        let freq = hz >= 1000 ? String(format: "%.2f кГц", hz / 1000) : String(format: "%.0f Гц", hz)
+        let level = "\(db) дБ".replacingOccurrences(of: "-", with: "−")
+        return "\(freq)  \(level)\(frozen ? "  стоп" : "")"
     }
 }

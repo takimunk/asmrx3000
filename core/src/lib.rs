@@ -166,6 +166,18 @@ pub unsafe extern "C" fn asmr_get_objects(engine: *const Engine, out: *mut Objec
     }
 }
 
+/// Per-bird behaviour telemetry (see `AsmrBirdInfo` in asmr.h). Returns the number written.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` valid for `max` entries (or NULL).
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_birds(engine: *const Engine, out: *mut director::BirdInfo, max: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.birds(slice::from_raw_parts_mut(out, max as usize)) as u32,
+        _ => 0,
+    }
+}
+
 /// # Safety
 /// `engine` must be a live engine pointer.
 #[no_mangle]

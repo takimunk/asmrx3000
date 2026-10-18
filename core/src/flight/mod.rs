@@ -96,7 +96,7 @@ enum Pool {
 const POOLS: [(Pool, usize, usize); 8] = [
     (Pool::Near, 14, 10),
     (Pool::Cell, 8, 6),
-    (Pool::Bird, 10, 8),
+    (Pool::Bird, 14, 8),
     (Pool::Water, 8, 6),
     (Pool::Insects, 4, 3),
     (Pool::Fire, 2, 1),
@@ -106,10 +106,10 @@ const POOLS: [(Pool, usize, usize); 8] = [
 
 /// Emitters in flight mode (fixed: the level-of-detail bound). At most 41 sound at once
 /// (the voiced counts above); the rest are spares that fade out while others fade in.
-pub const EMITTERS: usize = 54;
+pub const EMITTERS: usize = 58;
 
 /// Species of the bird slots (a streamed bird takes a slot of its species when one is free).
-const BIRD_SLOTS: [Species; 10] = [
+const BIRD_SLOTS: [Species; 14] = [
     Species::Chaffinch,
     Species::Chaffinch,
     Species::Robin,
@@ -120,6 +120,10 @@ const BIRD_SLOTS: [Species; 10] = [
     Species::WoodPigeon,
     Species::Cuckoo,
     Species::TawnyOwl,
+    Species::Blackbird,
+    Species::Skylark,
+    Species::Gull,
+    Species::Raven,
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -995,7 +999,7 @@ impl Flight {
                     let side = -hs * dx + hc * dy;
                     let dz = b.pos[2] - pose.height as f64;
                     let d = (dx * dx + dy * dy + dz * dz).sqrt() as f32;
-                    let flush_at = 6.0 + 0.9 * speed;
+                    let flush_at = 2.0 + 1.2 * b.species().def().flush + 0.9 * speed;
                     if d < flush_at && ahead > -4.0 {
                         b.checked = true;
                         let mut r = land::Stream::new(land::hash(seed, b.id as i64, 0, 0xF1A5));
@@ -1005,6 +1009,8 @@ impl Flight {
                             Species::SongThrush | Species::Cuckoo => 0.5,
                             Species::Chaffinch => 0.4,
                             Species::Robin => 0.25,
+                            Species::Gull | Species::Raven => 0.6,
+                            Species::Skylark => 0.45,
                             _ => 0.2,
                         };
                         let p = shy * (0.3 + 0.7 * (speed / 8.0).min(1.0));

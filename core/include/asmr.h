@@ -27,7 +27,7 @@ enum {
     ASMR_PARAM_TEMPERATURE = 17, /* air temperature, deg C (insect song rates follow it) */
     ASMR_PARAM_HUMIDITY = 18,    /* relative humidity 0..1 (drying of leaves and ground) */
     ASMR_PARAM_STORM = 19,       /* thunderstorm activity 0..1 (lightning rate and closeness) */
-    ASMR_PARAM_NEURAL_BIRDS = 10, /* 1 = trained neural voices where a species has one (chaffinch, robin, song thrush, nightingale) [1], 0 = procedural */
+    ASMR_PARAM_NEURAL_BIRDS = 10, /* 1 = trained neural voices where a species has one (chaffinch, robin, song thrush, nightingale, blackbird) [1], 0 = procedural */
 
     /* Acoustic environment (34..40). Any thread; applied at the next block. Values are
      * clamped to the given ranges; defaults in brackets. See docs/spatial-engine.md.
@@ -146,6 +146,48 @@ typedef struct AsmrObjectInfo {
     float x, y, z;
     uint32_t flags; /* ASMR_OBJECT_FLAG_* */
 } AsmrObjectInfo;
+
+/* Birds of the scene (asmr_get_birds): what each one is doing, for drawing it fly its own way.
+   docs/director.md "Life model". */
+enum {
+    ASMR_SPECIES_CHAFFINCH = 0, ASMR_SPECIES_ROBIN = 1, ASMR_SPECIES_SONG_THRUSH = 2, ASMR_SPECIES_NIGHTINGALE = 3,
+    ASMR_SPECIES_TAWNY_OWL = 4, ASMR_SPECIES_CUCKOO = 5, ASMR_SPECIES_WOOD_PIGEON = 6, ASMR_SPECIES_SWALLOW = 7,
+    ASMR_SPECIES_BLACKBIRD = 8, ASMR_SPECIES_SKYLARK = 9, ASMR_SPECIES_GULL = 10, ASMR_SPECIES_RAVEN = 11,
+};
+enum {
+    ASMR_BIRD_RESTING = 0,     /* perched, quiet (or roosting) */
+    ASMR_BIRD_SINGING = 1,     /* on a song post */
+    ASMR_BIRD_ALERT = 2,       /* perched, alarm calls */
+    ASMR_BIRD_FORAGING = 3,    /* on the ground, hopping */
+    ASMR_BIRD_FLYING = 4,      /* flying from A to B */
+    ASMR_BIRD_SOARING = 5,     /* feeding on the wing / soaring over an area */
+    ASMR_BIRD_SONG_FLIGHT = 6, /* skylark: climbing, hovering, singing */
+    ASMR_BIRD_CIRCLING = 7,
+    ASMR_BIRD_ABSENT = 8,
+};
+enum {
+    ASMR_FLIGHT_BOUNDING = 0,  /* finches: flap bursts and closed-wing glides, undulating */
+    ASMR_FLIGHT_DIRECT = 1,    /* thrushes, robin, cuckoo: fast, low, straight */
+    ASMR_FLIGHT_SWOOPING = 2,  /* swallows */
+    ASMR_FLIGHT_CLATTER = 3,   /* wood pigeon: wing-clap take-off, glides */
+    ASMR_FLIGHT_SILENT = 4,    /* owl: few beats, long glides */
+    ASMR_FLIGHT_SOARING = 5,   /* gull, raven: slow beats, long glides */
+    ASMR_FLIGHT_HOVERING = 6,  /* skylark */
+};
+enum {
+    ASMR_BIRD_FLAG_VOCAL = 1u << 0,   /* voice sounding now */
+    ASMR_BIRD_FLAG_CALLING = 1u << 1, /* short calls rather than song */
+    ASMR_BIRD_FLAG_ALARM = 1u << 2,   /* alarm calls / fleeing */
+};
+typedef struct AsmrBirdInfo {
+    uint32_t id;       /* = AsmrObjectInfo.id */
+    uint32_t species;  /* ASMR_SPECIES_* */
+    uint32_t state;    /* ASMR_BIRD_* */
+    uint32_t flight;   /* ASMR_FLIGHT_* */
+    float flap;        /* wingbeat effort now 0..1; 0 = perched, gliding, wings closed */
+    float vx, vy, vz;  /* velocity, m/s */
+    uint32_t flags;    /* ASMR_BIRD_FLAG_* */
+} AsmrBirdInfo;
 
 /* Generic controls (docs/physical-models.md, "Controls ABI"): every multi-parameter model as a
    tree of sliders. Each group has one macro (bit0); its children are physical parameters. Moving
@@ -295,6 +337,8 @@ uint32_t asmr_get_objects(const AsmrEngine *engine, AsmrObjectInfo *out, uint32_
 /* Moves a MOVABLE object (a tree carries its canopy and perched birds; a river translates its
    polyline). Lock-free; applied by the audio thread on the next asmr_render. Ignored otherwise. */
 void asmr_set_object_position(const AsmrEngine *engine, uint32_t id, float x, float y, float z);
+/* Scene birds (AsmrBirdInfo above; match to asmr_get_objects by id); 0 in flight mode. Any thread. */
+uint32_t asmr_get_birds(const AsmrEngine *engine, AsmrBirdInfo *out, uint32_t max);
 /* Control tree (see AsmrControlInfo above). Any thread. */
 uint32_t asmr_get_controls(const AsmrEngine *engine, AsmrControlInfo *out, uint32_t max);
 void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);

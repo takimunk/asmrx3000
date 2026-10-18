@@ -293,8 +293,10 @@ fn tree_shape(sp: TreeSpecies, r: &mut Stream) -> (f32, f32, f32) {
     }
 }
 
-/// Which birds live in which trees (weights over `BIRD_SPECIES`).
-pub const BIRD_SPECIES: [Species; 8] = [
+/// Species a streamed bird can be (index = `Bird::species`). The first eight live in the
+/// trees of the forest biomes (weights per tree species below); the new biomes draw from the
+/// bird director's biome tables (`director::species_weights_for_biome`).
+pub const BIRD_SPECIES: [Species; 12] = [
     Species::Chaffinch,
     Species::Robin,
     Species::SongThrush,
@@ -303,19 +305,42 @@ pub const BIRD_SPECIES: [Species; 8] = [
     Species::Cuckoo,
     Species::TawnyOwl,
     Species::Swallow,
+    Species::Blackbird,
+    Species::Skylark,
+    Species::Gull,
+    Species::Raven,
 ];
 
-fn bird_weights(sp: TreeSpecies, edge: bool) -> [f32; 8] {
+fn bird_weights(sp: TreeSpecies, edge: bool) -> [f32; 12] {
     let mut w = match sp {
-        TreeSpecies::Spruce | TreeSpecies::Pine => [0.45, 0.30, 0.10, 0.0, 0.07, 0.0, 0.08, 0.0],
-        TreeSpecies::Oak => [0.30, 0.10, 0.20, 0.0, 0.30, 0.10, 0.0, 0.0],
-        TreeSpecies::Willow | TreeSpecies::Alder => [0.20, 0.20, 0.20, 0.40, 0.0, 0.0, 0.0, 0.0],
-        TreeSpecies::Birch | TreeSpecies::Aspen => [0.35, 0.25, 0.20, 0.10, 0.0, 0.10, 0.0, 0.0],
+        TreeSpecies::Spruce | TreeSpecies::Pine => [0.45, 0.30, 0.10, 0.0, 0.07, 0.0, 0.08, 0.0, 0.05, 0.0, 0.0, 0.0],
+        TreeSpecies::Oak => [0.30, 0.10, 0.20, 0.0, 0.30, 0.10, 0.0, 0.0, 0.12, 0.0, 0.0, 0.0],
+        TreeSpecies::Willow | TreeSpecies::Alder => [0.20, 0.20, 0.20, 0.40, 0.0, 0.0, 0.0, 0.0, 0.10, 0.0, 0.0, 0.0],
+        TreeSpecies::Birch | TreeSpecies::Aspen => [0.35, 0.25, 0.20, 0.10, 0.0, 0.10, 0.0, 0.0, 0.10, 0.0, 0.0, 0.0],
     };
     if edge {
         w[5] += 0.15;
     }
     w
+}
+
+/// The bird director's biome for one of ours, when its birds come from the director's
+/// tables (the five open biomes); None for the forest biomes (birds by tree species).
+pub fn director_biome(b: &Biome) -> Option<&'static str> {
+    match b.name {
+        "desert" | "snowy_mountains" | "lake_shore" | "sea_coast" | "big_river" => Some(b.name),
+        _ => None,
+    }
+}
+
+/// Index of a species in `BIRD_SPECIES` (unknown species fall back to the chaffinch).
+pub fn bird_index(sp: Species) -> u8 {
+    BIRD_SPECIES.iter().position(|s| *s == sp).unwrap_or(0) as u8
+}
+
+/// Birds of the open: they sing or call in the air (larks hover, gulls and ravens soar).
+pub fn aerial(sp: Species) -> bool {
+    matches!(sp, Species::Skylark | Species::Gull | Species::Raven)
 }
 
 fn pick(weights: &[f32], u: f32) -> usize {
@@ -1446,11 +1471,21 @@ impl Land {
                 n += 1;
                 // Birds live in the trees.
                 if r.uniform() < b.birds * 2.0 && nb < BIRDS_PER_TILE {
-                    let mut bw = bird_weights(SPECIES[sp], c < 0.6);
-                    for (k, v) in bw.iter_mut().enumerate() {
-                        *v *= species_weight(BIRD_SPECIES[k], &habitat);
-                    }
-                    let species = pick(&bw, r.uniform()) as u8;
+                    let species = match director_biome(&b) {
+                        // Tree birds of the open biomes from the director's table (gulls and
+                        // ravens get their own, in the air, below).
+                        Some(name) => {
+                            let s = crate::director::pick_species_for_biome(name, r.uniform());
+                            bird_index(if aerial(s) { Species::Chaffinch } else { s })
+                        }
+                        None => {
+                            let mut bw = bird_weights(SPECIES[sp], c < 0.6);
+                            for (k, v) in bw.iter_mut().enumerate() {
+                                *v *= species_weight(BIRD_SPECIES[k], &habitat);
+                            }
+                            pick(&bw, r.uniform()) as u8
+                        }
+                    };
                     let a = r.range(0.0, core::f32::consts::TAU);
                     let rr = r.range(0.2, 0.8) * crown_r;
                     let z = crown_z + r.range(-0.4, 0.9) * crown_r;
@@ -1460,6 +1495,32 @@ impl Land {
                     self.birds[t * BIRDS_PER_TILE + nb] = Bird { id, alive: true, species, rank: brank, pos, ..Default::default() };
                     nb += 1;
                 }
+            }
+        }
+        // Birds of the open (the director's biome tables): larks hovering in song flight,
+        // gulls and ravens on the wind, the rest low on the ground, dunes, rocks and shores.
+        if let Some(name) = director_biome(&b) {
+            let mut r = Stream::new(hash(self.seed, tile.i as i64, tile.j as i64, 0xB1D5 ^ self.biome as u64));
+            let expect = 1.6 * crate::director::bird_density_for_biome(name);
+            let k = expect.floor() as usize + usize::from(r.uniform() < expect.fract());
+            for _ in 0..k {
+                if nb >= BIRDS_PER_TILE {
+                    break;
+                }
+                let (x, y) = (x0 + r.uniform() as f64 * TILE, y0 + r.uniform() as f64 * TILE);
+                let sp = crate::director::pick_species_for_biome(name, r.uniform());
+                let (g, w, _) = self.nearest(x, y);
+                let z = if aerial(sp) {
+                    r.range(12.0, 35.0)
+                } else if w > g {
+                    continue;
+                } else {
+                    r.range(0.3, 1.5)
+                };
+                let brank = r.uniform();
+                let id = self.id();
+                self.birds[t * BIRDS_PER_TILE + nb] = Bird { id, alive: true, species: bird_index(sp), rank: brank, pos: [x, y, z as f64], ..Default::default() };
+                nb += 1;
             }
         }
         self.tiles[t].trees = true;

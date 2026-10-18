@@ -76,9 +76,9 @@ const BIRDS_SCENE: &str = r#"{
 }"#;
 
 fn birds_scene() -> String {
-    let all = ["chaffinch", "robin", "song_thrush", "nightingale", "tawny_owl", "cuckoo", "wood_pigeon", "swallow"];
-    let birds: Vec<String> = all
+    let birds: Vec<String> = Species::ALL
         .iter()
+        .map(|s| s.name())
         .enumerate()
         .map(|(i, s)| format!(r#"{{ "kind": "bird", "id": {}, "species": "{s}", "behaviour": {{ "type": "resident", "home": 1, "roam": 0.01 }} }}"#, 100 + i))
         .collect();
@@ -117,7 +117,7 @@ fn main() {
             }
         }
         println!("-- birds, {} voices --", if neural > 0.5 { "neural (where trained)" } else { "procedural" });
-        for s in [Species::Chaffinch, Species::Robin, Species::SongThrush, Species::Nightingale, Species::TawnyOwl, Species::Cuckoo, Species::WoodPigeon, Species::Swallow] {
+        for s in Species::ALL {
             let c = SoundClass::Bird(s);
             match lafmax.iter().find(|x| x.0 == c) {
                 Some(x) => report(c, x.1),
