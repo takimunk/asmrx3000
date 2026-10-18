@@ -19,8 +19,9 @@ struct Popover: View {
     static let width: CGFloat = 560
     static let sceneHeight: CGFloat = 356
     static let spectrogramHeight: CGFloat = 104
-    static let rowHeight: CGFloat = 26
+    static let rowHeight: CGFloat = 23
     static let iconColumn: CGFloat = 34
+    static let maxTracksHeight: CGFloat = 300
 
     init(model: AppModel, stills: StillFrames? = nil) {
         self.model = model
@@ -58,6 +59,9 @@ struct Popover: View {
                     .padding(.top, 10)
                     .padding(.trailing, 10)
 
+                OrientationLabels(labels: model.stage.labels)
+                    .allowsHitTesting(false)
+
                 SelectionReadout(readout: model.stage.readout, meters: model.stage.meters)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(.leading, 18)
@@ -73,7 +77,7 @@ struct Popover: View {
             SpectrogramPanel(stage: model.stage, stills: stills)
                 .padding(.horizontal, 16)
 
-            Tracks(model: model, stills: stills)
+            TracksPanel(model: model, controls: model.stage.controls, stills: stills)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 14)
@@ -140,6 +144,48 @@ private struct QuietButton: View {
     }
 }
 
+// MARK: - Orientation
+
+/// "ahead" on the ground in front of the listener; the hour and where the head is turned in the
+/// corner. The gaze line carries a small violet point: the same colour as the gaze in the scene.
+private struct OrientationLabels: View {
+    @ObservedObject var labels: SceneLabels
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if let a = labels.ahead {
+                Text("ahead")
+                    .font(Ink.text(10))
+                    .foregroundStyle(Ink.graphite)
+                    .padding(.horizontal, 3)
+                    .background(Ink.black.opacity(0.7))
+                    .fixedSize()
+                    .position(x: a.x, y: a.y + 9)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(labels.time)
+                    .font(Ink.text(11))
+                    .foregroundStyle(Ink.graphite)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color(red: 0.62, green: 0.45, blue: 1.0).opacity(labels.gaze == nil ? 0.4 : 1))
+                        .frame(width: 5, height: 5)
+                        .shadow(color: Color(red: 0.56, green: 0.36, blue: 1.0), radius: labels.gaze == nil ? 0 : 3)
+                    Text(labels.gaze.map { "looking \($0)" } ?? "head tracking off")
+                        .font(Ink.text(11))
+                        .foregroundStyle(Ink.graphite)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Ink.black.opacity(0.65))
+            .padding(.leading, 10)
+            .padding(.top, 9)
+        }
+        .frame(width: Popover.width, height: Popover.sceneHeight, alignment: .topLeading)
+    }
+}
+
 // MARK: - Selection readout
 
 private struct SelectionReadout: View {
@@ -152,12 +198,14 @@ private struct SelectionReadout: View {
                 HStack(spacing: 8) {
                     IconView(icon: s.kind == .tree ? .tree : s.kind == .bird ? .bird : .river, size: 16,
                              animating: meters.live)
-                    Text(coordinates(s.position, river: s.kind == .river))
-                        .font(Ink.italic(14))
-                        .foregroundStyle(Ink.paper)
+                    Text(name(s.kind)).font(Ink.text(14)).foregroundStyle(Ink.paper)
+                    Text(coordinates(s.position, withHeight: s.kind == .bird))
+                        .font(Ink.italic(12.5))
+                        .foregroundStyle(Ink.graphite)
                 }
-                Text(s.movable ? "Arrows move it; with shift, ↑ and ↓ raise and lower it; esc lets go."
-                               : "It is flying on its own; bring flight to rest to perch it.")
+                Text(!s.movable ? "It is flying on its own; bring flight to rest to perch it."
+                     : s.kind == .bird ? "Arrows move it; with shift, ↑ and ↓ raise and lower it; esc lets go."
+                     : "Arrows move it along the ground; esc lets go.")
                     .font(Ink.text(11.5))
                     .foregroundStyle(Ink.graphite)
             }
@@ -168,11 +216,20 @@ private struct SelectionReadout: View {
         }
     }
 
-    private func coordinates(_ p: SIMD3<Float>, river: Bool) -> String {
-        func f(_ v: Float) -> String { String(format: "%.2f", v) }
+    private func name(_ kind: Thing.Kind) -> String {
+        switch kind {
+        case .tree: return "Tree"
+        case .bird: return "Bird"
+        case .river: return "River"
+        }
+    }
+
+    /// Relative to the listener. Trees and the river stand on the ground, so only birds get a height.
+    private func coordinates(_ p: SIMD3<Float>, withHeight: Bool) -> String {
+        func f(_ v: Float) -> String { String(format: "%.1f", v) }
         let ahead = p.x >= 0 ? "\(f(p.x)) m ahead" : "\(f(-p.x)) m behind"
         let side = p.y >= 0 ? "\(f(p.y)) m left" : "\(f(-p.y)) m right"
-        return river ? "\(ahead), \(side)" : "\(ahead), \(side), \(f(p.z)) m up"
+        return withHeight ? "\(ahead), \(side), \(f(p.z)) m up" : "\(ahead), \(side)"
     }
 }
 
@@ -254,6 +311,28 @@ private struct SpectrogramPanel: View {
 
 // MARK: - Tracks
 
+/// A long branch (water has nine parameters) scrolls rather than growing the popover.
+private struct TracksPanel: View {
+    let model: AppModel
+    @ObservedObject var controls: ControlsModel
+    var stills: StillFrames?
+
+    var body: some View {
+        let height = min(Tracks.contentHeight(controls), Popover.maxTracksHeight)
+        if stills != nil {
+            // ImageRenderer does not draw ScrollView content; a snapshot shows the top of the list.
+            Tracks(model: model, stills: stills)
+                .frame(height: height, alignment: .top)
+                .clipped()
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                Tracks(model: model, stills: stills)
+            }
+            .frame(height: height)
+        }
+    }
+}
+
 /// The engine's control tree as branching tracks. A macro row is its group's pictogram and the
 /// live waveform of that sound, developed up to the knob. Clicking the pictogram opens the
 /// branch: the physical parameters underneath as fine sliders, joined by hairlines.
@@ -262,7 +341,7 @@ struct Tracks: View {
     @ObservedObject var controls: ControlsModel
     var stills: StillFrames?
 
-    static let childHeight: CGFloat = 22
+    static let childHeight: CGFloat = 20
 
     init(model: AppModel, stills: StillFrames?) {
         self.model = model
@@ -272,6 +351,7 @@ struct Tracks: View {
 
     var body: some View {
         let macros = controls.macros
+        let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         ZStack(alignment: .topLeading) {
             Group {
                 if let stills {
@@ -286,12 +366,12 @@ struct Tracks: View {
                 ForEach(macros, id: \.id) { m in
                     let kids = controls.children(of: m.id)
                     let open = controls.expanded == m.id && !kids.isEmpty
-                    MacroRow(control: m, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
+                    MacroRow(control: m, hour: hour, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
                              set: set, toggle: { toggle(m.id) })
                         .frame(height: Popover.rowHeight)
                     if open {
                         ForEach(Array(kids.enumerated()), id: \.element.id) { i, c in
-                            ChildRow(control: c, last: i == kids.count - 1, set: set)
+                            ChildRow(control: c, hour: hour, last: i == kids.count - 1, set: set)
                                 .frame(height: Self.childHeight)
                         }
                     }
@@ -316,9 +396,11 @@ struct Tracks: View {
         Self.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
     }
 
-    private func height(_ macros: [Control]) -> CGFloat {
+    private func height(_ macros: [Control]) -> CGFloat { Self.contentHeight(controls) }
+
+    static func contentHeight(_ controls: ControlsModel) -> CGFloat {
         let open = controls.expanded.map { controls.children(of: $0).count } ?? 0
-        return Popover.rowHeight * CGFloat(macros.count) + Self.childHeight * CGFloat(open)
+        return Popover.rowHeight * CGFloat(controls.macros.count) + childHeight * CGFloat(open)
     }
 
     private func set(_ id: UInt32, _ value: Float) {
@@ -339,13 +421,17 @@ extension Track {
         case ASMR_GROUP_WIND, ASMR_GROUP_FOLIAGE: self = .wind
         case ASMR_GROUP_BIRDS: self = .birds
         case ASMR_GROUP_MASTER: self = .volume
-        default: return nil
+        case ASMR_GROUP_RAIN: self = .rain
+        case ASMR_GROUP_INSECTS: self = .insects
+        case ASMR_GROUP_FIRE: self = .fire
+        default: return nil   // environment shapes every sound; it has no waveform of its own
         }
     }
 }
 
 private struct MacroRow: View {
     let control: Control
+    var hour: Float?
     let hasChildren: Bool
     let open: Bool
     @ObservedObject var meters: Meters
@@ -360,7 +446,7 @@ private struct MacroRow: View {
         HStack(spacing: 0) {
             Button(action: toggle) {
                 ZStack(alignment: .bottomTrailing) {
-                    IconView(icon: Icon.forControl(control), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
+                    IconView(icon: Icon.forControl(control, hour: hour), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
                              level: audible ? 0.6 : 0, animating: meters.live && audible)
                         .frame(width: 22, height: 22)
                     if hasChildren {
@@ -418,6 +504,7 @@ private struct MacroRow: View {
 /// (or, for presets, a row of stops). Its name, value and unit appear only on hover.
 private struct ChildRow: View {
     let control: Control
+    var hour: Float?
     let last: Bool
     let set: (UInt32, Float) -> Void
     @State private var hovering = false
@@ -435,7 +522,7 @@ private struct ChildRow: View {
                     p.addQuadCurve(to: CGPoint(x: 17, y: mid), control: CGPoint(x: x, y: mid))
                     ctx.stroke(p, with: .color(Ink.graphite.opacity(0.7)), lineWidth: 0.6)
                 }
-                IconView(icon: Icon.forControl(control), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
+                IconView(icon: Icon.forControl(control, hour: hour), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
                     .offset(x: 18)
             }
             .frame(width: Popover.iconColumn)
@@ -469,7 +556,11 @@ private struct ChildRow: View {
     }
 
     private var label: String {
-        let v = control.isDiscrete ? String(Int(control.value.rounded()))
+        let index = Int(control.value.rounded())
+        if control.isDiscrete, index >= 0, index < control.options.count, !control.options[index].isEmpty {
+            return "\(control.key) \(control.options[index])"
+        }
+        let v = control.isDiscrete ? String(index)
             : abs(control.value) >= 10 ? String(format: "%.1f", control.value) : String(format: "%.2f", control.value)
         return control.unit.isEmpty ? "\(control.key) \(v)" : "\(control.key) \(v) \(control.unit)"
     }
@@ -502,13 +593,16 @@ private struct FineSlider: View {
             lz.addLine(to: CGPoint(x: x, y: mid + 3))
             lz.addLine(to: CGPoint(x: x - 3, y: mid))
             lz.closeSubpath()
-            ctx.fill(lz, with: .color(hovering ? Ink.paper : Ink.black))
+            // Filled once the user has set it; hollow while it follows its macro.
+            ctx.fill(lz, with: .color(hovering || control.isOverridden ? Ink.paper : Ink.black))
             ctx.stroke(lz, with: .color(Ink.paper), lineWidth: 0.8)
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { g in
             set(control.id, control.value(atFraction: Float(g.location.x / width)))
         })
+        // Double-click hands the parameter back to its macro.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { set(control.id, .nan) })
     }
 }
 

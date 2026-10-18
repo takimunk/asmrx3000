@@ -143,11 +143,6 @@ struct ScopeRow: Equatable {
     var fraction: Float
 }
 
-private struct TrackUniforms {
-    var size: SIMD4<Float>
-    var rows: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
-}
-
 final class TracksRenderer {
     private let stage: Stage
     private let pipeline: MTLRenderPipelineState
@@ -167,14 +162,14 @@ final class TracksRenderer {
             scope.replace(region: MTLRegionMake2D(0, 0, Stage.scopeColumns, Track.allCases.count), mipmapLevel: 0,
                           withBytes: $0.baseAddress!, bytesPerRow: Stage.scopeColumns * 4)
         }
-        var packed = [SIMD4<Float>](repeating: .zero, count: 8)
-        for (i, r) in rows.prefix(8).enumerated() {
-            packed[i] = SIMD4(r.top * scale, r.height * scale, Float(r.track?.rawValue ?? -1), r.fraction)
+        // TrackU: size, then 16 rows.
+        var u = [SIMD4<Float>](repeating: .zero, count: 17)
+        u[0] = SIMD4(Float(target.width), Float(target.height), scale, Float(min(rows.count, 16)))
+        for (i, r) in rows.prefix(16).enumerated() {
+            u[1 + i] = SIMD4(r.top * scale, r.height * scale, Float(r.track?.rawValue ?? -1), r.fraction)
         }
-        var u = TrackUniforms(size: SIMD4(Float(target.width), Float(target.height), scale, Float(min(rows.count, 8))),
-                              rows: (packed[0], packed[1], packed[2], packed[3], packed[4], packed[5], packed[6], packed[7]))
         GPU.fullscreenPass(cb, target: target, pipeline: pipeline) { enc in
-            enc.setFragmentBytes(&u, length: MemoryLayout<TrackUniforms>.stride, index: 0)
+            u.withUnsafeBytes { enc.setFragmentBytes($0.baseAddress!, length: $0.count, index: 0) }
             enc.setFragmentTexture(scope, index: 0)
         }
     }

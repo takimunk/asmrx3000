@@ -3,7 +3,8 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1] [--azimuth rad]`
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1]
+///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -19,6 +20,22 @@ enum Snapshot {
         model.audio.orbit = value("--orbit").flatMap(Float.init) ?? 0
         model.audio.birds = value("--birds").flatMap(Float.init) ?? 1
         if let az = value("--azimuth").flatMap(Float.init) { stage.camera.azimuth = az }
+        // --gaze yaw,pitch in degrees (yaw + = left, pitch + = up), as if AirPods were on.
+        if let g = value("--gaze")?.split(separator: ",").compactMap({ Float($0) }), g.count == 2 {
+            stage.gazeOverride = (g[0] * .pi / 180, g[1] * .pi / 180)
+        }
+
+        // --set key=value (repeatable) sets any control, e.g. --set rain.rate=8 --set env.time_of_day=22.
+        var tree: [Control] = []
+        model.audio.readControls(&tree)
+        for (i, a) in args.enumerated() where a == "--set" && i + 1 < args.count {
+            let kv = args[i + 1].split(separator: "=")
+            guard kv.count == 2, let v = Float(kv[1]), let c = tree.first(where: { $0.key == kv[0] }) else {
+                print("unknown control: \(args[i + 1])")
+                continue
+            }
+            model.audio.setControl(c.id, v)
+        }
 
         let fps = 30.0
         let selectKind = value("--select") ?? "tree"
@@ -49,6 +66,8 @@ enum Snapshot {
 
         let scale: Float = 2
         let sceneSize = SIMD2(Float(Popover.width), Float(Popover.sceneHeight))
+        stage.sceneSize = sceneSize
+        stage.updateLabels()
         let specSize = SIMD2(Float(Popover.width - 32), Float(Popover.spectrogramHeight))
         let sceneRenderer = SceneRenderer(stage: stage)
         let specRenderer = SpectrogramRenderer(stage: stage)
@@ -56,7 +75,7 @@ enum Snapshot {
         // The river's branch is open unless asked otherwise.
         let controls = stage.controls
         let expand = value("--expand") ?? "water"
-        controls.expanded = controls.macros.first { $0.key == expand }?.id
+        controls.expanded = controls.macros.first { $0.key == expand || $0.key.hasPrefix(expand + ".") }?.id
         let macros = controls.macros
         let rows = Tracks.layout(macros, expanded: controls.expanded) { controls.children(of: $0).count }
         let openCount = controls.expanded.map { controls.children(of: $0).count } ?? 0

@@ -108,6 +108,7 @@ final class SceneStageView: StageView {
     }
 
     override func render(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float) {
+        stage.sceneSize = size
         renderer.encode(cb, target: target, size: size, scale: scale)
     }
 

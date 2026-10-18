@@ -74,11 +74,14 @@ enum Icon: Hashable {
     case water, wind, birds, flight, volume
     case play, pause, recenter, headphones, quit
     case tree, bird, river
-    // Child parameters.
+    // Child parameters and the newer groups.
     case flow, depth, character, speed, gust, rain, dot
+    case sun, moon, thermometer, droplet, leaf, flame, cricket, bolt, bubbles, width, stone, tone, gain
 
-    /// The pictogram for a control: its group for a macro, its key for a child.
-    static func forControl(_ c: Control) -> Icon {
+    /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
+    /// scene's time of day, so the environment shows a sun or a moon.
+    static func forControl(_ c: Control, hour: Float? = nil) -> Icon {
+        let daylight = hour.map { $0 >= 6 && $0 < 19 } ?? true
         if c.isMacro {
             switch Int(c.group) {
             case ASMR_GROUP_WATER: return .water
@@ -86,18 +89,41 @@ enum Icon: Hashable {
             case ASMR_GROUP_FOLIAGE: return .tree
             case ASMR_GROUP_RAIN: return .rain
             case ASMR_GROUP_BIRDS: return .birds
+            case ASMR_GROUP_ENVIRONMENT: return daylight ? .sun : .moon
+            case ASMR_GROUP_INSECTS: return .cricket
+            case ASMR_GROUP_FIRE: return .flame
             default: return .volume
             }
         }
         let leaf = c.key.split(separator: ".").last.map(String.init) ?? c.key
         switch leaf {
         case "flow", "current": return .flow
+        case "speed" where c.group == UInt32(ASMR_GROUP_WATER): return .flow
         case "depth", "level": return .depth
-        case "character", "preset", "texture": return .character
-        case "speed", "strength": return .speed
+        case "character", "preset", "texture", "regime": return .character
+        case "speed", "strength", "exposure": return .speed
         case "gust", "gustiness", "turbulence": return .gust
         case "flight", "orbit": return .flight
         case "rate", "intensity": return .rain
+        case "time_of_day": return daylight ? .sun : .moon
+        case "temperature", "warmth": return .thermometer
+        case "humidity", "moisture", "resin": return .droplet
+        case "season", "density", "dryness", "flutter": return .leaf
+        case "heat": return .flame
+        case "storm": return .bolt
+        case "aeration": return .bubbles
+        case "width": return .width
+        case "rock_size", "surface": return .stone
+        case "whistle": return .tone
+        case "gain", "volume": return .gain
+        case "drying": return .sun
+        case "creak": return .tree
+        case "activity":
+            switch Int(c.group) {
+            case ASMR_GROUP_INSECTS: return .cricket
+            case ASMR_GROUP_BIRDS: return .birds
+            default: return .dot
+            }
         default: return .dot
         }
     }
@@ -124,6 +150,15 @@ enum Icon: Hashable {
             d += " C\(f(a + dx / 3)) \(f(yAt(a) + slope(a) * dx / 3)) \(f(b - dx / 3)) \(f(yAt(b) - slope(b) * dx / 3)) \(f(b)) \(f(yAt(b)))"
         }
         return d
+    }
+
+    /// A circle as four cubic arcs.
+    static func circle(_ cx: Double, _ cy: Double, _ r: Double) -> String {
+        let k = 0.5523 * r
+        return "M\(f(cx - r)) \(f(cy)) C\(f(cx - r)) \(f(cy - k)) \(f(cx - k)) \(f(cy - r)) \(f(cx)) \(f(cy - r)) "
+            + "C\(f(cx + k)) \(f(cy - r)) \(f(cx + r)) \(f(cy - k)) \(f(cx + r)) \(f(cy)) "
+            + "C\(f(cx + r)) \(f(cy + k)) \(f(cx + k)) \(f(cy + r)) \(f(cx)) \(f(cy + r)) "
+            + "C\(f(cx - k)) \(f(cy + r)) \(f(cx - r)) \(f(cy + k)) \(f(cx - r)) \(f(cy)) Z"
     }
 
     func strokes(t: Double, level: Double) -> [Stroke] {
@@ -214,7 +249,62 @@ enum Icon: Hashable {
                 Stroke(d: "M10.5 \(f(11 + y)) L9 \(f(15 + y)) M15.5 \(f(11 + y)) L14 \(f(15 + y))", opacity: 0.7),
             ]
         case .dot:
-            return [Stroke(d: "M12 9 C13.7 9 15 10.3 15 12 C15 13.7 13.7 15 12 15 C10.3 15 9 13.7 9 12 C9 10.3 10.3 9 12 9 Z")]
+            return [Stroke(d: Icon.circle(12, 12, 3))]
+        case .sun:
+            // Rays turn slowly around the disc.
+            let a0 = t * 2 * .pi / 12
+            var rays = ""
+            for i in 0..<8 {
+                let a = a0 + Double(i) * .pi / 4
+                rays += "M\(f(12 + 6.3 * cos(a))) \(f(12 + 6.3 * sin(a))) L\(f(12 + 8.8 * cos(a))) \(f(12 + 8.8 * sin(a))) "
+            }
+            return [Stroke(d: Icon.circle(12, 12, 4)), Stroke(d: rays, opacity: 0.8)]
+        case .moon:
+            let tw = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * 2.1))
+            return [
+                Stroke(d: "M15 4.5 C10 5 7 8.5 7 12.5 C7 16.5 10.5 19.5 14.5 19.5 C16.5 19.5 18 18.8 19.5 17.8 C14.5 17.5 11.5 14 11.5 10 C11.5 7.8 13 5.8 15 4.5 Z"),
+                Stroke(d: "M19 6 V8 M18 7 H20", opacity: tw),
+            ]
+        case .thermometer:
+            return [
+                Stroke(d: "M10 4 C10 2.9 10.9 2 12 2 C13.1 2 14 2.9 14 4 V14 C15.2 14.7 16 16 16 17.5 C16 19.7 14.2 21.5 12 21.5 C9.8 21.5 8 19.7 8 17.5 C8 16 8.8 14.7 10 14 Z"),
+                Stroke(d: "M12 8 V17.5", opacity: 0.8),
+            ]
+        case .droplet:
+            return [Stroke(d: "M12 3 C9 8 6.5 11 6.5 14.5 C6.5 17.8 9 20.5 12 20.5 C15 20.5 17.5 17.8 17.5 14.5 C17.5 11 15 8 12 3 Z")]
+        case .leaf:
+            return [Stroke(d: "M5 19 C5 10 10 5 19 5 C19 14 14 19 5 19 Z"), Stroke(d: "M5 19 L13.5 10.5", opacity: 0.7)]
+        case .flame:
+            // The tip licks from side to side; the inner tongue breathes.
+            let f1 = sin(t * 9) * 1.3, f2 = sin(t * 13 + 1) * 1.2
+            return [
+                Stroke(d: "M\(f(12 + f1)) 3 C\(f(13.5 + f1 * 0.5)) 7 17 9.5 17 14 C17 17.6 14.8 20.5 12 20.5 C9.2 20.5 7 17.6 7 14 C7 10.5 10 9 10.5 6 C11.3 7.6 \(f(12 + f1 * 0.5)) 8.5 \(f(12 + f1)) 3 Z"),
+                Stroke(d: "M12 20.5 C10.5 20.5 9.5 19 9.5 17.3 C9.5 15.2 11.3 14.2 12 \(f(12 + f2)) C12.7 14.2 14.5 15.2 14.5 17.3 C14.5 19 13.5 20.5 12 20.5 Z", opacity: 0.7),
+            ]
+        case .cricket:
+            let a = sin(t * 8) * 1.4
+            return [
+                Stroke(d: "M5 15 C5 12.6 8.5 11.2 12.5 11.2 C16 11.2 18.5 12.6 18.5 14.2 C18.5 15.7 16.2 16.6 12.5 16.6 C8.5 16.6 5 16.4 5 15 Z"),
+                Stroke(d: "M9 16.4 L7.5 20 M13.5 16.6 L15 20 M11 11.4 L13.5 6.5 L16 9.5", opacity: 0.8),
+                Stroke(d: "M18.5 13.5 C20 10 20.8 8 \(f(22 + a * 0.3)) \(f(5 + a)) M18 12.8 C18.6 9 18.8 7 \(f(19.5 - a * 0.3)) \(f(4 - a))", opacity: 0.7),
+            ]
+        case .bolt:
+            return [Stroke(d: "M13 2.5 L6.5 13 H11.5 L10 21.5 L17.5 10 H12.5 Z")]
+        case .bubbles:
+            let r = 0.4 * sin(t * 4)
+            return [
+                Stroke(d: Icon.circle(9, 15, 3.5 + r)),
+                Stroke(d: Icon.circle(15.5, 9.5, 2.5 - r * 0.5), opacity: 0.8),
+                Stroke(d: Icon.circle(17, 16.5, 1.4), opacity: 0.6),
+            ]
+        case .width:
+            return [Stroke(d: "M4 6 V18 M20 6 V18"), Stroke(d: "M4.5 12 H19.5 M7 9.5 L4.5 12 L7 14.5 M17 9.5 L19.5 12 L17 14.5", opacity: 0.8)]
+        case .stone:
+            return [Stroke(d: "M4.5 16.5 L7 10.5 L12 8 L17 9.5 L19.5 15 L15.5 18.5 L8 19 Z"), Stroke(d: "M7 10.5 L11 13 L17 9.5 M11 13 L12 18.8", opacity: 0.55)]
+        case .tone:
+            return [Stroke(d: Icon.wave(y: 12, amp: 3.5, x0: 3, x1: 21, period: 6, phase: t * 3))]
+        case .gain:
+            return [Stroke(d: "M4 9.5 H8 L13 5.5 V18.5 L8 14.5 H4 Z"), Stroke(d: "M16 12 H20", opacity: 0.8)]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -237,7 +327,14 @@ extension Icon {
         case .tree: return 2 * .pi / 1.5
         case .wind: return 4.0 / 3.0
         case .rain: return 0.8
-        case .play, .pause, .headphones, .quit, .flow, .depth, .character, .speed, .gust, .dot: return nil
+        case .sun: return 12
+        case .moon: return 2 * .pi / 2.1
+        case .flame: return 2 * .pi
+        case .cricket: return 2 * .pi / 8
+        case .bubbles: return 2 * .pi / 4
+        case .tone: return 2 * .pi / 3
+        case .play, .pause, .headphones, .quit, .flow, .depth, .character, .speed, .gust, .dot,
+             .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain: return nil
         }
     }
 }

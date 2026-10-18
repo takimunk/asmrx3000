@@ -6,6 +6,7 @@ struct ASMRX3000App: App {
     @StateObject private var model = AppModel()
 
     init() {
+        Fonts.register()
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             Snapshot.run(path: CommandLine.arguments[i + 1])
             exit(0)

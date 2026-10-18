@@ -40,6 +40,16 @@ final class ControlsModel: ObservableObject {
     func children(of id: UInt32) -> [Control] { controls.filter { $0.parent == id } }
 }
 
+/// Small orientation labels over the scene; published only when their text or place changes.
+final class SceneLabels: ObservableObject {
+    /// Where "ahead" sits on the ground in front of the listener, in scene points.
+    @Published var ahead: CGPoint?
+    /// Time of day, e.g. "21:30".
+    @Published var time = ""
+    /// Where the head is turned, e.g. "35° left, 15° up", or nil while head tracking is off.
+    @Published var gaze: String?
+}
+
 final class Meters: ObservableObject {
     /// Tracks that are audible right now; changes only when one starts or stops sounding.
     @Published var audible: Set<Track> = []
@@ -49,7 +59,7 @@ final class Meters: ObservableObject {
 
 /// Order matches the rows of the track scopes and ASMR_SCOPE_*.
 enum Track: Int, CaseIterable {
-    case water, wind, birds, flight, volume
+    case water, wind, birds, flight, volume, rain, insects, fire, thunder
 }
 
 /// Per-frame state shared by the scene and spectrogram renderers. Telemetry is sampled once per
@@ -65,6 +75,9 @@ final class Stage {
     let head: HeadTracker
     let readout = SceneReadout()
     let meters = Meters()
+    let labels = SceneLabels()
+    /// Size of the scene view in points (set by the view as it draws).
+    var sceneSize: SIMD2<Float> = .zero
     let controls = ControlsModel()
     private var controlBuffer: [Control] = []
 
@@ -92,6 +105,8 @@ final class Stage {
     private(set) var scopes = [Float](repeating: 0, count: Track.allCases.count * Stage.scopeColumns)
     private var scopeRaw = [Float](repeating: 0, count: Stage.scopeColumns * 2)
     private var scopeMax = [Float](repeating: 0.05, count: Track.allCases.count)
+    /// Raw peak of each track over the last ~85 ms: what "audible" means for the icons.
+    private var recentPeak = [Float](repeating: 0, count: Track.allCases.count)
 
     /// Scene time for animation, seconds.
     private(set) var time: Double = 0
@@ -126,6 +141,7 @@ final class Stage {
         if now - lastMeter > 1 / 10 {
             lastMeter = now
             publishMeters()
+            updateLabels()
         }
     }
 
@@ -160,6 +176,26 @@ final class Stage {
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
     }
 
+    /// Head pose as the scene shows it (engine convention: yaw + = left, pitch + = up, radians)
+    /// and whether it is live. `gazeOverride` stands in for AirPods in snapshots.
+    var gazeOverride: (yaw: Float, pitch: Float)?
+    var headPose: (yaw: Float, pitch: Float, live: Bool) {
+        if let g = gazeOverride { return (g.yaw, g.pitch, true) }
+        let live = head.enabled && head.active
+        return live ? (Float(head.yaw), Float(head.pitch), true) : (0, 0, false)
+    }
+
+    /// Where the listener looks: head (origin) + forward × `gazeDistance` metres. Same rotation
+    /// as Mat3::from_head in the engine, so the dot points where the sound is centred.
+    static let gazeDistance: Float = 3.5
+    var gazePoint: SIMD3<Float> {
+        let p = headPose
+        return Stage.gazeDistance * SIMD3(cos(p.pitch) * cos(p.yaw), cos(p.pitch) * sin(p.yaw), sin(p.pitch))
+    }
+
+    /// The scene's time of day, hours.
+    var hour: Float { controls.controls.first { $0.key == "env.time_of_day" }?.value ?? 12 }
+
     func setLive(_ live: Bool) {
         if meters.live != live { meters.live = live }
     }
@@ -172,6 +208,7 @@ final class Stage {
             audio.readScope(t.rawValue, into: &scopeRaw)
             var peak: Float = 0
             for c in 0..<n { peak = max(peak, max(scopeRaw[2 * c], scopeRaw[2 * c + 1])) }
+            recentPeak[t.rawValue] = scopeRaw.suffix(64).max() ?? 0
             let m = max(scopeMax[t.rawValue] * 0.995, peak, 0.02)
             scopeMax[t.rawValue] = m
             let base = t.rawValue * n
@@ -181,27 +218,32 @@ final class Stage {
         }
     }
 
-    private func publishMeters() {
-        var water: Float = 0, windL: Float = 0, birds: Float = 0, flight: Float = 0
-        var birdIndex = 0
-        for s in sources {
-            switch s.kind {
-            case .water: water += s.level
-            case .wind: windL = max(windL, s.level)
-            case .bird:
-                if birdIndex == 0 { flight = s.level }
-                birds = max(birds, s.level)
-                birdIndex += 1
-            }
+    func updateLabels() {
+        guard sceneSize.x > 0 else { return }
+        let proj = Projector(camera: camera, size: sceneSize)
+        let a = SIMD3<Float>(2.4, 0, Terrain.height(2.4, 0))
+        let point = proj.project(a).map { CGPoint(x: CGFloat($0.point.x.rounded()), y: CGFloat($0.point.y.rounded())) }
+        if labels.ahead != point { labels.ahead = point }
+
+        let h = hour
+        let minutes = Int((h * 60).rounded()) % (24 * 60)
+        let time = String(format: "%02d:%02d", minutes / 60, minutes % 60)
+        if labels.time != time { labels.time = time }
+
+        let p = headPose
+        var gaze: String?
+        if p.live {
+            // Rounded to 5° so the text holds still while the head drifts.
+            let yaw = Int((p.yaw * 180 / .pi / 5).rounded()) * 5
+            let pitch = Int((p.pitch * 180 / .pi / 5).rounded()) * 5
+            let side = yaw == 0 ? "straight ahead" : "\(abs(yaw))° \(yaw > 0 ? "left" : "right")"
+            gaze = pitch == 0 ? side : "\(side), \(abs(pitch))° \(pitch > 0 ? "up" : "down")"
         }
-        let levels: [Track: Float] = [
-            .water: min(water * 3.5, 1),
-            .wind: min(windL * 6, 1),
-            .birds: min(birds * 9, 1),
-            .flight: audio.orbit > 0.01 ? min(flight * 9, 1) : 0,
-            .volume: min(telemetry.outputLevel * 7, 1),
-        ]
-        let audible = Set(levels.filter { $0.value > 0.02 }.map(\.key))
+        if labels.gaze != gaze { labels.gaze = gaze }
+    }
+
+    private func publishMeters() {
+        let audible = Set(Track.allCases.filter { recentPeak[$0.rawValue] > 0.003 })
         if meters.audible != audible { meters.audible = audible }
     }
 
