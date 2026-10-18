@@ -47,8 +47,6 @@ struct Phrase {
     next: Contour,
     next_tok: Option<usize>,
     tok: usize,
-    /// Exemplar each token used so far in this song (u8::MAX = not yet).
-    chosen: Vec<u8>,
     seg: Seg,
     frame: u32,
     frames: u32,
@@ -84,7 +82,6 @@ impl NeuralBird {
             next: model.song.new_contour(),
             next_tok: None,
             tok: 0,
-            chosen: vec![u8::MAX; model.song.k],
             seg: Seg::Tail,
             frame: 0,
             frames: 0,
@@ -132,9 +129,8 @@ impl NeuralBird {
         let temp = temperature(&c);
         let p = &mut self.phrase;
         m.song.reset(&mut p.song);
-        p.chosen.iter_mut().for_each(|e| *e = u8::MAX);
         let (tok, _) = m.song.next(&mut p.song, None, temp, &mut self.rng).unwrap_or((0, 0.0));
-        m.song.contour(tok, c.variation, &mut p.chosen, &mut self.rng, &mut p.cur);
+        m.song.contour(&mut p.song, tok, c.variation, &mut self.rng, &mut p.cur);
         p.tok = tok;
         p.seg = Seg::Syllable;
         p.frame = 0;
@@ -245,7 +241,7 @@ fn advance(m: &NeuralModel, p: &mut Phrase, rng: &mut Rng, c: &BirdControls, pit
                 let next = if p.count < MAX_SYLLABLES { m.song.next(&mut p.song, Some(p.tok), temp, rng) } else { None };
                 match next {
                     Some((tok, gap)) => {
-                        m.song.contour(tok, c.variation, &mut p.chosen, rng, &mut p.next);
+                        m.song.contour(&mut p.song, tok, c.variation, rng, &mut p.next);
                         p.next_tok = Some(tok);
                         p.seg = Seg::Gap;
                         p.frames = frames_for(gap, m.voice.hop_s, tempo);

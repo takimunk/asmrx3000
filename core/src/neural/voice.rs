@@ -310,24 +310,31 @@ mod tests {
     use super::*;
     use crate::neural::weights::Weights;
 
-    /// Frame outputs match PyTorch (ml/asmr_ml/export.py writes the reference).
+    /// Frame outputs of the composed base + adapter match PyTorch (ml/asmr_ml/export_multi.py
+    /// writes the reference): chaffinch is a base species, blackbird an adapter with LoRA.
     #[test]
     fn matches_pytorch() {
-        let model = crate::neural::builtin("chaffinch").unwrap();
-        let r = Weights::parse(include_bytes!("../../assets/neural/parity/chaffinch.asnw")).unwrap();
-        let get = |n: &str| r.tensor(n).unwrap().data.clone();
-        let (f0, loud, eff) = (get("f0"), get("loud"), get("effort"));
-        let (harm, noise) = (get("harm"), get("noise"));
-        let (k, b) = (model.voice.n_harm, model.voice.n_bands());
-        let mut st = model.voice.new_state(48_000.0, 1);
-        let mut worst = 0.0f32;
-        for t in 0..f0.len() {
-            let (h, n) = model.voice.frame_outputs(&mut st, Frame { f0: f0[t], loud: loud[t], effort: eff[t] });
-            for (a, e) in h.iter().zip(&harm[t * k..(t + 1) * k]).chain(n.iter().zip(&noise[t * b..(t + 1) * b])) {
-                worst = worst.max((a - e).abs() / (e.abs() + 1e-3));
+        for (species, bytes) in [
+            ("chaffinch", &include_bytes!("../../assets/neural/parity/chaffinch.asnw")[..]),
+            ("blackbird", &include_bytes!("../../assets/neural/parity/blackbird.asnw")[..]),
+        ] {
+            let model = crate::neural::builtin(species).unwrap();
+            let r = Weights::parse(bytes).unwrap();
+            let get = |n: &str| r.tensor(n).unwrap().data.clone();
+            let (f0, loud, eff) = (get("f0"), get("loud"), get("effort"));
+            let (harm, noise) = (get("harm"), get("noise"));
+            let (k, b) = (model.voice.n_harm, model.voice.n_bands());
+            let mut st = model.voice.new_state(48_000.0, 1);
+            let mut worst = 0.0f32;
+            for t in 0..f0.len() {
+                let (h, n) = model.voice.frame_outputs(&mut st, Frame { f0: f0[t], loud: loud[t], effort: eff[t] });
+                for (a, e) in h.iter().zip(&harm[t * k..(t + 1) * k]).chain(n.iter().zip(&noise[t * b..(t + 1) * b])) {
+                    worst = worst.max((a - e).abs() / (e.abs() + 1e-3));
+                }
             }
+            // Folding the embedding into biases changes the f32 summation order: ~0.3 % at worst.
+            assert!(worst < 5e-3, "{species}: max relative error {worst}");
         }
-        assert!(worst < 1e-3, "max relative error {worst}");
     }
 
     #[test]

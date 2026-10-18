@@ -1,7 +1,8 @@
-//! Song syntax (GRU over syllable tokens) and the per-token contour bank.
-//! Mirrors `ml/asmr_ml/song.py`.
+//! Song syntax (GRU over syllable tokens) and the contour decoder that turns a token into a
+//! syllable (f0 / loudness / effort contour + duration). Mirrors `ml/asmr_ml/multisong.py`;
+//! the species conditioning has already been folded into biases by `compose`.
 
-use super::layers::{Gru, GruState, Linear};
+use super::layers::{leaky_relu, Gru, GruState, Linear};
 use super::weights::{Error, Weights};
 use crate::rng::Rng;
 
@@ -14,16 +15,13 @@ pub struct SongModel {
     pub k: usize,
     /// Contour points per syllable.
     pub p: usize,
-    modes: usize,
-    /// Real syllables kept per token (exemplars).
-    ex: usize,
-    f0: Vec<f32>,
-    loud: Vec<f32>,
-    effort: Vec<f32>,
-    dur: Vec<f32>,
-    count: Vec<f32>,
-    mode_vec: Vec<f32>,
-    coef_sd: Vec<f32>,
+    tok: Vec<f32>,
+    tok_dim: usize,
+    dec1: Linear,
+    dec2: Linear,
+    dec3: Linear,
+    pub z_dim: usize,
+    leak: f32,
     /// Probability of re-singing a token's earlier rendition within a song.
     reuse: f32,
 }
@@ -31,6 +29,13 @@ pub struct SongModel {
 pub struct SongState {
     gru: GruState,
     y: Vec<f32>,
+    inp: Vec<f32>,
+    h1: Vec<f32>,
+    h2: Vec<f32>,
+    c: Vec<f32>,
+    /// z used by each token earlier in this song (valid where `used[tok]`), for repeats.
+    z_mem: Vec<f32>,
+    used: Vec<bool>,
 }
 
 /// One syllable's control contour (log2 f0, loudness dB, effort) at `p` points + duration.
@@ -45,12 +50,10 @@ impl SongModel {
     pub fn load(w: &Weights) -> Result<Self, Error> {
         let ed = w.dims("song.emb.weight")?.to_vec();
         let k = ed[0] - 1;
-        let fd = w.dims("contour.f0")?.to_vec();
-        if fd.len() != 3 {
-            return Err(Error("contour.f0: expected [tokens, exemplars, points]".into()));
-        }
-        let (ex, p) = (fd[1], fd[2]);
-        let modes = w.dims("contour.coef_sd")?[1];
+        let td = w.dims("contour.tok.weight")?.to_vec();
+        let dec1 = Linear::load(w, "contour.dec1")?;
+        let dec3 = Linear::load(w, "contour.dec3")?;
+        let p = (dec3.n_out - 1) / 3;
         let m = Self {
             emb: w.get("song.emb.weight", &[k + 1, ed[1]])?.to_vec(),
             embed: ed[1],
@@ -58,37 +61,51 @@ impl SongModel {
             out: Linear::load(w, "song.out")?,
             k,
             p,
-            modes,
-            ex,
-            f0: w.get("contour.f0", &[k, ex, p])?.to_vec(),
-            loud: w.get("contour.loud", &[k, ex, p])?.to_vec(),
-            effort: w.get("contour.effort", &[k, ex, p])?.to_vec(),
-            dur: w.get("contour.dur", &[k, ex])?.to_vec(),
-            count: w.get("contour.count", &[k])?.to_vec(),
-            mode_vec: w.get("contour.modes", &[k, modes, 2 * p])?.to_vec(),
-            coef_sd: w.get("contour.coef_sd", &[k, modes])?.to_vec(),
+            tok: w.get("contour.tok.weight", &[k, td[1]])?.to_vec(),
+            tok_dim: td[1],
+            z_dim: dec1.n_in - td[1],
+            dec1,
+            dec2: Linear::load(w, "contour.dec2")?,
+            dec3,
+            leak: w.scalar("cfg.leak")?,
             reuse: w.scalar("cfg.reuse")?,
         };
-        if m.out.n_out != k + 3 || m.gru.ih.n_in != m.embed {
+        if m.out.n_out != k + 3 || m.gru.ih.n_in != m.embed || td[0] != k || m.dec3.n_out != 3 * p + 1 {
             return Err(Error("song: layer sizes do not fit together".into()));
         }
         Ok(m)
     }
 
     pub fn params(&self) -> usize {
-        self.emb.len() + [&self.out, &self.gru.ih, &self.gru.hh].iter().map(|l| l.w.len() + l.b.len()).sum::<usize>()
+        self.emb.len()
+            + self.tok.len()
+            + [&self.out, &self.gru.ih, &self.gru.hh, &self.dec1, &self.dec2, &self.dec3]
+                .iter()
+                .map(|l| l.w.len() + l.b.len())
+                .sum::<usize>()
     }
 
     pub fn new_state(&self) -> SongState {
-        SongState { gru: self.gru.state(), y: vec![0.0; self.out.n_out] }
+        SongState {
+            gru: self.gru.state(),
+            y: vec![0.0; self.out.n_out],
+            inp: vec![0.0; self.dec1.n_in],
+            h1: vec![0.0; self.dec1.n_out],
+            h2: vec![0.0; self.dec2.n_out],
+            c: vec![0.0; self.dec3.n_out],
+            z_mem: vec![0.0; self.k * self.z_dim],
+            used: vec![false; self.k],
+        }
     }
 
     pub fn new_contour(&self) -> Contour {
         Contour { f0: vec![0.0; self.p], loud: vec![0.0; self.p], effort: vec![0.0; self.p], dur_s: 0.1 }
     }
 
+    /// Starts a new song: clears the syntax state and the per-song rendition memory.
     pub fn reset(&self, st: &mut SongState) {
         st.gru.reset();
+        st.used.iter_mut().for_each(|u| *u = false);
     }
 
     /// Feeds the previous token (`None` = start of song) and samples the next one.
@@ -123,35 +140,45 @@ impl SongModel {
         Some((tok, gap))
     }
 
-    /// Samples a contour for `tok`: one of its real exemplar syllables, nudged along the token's
-    /// PCA modes; `variation` scales the nudge (0 = exact exemplar).
-    ///
-    /// `chosen[tok]` remembers the exemplar a token used earlier in the same song (`u8::MAX` =
-    /// none yet). With the species' `reuse` probability the bird sings that same rendition
-    /// again: a chaffinch trill repeats one syllable, a robin rarely repeats itself.
-    pub fn contour(&self, tok: usize, variation: f32, chosen: &mut [u8], rng: &mut Rng, c: &mut Contour) {
-        let p = self.p;
-        let n = (self.count[tok] as usize).clamp(1, self.ex);
-        let repeat = chosen[tok] != u8::MAX && rng.uniform() < self.reuse;
-        if !repeat {
-            chosen[tok] = ((rng.next_u32() as usize) % n) as u8;
-        }
-        let e = chosen[tok] as usize;
-        let variation = if repeat { variation * 0.25 } else { variation };
-        let base = (tok * self.ex + e) * p;
-        c.f0.copy_from_slice(&self.f0[base..base + p]);
-        c.loud.copy_from_slice(&self.loud[base..base + p]);
-        c.effort.copy_from_slice(&self.effort[base..base + p]);
-        for m in 0..self.modes {
-            let coef = rng.gauss().clamp(-2.0, 2.0) * self.coef_sd[tok * self.modes + m] * 0.5 * variation;
-            let v = &self.mode_vec[(tok * self.modes + m) * 2 * p..(tok * self.modes + m + 1) * 2 * p];
-            for j in 0..p {
-                c.f0[j] += coef * v[j];
-                c.loud[j] += coef * v[p + j] * 10.0;
+    /// Contour decoder on `st.inp[tok_dim..]` (= z): raw output vector into `st.c`.
+    fn decode(&self, st: &mut SongState, tok: usize) {
+        let td = self.tok_dim;
+        st.inp[..td].copy_from_slice(&self.tok[tok * td..(tok + 1) * td]);
+        self.dec1.forward(&st.inp, &mut st.h1);
+        st.h1.iter_mut().for_each(|v| *v = leaky_relu(*v, self.leak));
+        self.dec2.forward(&st.h1, &mut st.h2);
+        st.h2.iter_mut().for_each(|v| *v = leaky_relu(*v, self.leak));
+        self.dec3.forward(&st.h2, &mut st.c);
+    }
+
+    /// Raw decoder output for a given z (parity tests against PyTorch).
+    pub fn decode_raw<'a>(&self, st: &'a mut SongState, tok: usize, z: &[f32]) -> &'a [f32] {
+        st.inp[self.tok_dim..].copy_from_slice(z);
+        self.decode(st, tok);
+        &st.c
+    }
+
+    /// Decodes a syllable for `tok` with latent z ~ N(0, variation^2). Within a song a token
+    /// re-uses its earlier z with the species' `reuse` probability (a chaffinch trill repeats
+    /// one rendition; a robin rarely repeats itself).
+    pub fn contour(&self, st: &mut SongState, tok: usize, variation: f32, rng: &mut Rng, c: &mut Contour) {
+        let (zd, p) = (self.z_dim, self.p);
+        let z = &mut st.z_mem[tok * zd..(tok + 1) * zd];
+        if !(st.used[tok] && rng.uniform() < self.reuse) {
+            for v in z.iter_mut() {
+                *v = rng.gauss().clamp(-2.5, 2.5) * variation;
             }
+            st.used[tok] = true;
         }
-        let jitter = 0.1 * variation * rng.gauss().clamp(-2.0, 2.0);
-        c.dur_s = (self.dur[tok * self.ex + e] + jitter).exp().clamp(0.015, 0.8);
+        st.inp[self.tok_dim..].copy_from_slice(z);
+        self.decode(st, tok);
+        // Same scaling as multisong.contour_vec: f0 - 12 (log2 Hz), loudness / 20, effort, ln dur.
+        for j in 0..p {
+            c.f0[j] = st.c[j] + 12.0;
+            c.loud[j] = st.c[p + j] * 20.0;
+            c.effort[j] = st.c[2 * p + j].clamp(0.0, 1.0);
+        }
+        c.dur_s = st.c[3 * p].exp().clamp(0.015, 0.8);
     }
 }
 
@@ -162,4 +189,33 @@ pub fn at(v: &[f32], u: f32) -> f32 {
     let i = (x as usize).min(v.len() - 2);
     let t = x - i as f32;
     v[i] + (v[i + 1] - v[i]) * t
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::neural::{builtin, weights::Weights};
+
+    /// Composed base + adapter contour decoder matches PyTorch (ml/asmr_ml/export_multi.py).
+    #[test]
+    fn contour_decoder_matches_pytorch() {
+        for (species, bytes) in [
+            ("chaffinch", &include_bytes!("../../assets/neural/parity/chaffinch.asnw")[..]),
+            ("blackbird", &include_bytes!("../../assets/neural/parity/blackbird.asnw")[..]),
+        ] {
+            let m = builtin(species).unwrap();
+            let r = Weights::parse(bytes).unwrap();
+            let toks = &r.tensor("contour.tok").unwrap().data;
+            let z = &r.tensor("contour.z").unwrap().data;
+            let want = &r.tensor("contour.out").unwrap().data;
+            let n = want.len() / toks.len();
+            let zd = m.song.z_dim;
+            let mut st = m.song.new_state();
+            for (i, &t) in toks.iter().enumerate() {
+                let got = m.song.decode_raw(&mut st, t as usize, &z[i * zd..(i + 1) * zd]);
+                for (a, e) in got.iter().zip(&want[i * n..(i + 1) * n]) {
+                    assert!((a - e).abs() < 2e-3 * (1.0 + e.abs()), "{species}: {a} vs {e}");
+                }
+            }
+        }
+    }
 }

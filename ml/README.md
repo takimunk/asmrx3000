@@ -18,7 +18,7 @@ scipy, numpy, torchcrepe (установлен, но для птиц не исп
 requests, matplotlib. Rust: `. "$HOME/.cargo/env"` (для `listen` и проверки весов).
 
 Ничего тяжёлого в git не попадает: `ml/data/`, `ml/runs/`, `ml/out/`, `ml/.env` в `.gitignore`.
-В git только экспортированные веса (~240 КиБ на вид) в `core/assets/neural/`.
+В git только экспортированные веса в `core/assets/neural/`: база 214 КиБ + адаптеры ~1–7 КБ на вид.
 
 ## Ключи API
 
@@ -43,19 +43,30 @@ uv run python -m asmr_ml.data.freesound stream        # нужен FREESOUND_API
 # 2. Подготовка: ресемплинг 48 кГц, ФВЧ, спектральный гейт, f0/громкость/усилие, слоги, отбор по SNR
 uv run python -m asmr_ml.prep chaffinch robin
 
-# 3. Обучение
-uv run python -m asmr_ml.train_voice chaffinch --steps 15000   # DDSP-голос (MPS, ~15–30 мин)
-uv run python -m asmr_ml.song chaffinch                        # токены слогов + GRU-синтаксис (CPU, ~1 мин)
+# 3. Общая база (все виды сразу) — голос и песня
+uv run python -m asmr_ml.multi base chaffinch robin song_thrush nightingale --steps 20000   # MPS, ~40 мин
+uv run python -m asmr_ml.multisong base chaffinch robin song_thrush nightingale            # CPU, ~3 мин
 
-# 4. Экспорт в движок + тест совпадения Rust/PyTorch
-uv run python -m asmr_ml.export chaffinch        # core/assets/neural/chaffinch.asnw (+ parity/)
-cargo test --manifest-path ../core/Cargo.toml    # включает neural::voice::tests::matches_pytorch
+# 4. Новый вид = адаптер (база заморожена), минуты
+uv run python -m asmr_ml.prep blackbird
+uv run python -m asmr_ml.multi adapt blackbird --rank 4 --steps 1500   # ~2 мин; --max-recordings 20
+uv run python -m asmr_ml.multisong adapt blackbird                      # < 1 мин
 
-# 5. Примеры для прослушивания: оригинал / ресинтез / новая генерация из Rust
-uv run python -m asmr_ml.listen chaffinch        # out/listen/chaffinch/{1_real,2_resynth,3_generated}.wav
+# 5. Экспорт в движок + тесты совпадения Rust/PyTorch
+uv run python -m asmr_ml.export_multi --adapter blackbird   # birds_base.asnw + <вид>.asna (+ parity/)
+cargo test --manifest-path ../core/Cargo.toml
+
+# 6. Качество по Perch 2.0 (отдельное окружение ml/perch_eval с TensorFlow; веса ~390 МБ скачиваются
+#    в ~/.cache/kagglehub при первом запуске)
+(cd perch_eval && uv sync && uv run python -c "import kagglehub; kagglehub.model_download('google/bird-vocalization-classifier/tensorFlow2/perch_v2_cpu')")
+uv run python -m asmr_ml.quality chaffinch   # out/quality/chaffinch/{real,resynth,generated,other} + perch.json
 ```
 
-Чтобы новый вид попал в движок, добавьте его в `BUILTIN` в `core/src/neural/mod.rs`.
+Первая итерация (отдельная модель на вид, банк образцов) осталась в `train_voice.py`, `song.py`,
+`export.py`, `listen.py` — для сравнения; движок использует только базу + адаптеры.
+
+Чтобы новый вид был встроен в движок, добавьте его адаптер в `BUILTIN` в `core/src/neural/mod.rs`
+(или загрузите во время работы: `neural::load_adapter(bytes)`).
 
 ## Модули
 
@@ -68,7 +79,12 @@ uv run python -m asmr_ml.listen chaffinch        # out/listen/chaffinch/{1_real,
 | `dsp.py` | синтез (гармоники + банк биквадов), общий с Rust |
 | `voice.py`, `train_voice.py` | DDSP-голос и его обучение (MR-STFT) |
 | `song.py` | токенизация слогов (k-means по контурам), банк контуров-образцов, GRU над токенами |
-| `export.py` | запись `.asnw` (f16-веса + f32-конфиг) и эталона для parity-теста |
+| `multi.py` | общий DDSP-голос с эмбеддингом вида; `base` и `adapt` (эмбеддинг + LoRA) |
+| `multisong.py` | общий словарь токенов, GRU-синтаксис и CVAE-декодер контуров с эмбеддингом вида |
+| `export_multi.py` | `birds_base.asnw` + адаптеры `<вид>.asna` + эталоны parity |
+| `quality.py`, `perch_eval/` | оценка Perch 2.0: узнаёт ли вид, близость эмбеддингов к реальным записям |
+| `baseline.py` | бейзлайн «синусоида без сети» для шкалы MR-STFT |
+| `export.py` | (первая итерация) запись `.asnw` отдельной модели |
 | `listen.py`, `plots.py` | примеры для прослушивания и спектрограммы |
 
 ## Результаты
