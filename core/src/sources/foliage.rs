@@ -49,7 +49,7 @@ pub enum FoliageKind {
     Reeds,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct FoliageConfig {
     pub kind: FoliageKind,
@@ -419,6 +419,14 @@ impl Foliage {
 }
 
 impl Generator for Foliage {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Foliage(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
     fn render(&mut self, out: &mut [f32], c: &Controls) {
         for chunk in out.chunks_mut(BLOCK) {
             self.render_block(chunk, c);

@@ -84,6 +84,85 @@ typedef struct AsmrObjectInfo {
     uint32_t flags; /* ASMR_OBJECT_FLAG_* */
 } AsmrObjectInfo;
 
+/* Generic controls (docs/physical-models.md, "Controls ABI"): every multi-parameter model as a
+   tree of sliders. Each group has one macro (bit0); its children are physical parameters. Moving
+   a macro moves its children along a physical curve unless the user set a child explicitly
+   (reported in bit3); asmr_set_control(child, NAN) hands the child back to its macro. Presets
+   are discrete children (bit2): integer index, 0 = "as in the scene", names via
+   asmr_get_control_option. Legacy params are the macros: WATER = water.flow, WIND = wind.speed
+   (m/s here, slider units in the param), RAIN = rain.rate, STORM = rain.storm, BIRDS =
+   birds.activity, ORBIT = birds.orbit, VOLUME = master.volume, TIME_OF_DAY = env.time_of_day,
+   TEMPERATURE = env.temperature, HUMIDITY = env.humidity. Setting STORM/TEMPERATURE/HUMIDITY
+   via asmr_set_param marks those children explicit. Lock-free; applied on the next render. */
+enum {
+    ASMR_GROUP_WATER = 0,
+    ASMR_GROUP_WIND = 1,
+    ASMR_GROUP_FOLIAGE = 2,
+    ASMR_GROUP_RAIN = 3,
+    ASMR_GROUP_BIRDS = 4,
+    ASMR_GROUP_MASTER = 5,
+    ASMR_GROUP_ENVIRONMENT = 6, /* time of day, temperature, humidity, season */
+    ASMR_GROUP_INSECTS = 7,
+    ASMR_GROUP_FIRE = 8,
+};
+
+enum {
+    ASMR_CONTROL_FLAG_MACRO = 1u << 0,      /* top-level slider of its group */
+    ASMR_CONTROL_FLAG_LOG = 1u << 1,        /* logarithmic slider (rain.rate: 0 at the far left) */
+    ASMR_CONTROL_FLAG_DISCRETE = 1u << 2,   /* integer preset index */
+    ASMR_CONTROL_FLAG_OVERRIDDEN = 1u << 3, /* child set by the user, not following its macro */
+};
+
+/* Control ids (stable). Children list their macro in `parent`. */
+enum {
+    ASMR_CONTROL_WATER_FLOW = 100,       /* macro 0..1, 0.6 = as built; discharge Q = (x/0.6)^2 */
+    ASMR_CONTROL_WATER_REGIME = 101,     /* preset: scene, still_lake, lake_lapping, slow_river, brook_pebbles, brook_rocks, rapids, small_waterfall, drips, trickle */
+    ASMR_CONTROL_WATER_SPEED = 102,      /* m/s, follows Q^0.34 */
+    ASMR_CONTROL_WATER_DEPTH = 103,      /* m, follows Q^0.40 */
+    ASMR_CONTROL_WATER_WIDTH = 104,      /* m, follows Q^0.26 */
+    ASMR_CONTROL_WATER_ROCK = 105,       /* m, median bed rock size */
+    ASMR_CONTROL_WATER_AERATION = 106,
+    ASMR_CONTROL_WATER_TURBULENCE = 107,
+    ASMR_CONTROL_WATER_GAIN = 108,
+    ASMR_CONTROL_WIND_SPEED = 200,       /* macro, m/s */
+    ASMR_CONTROL_WIND_GUSTINESS = 201,
+    ASMR_CONTROL_WIND_EXPOSURE = 202,
+    ASMR_CONTROL_WIND_CHARACTER = 203,   /* preset of the ambient wind sources */
+    ASMR_CONTROL_WIND_WHISTLE = 204,
+    ASMR_CONTROL_FOLIAGE_DENSITY = 300,  /* macro, x leaf density */
+    ASMR_CONTROL_FOLIAGE_DRYNESS = 301,  /* -1 = season, 0 fresh .. 1 dry */
+    ASMR_CONTROL_FOLIAGE_FLUTTER = 302,
+    ASMR_CONTROL_FOLIAGE_CREAK = 303,
+    ASMR_CONTROL_FOLIAGE_EXPOSURE = 304,
+    ASMR_CONTROL_RAIN_RATE = 400,        /* macro, mm/h */
+    ASMR_CONTROL_RAIN_STORM = 401,       /* follows heavy rain */
+    ASMR_CONTROL_RAIN_SURFACE = 402,     /* preset of the open rain patches */
+    ASMR_CONTROL_RAIN_DRYING = 403,      /* x speed of draining/drying (1 = real time) */
+    ASMR_CONTROL_RAIN_GAIN = 404,
+    ASMR_CONTROL_BIRDS_ACTIVITY = 500,   /* macro */
+    ASMR_CONTROL_BIRDS_ORBIT = 501,
+    ASMR_CONTROL_MASTER_VOLUME = 600,    /* macro */
+    ASMR_CONTROL_ENV_TIME = 700,         /* macro, hours */
+    ASMR_CONTROL_ENV_TEMPERATURE = 701,  /* deg C, follows a diurnal cycle */
+    ASMR_CONTROL_ENV_HUMIDITY = 702,     /* follows a diurnal cycle */
+    ASMR_CONTROL_ENV_SEASON = 703,       /* spring, summer, autumn, winter */
+    ASMR_CONTROL_INSECTS_ACTIVITY = 800, /* macro */
+    ASMR_CONTROL_INSECTS_WARMTH = 801,   /* deg C microclimate offset */
+    ASMR_CONTROL_FIRE_HEAT = 900,        /* macro, kW */
+    ASMR_CONTROL_FIRE_MOISTURE = 901,
+    ASMR_CONTROL_FIRE_RESIN = 902,
+};
+
+typedef struct AsmrControlInfo {
+    uint32_t id;           /* stable across runs */
+    uint32_t group;        /* sound group: ASMR_GROUP_WATER = 0, ASMR_GROUP_WIND = 1, ASMR_GROUP_FOLIAGE = 2, ASMR_GROUP_RAIN = 3, ASMR_GROUP_BIRDS = 4, ASMR_GROUP_MASTER = 5, then more */
+    uint32_t parent;       /* id of the macro control this one branches from; UINT32_MAX for top-level */
+    uint32_t flags;        /* bit0 = macro (top-level slider), bit1 = logarithmic, bit2 = discrete/preset index */
+    float min, max, value, default_value;
+    char key[24];          /* machine name, e.g. "water.flow", "water.depth" */
+    char unit[8];          /* "m/s", "m", "mm/h", "" */
+} AsmrControlInfo;
+
 AsmrEngine *asmr_engine_new(float sample_rate);
 /* Engine running a JSON scene description (docs/director.md). NULL if it does not validate. */
 AsmrEngine *asmr_engine_new_with_scene(float sample_rate, const char *scene_json);
@@ -103,6 +182,11 @@ uint32_t asmr_get_objects(const AsmrEngine *engine, AsmrObjectInfo *out, uint32_
 /* Moves a MOVABLE object (a tree carries its canopy and perched birds; a river translates its
    polyline). Lock-free; applied by the audio thread on the next asmr_render. Ignored otherwise. */
 void asmr_set_object_position(const AsmrEngine *engine, uint32_t id, float x, float y, float z);
+/* Control tree (see AsmrControlInfo above). Any thread. */
+uint32_t asmr_get_controls(const AsmrEngine *engine, AsmrControlInfo *out, uint32_t max);
+void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
+/* Name of option `index` of a discrete control into `out` (NUL-terminated); returns its length, 0 if none. */
+uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t index, char *out, uint32_t max);
 
 #ifdef __cplusplus
 }

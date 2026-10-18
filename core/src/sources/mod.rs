@@ -118,6 +118,9 @@ pub trait Generator: Send {
     fn event_rate(&self) -> f32 {
         0.0
     }
+    /// Runtime reconfiguration (audio thread, no allocation). Physical models accept their own
+    /// `ModelConfig` variant and glide to it; everything else ignores it.
+    fn set_model(&mut self, _cfg: &ModelConfig) {}
 }
 
 /// What a flying animal sounds like: a voice (procedural or neural) plus its wings, both at
@@ -260,8 +263,8 @@ fn pick<T>(model: &str, preset: &Option<String>, lookup: impl Fn(&str) -> Option
     }
 }
 
-/// A fully resolved model configuration.
-#[derive(Clone, Debug, PartialEq)]
+/// A fully resolved model configuration (plain data: copying it never allocates).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ModelConfig {
     Wind(WindConfig),
     Foliage(FoliageConfig),

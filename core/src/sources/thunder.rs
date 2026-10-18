@@ -34,7 +34,7 @@ const LOOKAHEAD: f32 = 0.25;
 /// Listener ear height above ground, m.
 const EAR: f32 = 1.7;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ThunderConfig {
     /// Height of the channel top (cloud base), m (500..8000).
@@ -349,6 +349,14 @@ impl Thunder {
 }
 
 impl Generator for Thunder {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Thunder(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
     fn render(&mut self, out: &mut [f32], c: &Controls) {
         let sr = self.sample_rate;
         let len = out.len();

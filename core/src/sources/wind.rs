@@ -37,7 +37,7 @@ const WIRE_SLOTS: usize = 4;
 /// Reference speed for levels, m/s.
 const U_REF: f32 = 5.0;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct WindConfig {
     /// Wind speed at this source relative to the canopy-height mean (0..2.5): sheltered
@@ -338,6 +338,14 @@ impl Wind {
 }
 
 impl Generator for Wind {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Wind(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
     fn render(&mut self, out: &mut [f32], ctl: &Controls) {
         let len = out.len();
         let sr = self.sample_rate;

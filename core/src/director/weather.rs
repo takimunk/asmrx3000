@@ -59,12 +59,7 @@ impl Weather {
     pub fn new(env: &EnvironmentDesc, seed: u64) -> Self {
         let mut rng = Rng::new(seed);
         let wet = env.wetness.clamp(0.0, 1.0);
-        let (dryness, leaf_cover) = match env.season {
-            Season::Spring => (0.0, 0.8),
-            Season::Summer => (0.1, 1.0),
-            Season::Autumn => (0.85, 0.75),
-            Season::Winter => (1.0, 0.05),
-        };
+        let (dryness, leaf_cover) = season_leaves(env.season);
         let rain0 = env.initial_rain_mm_h();
         let bearing = rng.range(0.0, core::f32::consts::TAU);
         Self {
@@ -91,6 +86,11 @@ impl Weather {
             bearing_ou: Ou::default(),
             flash: 0.0,
         }
+    }
+
+    /// Seasonal leaf state (dryness, deciduous leaf cover).
+    pub fn set_season(&mut self, season: Season) {
+        (self.dryness, self.leaf_cover) = season_leaves(season);
     }
 
     pub fn set_time_scale(&mut self, s: f32) {
@@ -199,6 +199,15 @@ impl Weather {
     /// Rain on the 0..1 scale the bird agents react to.
     pub fn rain_unit(&self) -> f32 {
         rain_unit(self.rain_now)
+    }
+}
+
+fn season_leaves(s: Season) -> (f32, f32) {
+    match s {
+        Season::Spring => (0.0, 0.8),
+        Season::Summer => (0.1, 1.0),
+        Season::Autumn => (0.85, 0.75),
+        Season::Winter => (1.0, 0.05),
     }
 }
 

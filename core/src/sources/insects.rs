@@ -74,7 +74,7 @@ pub fn chirps_per_min(kind: InsectKind, t_c: f32) -> f32 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct InsectConfig {
     pub kind: InsectKind,
@@ -270,6 +270,14 @@ impl Insects {
 }
 
 impl Generator for Insects {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Insects(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
     fn render(&mut self, out: &mut [f32], c: &Controls) {
         let sr = self.sample_rate;
         let len = out.len();

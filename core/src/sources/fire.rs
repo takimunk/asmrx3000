@@ -21,7 +21,7 @@ use super::rain::{check, flux_above};
 use super::{Controls, Generator, BLOCK};
 use crate::rng::Rng;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct FireConfig {
     /// Heat release rate, kW (1..2000): small campfire 20, bonfire 500.
@@ -150,6 +150,14 @@ impl Fire {
 }
 
 impl Generator for Fire {
+    fn set_model(&mut self, cfg: &super::ModelConfig) {
+        if let super::ModelConfig::Fire(c) = cfg {
+            if *c != self.cfg {
+                self.set_config(*c);
+            }
+        }
+    }
+
     fn render(&mut self, out: &mut [f32], c: &Controls) {
         for chunk in out.chunks_mut(BLOCK) {
             self.render_block(chunk, c);

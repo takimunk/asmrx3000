@@ -12,6 +12,7 @@ use core::f32::consts::TAU;
 
 use crate::ambisonics::{self, CHANNELS};
 use crate::binaural::BinauralDecoder;
+use crate::controls::{self, ControlBank, ControlInfo, ControlState};
 use crate::director::{Director, Environment};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
@@ -140,6 +141,7 @@ struct Shared {
     source_count: AtomicUsize,
     wind_field: Box<[AtomicF32]>,
     objects: ObjectBridge,
+    controls: ControlBank,
 }
 
 /// Per-emitter propagation state (one per scene emitter, same index).
@@ -205,6 +207,9 @@ struct Dsp {
     time: f64,
     load: f32,
     out_level: f32,
+    /// Control values last applied to the generators.
+    ctl: ControlState,
+    ctl_applied: bool,
 }
 
 pub struct Engine {
@@ -243,6 +248,7 @@ impl Engine {
             source_count: AtomicUsize::new(0),
             wind_field: atomics(WIND_FIELD_POINTS),
             objects: ObjectBridge::new(&world),
+            controls: ControlBank::new(controls::Bases::new(desc, &world), desc),
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -274,6 +280,8 @@ impl Engine {
             time: 0.0,
             load: 0.0,
             out_level: 0.0,
+            ctl: ControlState::default(),
+            ctl_applied: false,
         };
         dsp.publish(&shared);
         Ok(Self { shared, dsp: UnsafeCell::new(dsp) })
@@ -283,8 +291,26 @@ impl Engine {
         if let Some(p) = self.shared.params.get(id as usize) {
             if value.is_finite() {
                 p.store(value);
+                self.shared.controls.param_set(id);
             }
         }
+    }
+
+    /// Copies the control tree (macros and their physical children) into `out`, returns how
+    /// many were written. Any thread.
+    pub fn controls(&self, out: &mut [ControlInfo]) -> usize {
+        self.shared.controls.read(&self.shared.params, out)
+    }
+
+    /// Sets a control (NaN on a child: follow the macro again). Any thread; applied by the
+    /// audio thread on the next block.
+    pub fn set_control(&self, id: u32, value: f32) {
+        self.shared.controls.set(id, value, &self.shared.params);
+    }
+
+    /// Effective value of one control.
+    pub fn control(&self, id: u32) -> f32 {
+        self.shared.controls.state(&self.shared.params).get(id)
     }
 
     pub fn param(&self, id: u32) -> f32 {
@@ -424,6 +450,19 @@ impl Dsp {
             return;
         }
 
+        // Controls: macros and their physical children -> generator configs (only on change).
+        let st = shared.controls.state(&shared.params);
+        if !self.ctl_applied || st != self.ctl {
+            controls::apply(&mut self.world, &st, &shared.controls.bases);
+            let w = self.director.weather_mut();
+            w.set_time_scale(st.get(controls::id::RAIN_DRYING));
+            w.set_season(controls::season_of(st.get(controls::id::ENV_SEASON)));
+            self.ctl = st;
+            self.ctl_applied = true;
+        }
+        shared.controls.publish_params(&st, &shared.params);
+        let gustiness = st.get(controls::id::WIND_GUSTINESS);
+
         let wind = p(param::WIND).clamp(0.0, 1.0);
         let birds = p(param::BIRDS).clamp(0.0, 1.0);
         let water = p(param::WATER).clamp(0.0, 1.0);
@@ -457,7 +496,7 @@ impl Dsp {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
             controls.water = water * em.flow;
-            controls.gust = self.wind.local(em.position.y);
+            controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
             em.generator.render(tmp, &controls);
             let kind_gain = match em.kind {
                 SourceKind::Water => WATER_GAIN,
@@ -611,6 +650,77 @@ mod tests {
         let n = engine.sources(&mut src);
         let rain = src[..n].iter().filter(|s| s.kind == SourceKind::Rain as u32 && s.level > 1e-4).count();
         assert!(rain >= 10, "{rain} rain emitters audible");
+    }
+
+    #[test]
+    fn controls_tree_and_macros() {
+        use crate::controls::{flags, id, NO_PARENT};
+        let engine = Engine::new(48_000.0);
+        let mut c = [ControlInfo::default(); 64];
+        let n = engine.controls(&mut c);
+        assert_eq!(n, crate::controls::COUNT);
+        let ids: Vec<u32> = c[..n].iter().map(|x| x.id).collect();
+        for x in &c[..n] {
+            assert!(!x.key_str().is_empty() && x.min <= x.value && x.value <= x.max, "{}", x.key_str());
+            assert_eq!(ids.iter().filter(|&&i| i == x.id).count(), 1);
+            if x.parent == NO_PARENT {
+                assert_ne!(x.flags & flags::MACRO, 0);
+            } else {
+                let p = c[..n].iter().find(|p| p.id == x.parent).unwrap();
+                assert_ne!(p.flags & flags::MACRO, 0);
+                assert_eq!(p.group, x.group);
+            }
+        }
+        // Legacy params are the macros.
+        engine.set_param(param::WATER, 0.3);
+        assert_eq!(engine.control(id::WATER_FLOW), 0.3);
+        engine.set_control(id::WIND_SPEED, 10.0);
+        assert!((crate::sources::common::wind_speed_ms(engine.param(param::WIND)) - 10.0).abs() < 1e-3);
+        // Children follow the macro along hydraulic geometry...
+        let slow = engine.control(id::WATER_SPEED);
+        engine.set_control(id::WATER_FLOW, 0.9);
+        let fast = engine.control(id::WATER_SPEED);
+        assert!(fast > slow && engine.control(id::WATER_DEPTH) > 0.1);
+        // ...unless the user set them; NaN hands them back.
+        engine.set_control(id::WATER_SPEED, 0.5);
+        engine.set_control(id::WATER_FLOW, 0.2);
+        assert_eq!(engine.control(id::WATER_SPEED), 0.5);
+        engine.set_control(id::WATER_SPEED, f32::NAN);
+        assert!(engine.control(id::WATER_SPEED) < 0.5);
+        // Storm follows heavy rain unless set explicitly.
+        engine.set_control(id::RAIN_RATE, 40.0);
+        assert!(engine.control(id::RAIN_STORM) > 0.8);
+        engine.set_param(param::STORM, 0.0);
+        assert_eq!(engine.control(id::RAIN_STORM), 0.0);
+        // Presets are discrete children with names.
+        assert_eq!(crate::controls::option_name(id::WATER_REGIME, 0), Some("scene"));
+        assert_eq!(crate::controls::option_name(id::WATER_REGIME, 6), Some("rapids"));
+    }
+
+    #[test]
+    fn water_controls_change_the_sound() {
+        use crate::controls::id;
+        let rms = |regime: f32, flow: f32| {
+            let engine = Engine::new(48_000.0);
+            engine.set_param(param::PLAYING, 1.0);
+            engine.set_param(param::BIRDS, 0.0);
+            engine.set_param(param::WIND, 0.0);
+            engine.set_control(id::WATER_REGIME, regime);
+            engine.set_control(id::WATER_FLOW, flow);
+            let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+            let mut e = 0.0f64;
+            for i in 0..(48_000 * 4 / 512) {
+                engine.render(&mut l, &mut r);
+                if i > 90 {
+                    e += l.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+                }
+            }
+            e
+        };
+        let brook = rms(0.0, 0.6);
+        assert!(rms(0.0, 1.0) > 1.5 * brook);
+        assert!(rms(0.0, 0.0) < 0.2 * brook);
+        assert!(rms(6.0, 0.6) > 10.0 * brook, "rapids");
     }
 
     #[test]

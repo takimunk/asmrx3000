@@ -4,6 +4,7 @@
 
 mod ambisonics;
 mod binaural;
+pub mod controls;
 pub mod director;
 mod dsp;
 mod engine;
@@ -15,6 +16,7 @@ pub mod sources;
 mod windfield;
 
 pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, BLOCK, MAX_SOURCES};
+pub use controls::ControlInfo;
 pub use scene::{object_flags, ObjectInfo, ObjectKind, SceneDesc, MAX_OBJECTS};
 
 use std::ffi::{c_char, CStr};
@@ -134,4 +136,45 @@ pub unsafe extern "C" fn asmr_set_object_position(engine: *const Engine, id: u32
     if let Some(e) = engine.as_ref() {
         e.set_object_position(id, x, y, z);
     }
+}
+
+/// Copies the control tree into `out` (see asmr.h `AsmrControlInfo`), returns the count.
+///
+/// # Safety
+/// `out` must point to `max` writable `AsmrControlInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_controls(engine: *const Engine, out: *mut ControlInfo, max: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.controls(slice::from_raw_parts_mut(out, max as usize)) as u32,
+        _ => 0,
+    }
+}
+
+/// Sets a control. NaN on a child control hands it back to its macro.
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_control(engine: *const Engine, id: u32, value: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.set_control(id, value);
+    }
+}
+
+/// Writes the NUL-terminated name of option `index` of a discrete control (presets; 0 =
+/// "scene") into `out` and returns its length, or 0 if there is no such option.
+///
+/// # Safety
+/// `out` must point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32, index: u32, out: *mut c_char, max: u32) -> u32 {
+    let Some(name) = controls::option_name(id, index) else { return 0 };
+    if out.is_null() || max == 0 {
+        return 0;
+    }
+    let n = name.len().min(max as usize - 1);
+    let dst = slice::from_raw_parts_mut(out as *mut u8, n + 1);
+    dst[..n].copy_from_slice(&name.as_bytes()[..n]);
+    dst[n] = 0;
+    n as u32
 }

@@ -501,6 +501,10 @@ pub struct Emitter {
     pub controls: Controls,
     /// Scale of the WATER drive for river emitters.
     pub flow: f32,
+    /// Physical model configuration as built (runtime controls are applied relative to it).
+    pub base: Option<ModelConfig>,
+    /// Per-segment variation of an extended water source: depth ×, rock size ×, turbulence +.
+    pub variation: [f32; 3],
     /// Telemetry: recent RMS and head-relative position.
     pub level: f32,
     pub rel: Vec3,
@@ -556,9 +560,16 @@ impl World {
                     generator,
                     controls: Controls::default(),
                     flow,
+                    base: None,
+                    variation: [1.0, 1.0, 0.0],
                     level: 0.0,
                     rel: Vec3::default(),
                 });
+            };
+            let set_base = |emitters: &mut Vec<Emitter>, cfg: ModelConfig| {
+                if let Some(e) = emitters.last_mut() {
+                    e.base = Some(cfg);
+                }
             };
             let entity = match e {
                 EntityDesc::Tree(t) => {
@@ -569,15 +580,16 @@ impl World {
                     let crown = core::f32::consts::PI * r * r;
                     let foliage = t.foliage.clone().unwrap_or_else(|| SoundDesc::new(ModelKind::Foliage, t.species.foliage_preset()));
                     let foliage = expect_model(foliage, ModelKind::Foliage, id)?;
-                    let foliage = default_param(foliage, "area_m2", crown);
-                    let gen = foliage.build(sample_rate, rng.next_u64()).map_err(|e| format!("tree {id}: {e}"))?;
-                    push(&mut emitters, SourceKind::Wind, Vec3::new(0.0, 0.0, t.canopy_height), gen, 1.0);
+                    let foliage = default_param(foliage, "area_m2", crown).resolve().map_err(|e| format!("tree {id}: {e}"))?;
+                    push(&mut emitters, SourceKind::Wind, Vec3::new(0.0, 0.0, t.canopy_height), foliage.build(sample_rate, rng.next_u64()), 1.0);
+                    set_base(&mut emitters, foliage);
                     let under = if t.species.is_conifer() { "under_conifer" } else { "under_canopy" };
                     let ground = t.ground.clone().unwrap_or_else(|| SoundDesc::new(ModelKind::Rain, under));
                     let ground = expect_model(ground, ModelKind::Rain, id)?;
                     let ground = default_param(default_param(ground, "area_m2", crown), "drip_height_m", t.canopy_height.clamp(0.5, 40.0));
-                    let gen = ground.build(sample_rate, rng.next_u64()).map_err(|e| format!("tree {id} ground: {e}"))?;
-                    push(&mut emitters, SourceKind::Rain, Vec3::new(0.0, 0.0, 0.1), gen, 1.0);
+                    let ground = ground.resolve().map_err(|e| format!("tree {id} ground: {e}"))?;
+                    push(&mut emitters, SourceKind::Rain, Vec3::new(0.0, 0.0, 0.1), ground.build(sample_rate, rng.next_u64()), 1.0);
+                    set_base(&mut emitters, ground);
                     Entity {
                         id,
                         kind: ObjectKind::Tree,
@@ -606,10 +618,19 @@ impl World {
                         _ => unreachable!(),
                     };
                     cfg.aeration = (cfg.aeration * r.bubble_rate.max(0.0) / 350.0).min(1.5);
+                    // Riffles and pools alternate along a stream (spacing ~5–7 widths): shallow,
+                    // coarse riffles babble, deep pools are quiet. Deterministic per seed.
+                    let phase = rng.range(0.0, core::f32::consts::TAU);
+                    let spacing = (6.0 * cfg.width_m).max(2.0);
                     for k in 0..r.segments {
-                        let at = sample_polyline(&rel, (k as f32 + 0.5) / r.segments as f32);
-                        let gen = ModelConfig::Water(cfg.clone()).build(sample_rate, rng.next_u64());
-                        push(&mut emitters, SourceKind::Water, at, gen, r.flow.clamp(0.0, 2.0));
+                        let u = (k as f32 + 0.5) / r.segments as f32;
+                        let at = sample_polyline(&rel, u);
+                        let s = (core::f32::consts::TAU * u * length / spacing + phase).sin() + 0.4 * rng.gauss();
+                        let variation = [(0.2 * s).exp(), (-0.15 * s + 0.1 * rng.gauss()).exp(), -0.05 * s];
+                        let seg = vary_water(&cfg, variation);
+                        push(&mut emitters, SourceKind::Water, at, ModelConfig::Water(seg).build(sample_rate, rng.next_u64()), r.flow.clamp(0.0, 2.0));
+                        set_base(&mut emitters, ModelConfig::Water(seg));
+                        emitters.last_mut().unwrap().variation = variation;
                     }
                     Entity {
                         id,
@@ -658,10 +679,14 @@ impl World {
                         Some(rel) => {
                             for k in 0..src.segments {
                                 let at = sample_polyline(rel, (k as f32 + 0.5) / src.segments as f32);
-                                push(&mut emitters, kind, at, cfg.clone().build(sample_rate, rng.next_u64()), 1.0);
+                                push(&mut emitters, kind, at, cfg.build(sample_rate, rng.next_u64()), 1.0);
+                                set_base(&mut emitters, cfg);
                             }
                         }
-                        None => push(&mut emitters, kind, Vec3::default(), cfg.build(sample_rate, rng.next_u64()), 1.0),
+                        None => {
+                            push(&mut emitters, kind, Vec3::default(), cfg.build(sample_rate, rng.next_u64()), 1.0);
+                            set_base(&mut emitters, cfg);
+                        }
                     }
                     // The director moves the thunder proxy; everything else can be dragged.
                     let flags = if model == ModelKind::Thunder { 0 } else { object_flags::MOVABLE };
@@ -723,6 +748,15 @@ impl World {
         let e = &self.entities[index];
         ObjectInfo { id: e.id, kind: e.kind as u32, x: e.position.x, y: e.position.y, z: e.position.z, flags: e.flags }
     }
+}
+
+/// A water configuration with a segment's variation applied.
+pub fn vary_water(c: &crate::sources::WaterConfig, v: [f32; 3]) -> crate::sources::WaterConfig {
+    let mut c = *c;
+    c.depth_m = (c.depth_m * v[0]).clamp(0.01, 5.0);
+    c.rock_d50_m = (c.rock_d50_m * v[1]).clamp(0.002, 2.0);
+    c.turbulence = (c.turbulence + v[2]).clamp(0.0, 1.0);
+    c
 }
 
 fn expect_model(d: SoundDesc, want: ModelKind, id: u32) -> Result<SoundDesc, String> {
