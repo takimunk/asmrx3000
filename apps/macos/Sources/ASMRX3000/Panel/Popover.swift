@@ -66,6 +66,10 @@ struct Popover: View {
             }
             .frame(width: Self.width, height: Self.sceneHeight)
 
+            PromptField(prompt: model.prompt)
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+
             Ornament()
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)

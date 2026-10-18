@@ -220,6 +220,47 @@ final class AudioEngine: ObservableObject {
         asmr_set_object_position(core, id, p.x, p.y, p.z)
     }
 
+    // MARK: Prompt control (docs/prompt-control.md)
+
+    /// Patches applied so far, replayed (without glides) if the core is rebuilt.
+    private var patches: [String] = []
+
+    /// System prompt, current-state context and tool schema (asmr_get_prompt_json).
+    func promptJSON() -> Data { Data(readString { asmr_get_prompt_json(core, $0, $1) }.utf8) }
+
+    /// Controls, environment and objects (asmr_get_state_json).
+    func stateJSON() -> Data { Data(readString { asmr_get_state_json(core, $0, $1) }.utf8) }
+
+    /// Applies a patch; returns the core's result JSON (ok, applied, errors, undo).
+    @discardableResult
+    func applyPatch(_ patch: Data) -> [String: Any] {
+        let text = String(decoding: patch, as: UTF8.self)
+        patches.append(text)
+        if patches.count > 64 { patches.removeFirst() }
+        let result = readString { asmr_apply_patch_json(core, text, $0, $1) }
+        return (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] ?? [:]
+    }
+
+    /// Calls a "length-returning" ABI function twice: once to size, once to fill.
+    private func readString(_ call: (UnsafeMutablePointer<CChar>?, UInt32) -> UInt32) -> String {
+        var size = Int(call(nil, 0)) + 1
+        while true {
+            var buf = [CChar](repeating: 0, count: size)
+            let n = Int(buf.withUnsafeMutableBufferPointer { call($0.baseAddress, UInt32(size)) })
+            if n < size { return String(cString: buf) }
+            size = n + 1
+        }
+    }
+
+    private func replayPatches() {
+        for p in patches {
+            guard var o = (try? JSONSerialization.jsonObject(with: Data(p.utf8))) as? [String: Any] else { continue }
+            o["glide_s"] = 0
+            guard let d = try? JSONSerialization.data(withJSONObject: o) else { continue }
+            _ = readString { asmr_apply_patch_json(core, String(decoding: d, as: UTF8.self), $0, $1) }
+        }
+    }
+
     // MARK: Private
 
     private func set<P: BinaryInteger>(_ param: P, _ value: Float) {
@@ -241,6 +282,7 @@ final class AudioEngine: ObservableObject {
         for (id, p) in placed {
             asmr_set_object_position(core, id, p.x, p.y, p.z)
         }
+        replayPatches()
         for (id, v) in setControls {
             asmr_set_control(core, id, v)
         }

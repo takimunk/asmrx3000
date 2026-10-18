@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
     let audio = AudioEngine()
     let head = HeadTracker()
     lazy var stage = Stage(audio: audio, head: head)
+    @MainActor lazy var prompt = PromptController(audio: audio)
     private var bag = Set<AnyCancellable>()
 
     init() {
