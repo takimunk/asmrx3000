@@ -72,6 +72,13 @@ pub struct WindConfig {
     pub distance_m: f32,
     /// How strongly the source follows gusts (0 = mean wind only, 1 = physical, up to 2).
     pub gust_response: f32,
+    /// Wind-blown grains (0..3): sand or snow hopping over the surface (saltation) once the
+    /// wind exceeds `sand_threshold_ms`; a hiss of countless tiny impacts.
+    pub sand: f32,
+    /// Centre of the grain hiss, Hz (500..12000): sand ~6 kHz, snow softer.
+    pub sand_hz: f32,
+    /// Wind speed at which grains start to move, m/s (2..12): dry sand ~5, loose snow ~4.
+    pub sand_threshold_ms: f32,
     /// Linear output gain (0..8).
     pub gain: f32,
 }
@@ -95,6 +102,9 @@ impl Default for WindConfig {
             gap: 0.0,
             distance_m: 10.0,
             gust_response: 1.0,
+            sand: 0.0,
+            sand_hz: 6000.0,
+            sand_threshold_ms: 5.0,
             gain: 1.0,
         }
     }
@@ -122,6 +132,9 @@ impl WindConfig {
         check("gap", self.gap, 0.0, 3.0)?;
         check("distance_m", self.distance_m, 1.0, 3000.0)?;
         check("gust_response", self.gust_response, 0.0, 2.0)?;
+        check("sand", self.sand, 0.0, 3.0)?;
+        check("sand_hz", self.sand_hz, 500.0, 12_000.0)?;
+        check("sand_threshold_ms", self.sand_threshold_ms, 2.0, 12.0)?;
         check("gain", self.gain, 0.0, 8.0)
     }
 }
@@ -155,6 +168,10 @@ pub struct Wind {
     gap_target: f32,
     tone_hz: f32,
     started: bool,
+    sand_band: Svf,
+    sand_gain: Ramp,
+    sand_env: f32,
+    sand_coef: f32,
 }
 
 impl Wind {
@@ -180,6 +197,10 @@ impl Wind {
             gap_target: 0.0,
             started: false,
             tone_hz: 0.0,
+            sand_band: Svf::new(cfg.sand_hz, 0.7, sr),
+            sand_gain: Ramp::new(0.0),
+            sand_env: 0.0,
+            sand_coef: one_pole_coef(25.0, sr),
             cfg,
         }
     }
@@ -243,6 +264,21 @@ impl Wind {
         WindConfig { body: 0.3, gap_hz: 950.0, gap_length_m: 0.012, gap_q: 40.0, gap: 0.8, distance_m: 3.0, ..Default::default() }
     }
 
+    /// Wind over open dunes: little to shed on but tufts of grass, and sand hissing over the
+    /// crests once the wind passes ~5 m/s.
+    pub fn dune_sand() -> WindConfig {
+        WindConfig { exposure: 1.4, d_min_m: 0.0005, d_max_m: 0.02, body: 0.35, tilt_db: -3.0, sand: 1.2, sand_hz: 6000.0, sand_threshold_ms: 5.0, distance_m: 12.0, ..Default::default() }
+    }
+    /// Wind over a rocky crest: rough body from the crags and a low howl through the gaps,
+    /// coming and going with the gusts.
+    pub fn ridge_howl() -> WindConfig {
+        WindConfig { exposure: 1.3, d_min_m: 0.005, d_max_m: 0.6, body: 0.6, tilt_db: 2.0, gap_hz: 140.0, gap_length_m: 0.6, gap_q: 14.0, gap: 1.0, distance_m: 20.0, gust_response: 1.5, ..Default::default() }
+    }
+    /// Snow drifting off a crest: a soft hiss of grains over the snow cover.
+    pub fn blowing_snow() -> WindConfig {
+        WindConfig { exposure: 1.2, d_min_m: 0.001, d_max_m: 0.05, body: 0.3, sand: 0.9, sand_hz: 4200.0, sand_threshold_ms: 4.0, distance_m: 15.0, gust_response: 1.3, ..Default::default() }
+    }
+
     pub fn preset(name: &str) -> Option<WindConfig> {
         Some(match name {
             "breeze" => Self::breeze(),
@@ -253,12 +289,15 @@ impl Wind {
             "gap_howl" => Self::gap_howl(),
             "hollow_tree" => Self::hollow_tree(),
             "whistle" => Self::whistle(),
+            "dune_sand" => Self::dune_sand(),
+            "ridge_howl" => Self::ridge_howl(),
+            "blowing_snow" => Self::blowing_snow(),
             _ => return None,
         })
     }
 
     pub const PRESETS: &'static [&'static str] =
-        &["breeze", "forest_roar", "storm", "power_lines", "fence_wire", "gap_howl", "hollow_tree", "whistle"];
+        &["breeze", "forest_roar", "storm", "power_lines", "fence_wire", "gap_howl", "hollow_tree", "whistle", "dune_sand", "ridge_howl", "blowing_snow"];
 
     /// Wire shedding frequency for wind speed `u` (m/s).
     pub fn wire_shedding_hz(&self, u: f32) -> f32 {
@@ -382,12 +421,21 @@ impl Generator for Wind {
         self.lp_coef = one_pole_coef(f_lp, sr);
         self.update_wires(u, len, dt);
         self.update_gap(u, len);
+        // Saltation (Bagnold 1941; Owen 1964): grains hop once the wind passes the threshold,
+        // mass flux q ∝ u³(1 − u_t²/u²). The hiss is the sum of countless impacts: power ∝ q.
+        let xs = u / c.sand_threshold_ms.max(1.0);
+        let flux = if c.sand > 0.0 && xs > 1.0 { xs * xs * xs * (1.0 - 1.0 / (xs * xs)) } else { 0.0 };
+        let sand_level = c.sand * 0.01 * flux.sqrt();
+        self.sand_band.set(c.sand_hz, 0.7, sr);
+        self.sand_gain.to(sand_level * band_norm(c.sand_hz, 0.7, sr), len);
+        let grains = sand_level > 0.0 || self.sand_gain.cur > 0.0;
 
         let silent = level < 1e-7
             && self.band_gain.iter().all(|r| r.cur < 1e-7)
             && self.slots.iter().all(|s| s.amp.cur < 1e-7 && s.target == 0.0)
             && self.gap_gain.cur < 1e-7
-            && self.gap_target < 1e-7;
+            && self.gap_target < 1e-7
+            && !grains;
         if silent {
             out.fill(0.0);
             for r in self.band_gain.iter_mut() {
@@ -429,6 +477,12 @@ impl Generator for Wind {
             let (_, g1, _) = self.gap1.process(white);
             let (_, g2, _) = self.gap2.process(g1);
             v += g2 * self.gap_gain.next() * gap_norm;
+            if grains {
+                let w2 = self.rng.bipolar();
+                self.sand_env += (4.0 * self.rng.bipolar() - self.sand_env) * self.sand_coef;
+                let (_, sb, _) = self.sand_band.process(w2);
+                v += sb * self.sand_gain.next() * (1.0 + 3.0 * self.sand_env).max(0.2);
+            }
             *o = v * out_gain;
         }
         for k in 0..BANDS {
@@ -444,6 +498,10 @@ impl Generator for Wind {
         }
         let gg = self.gap_gain.cur;
         self.gap_gain.settle(gg);
+        let sg = self.sand_gain.cur;
+        self.sand_gain.settle(if grains { sg.max(0.0) } else { 0.0 });
+        self.sand_band.flush();
+        self.sand_env = flush(self.sand_env);
         self.gap1.flush();
         self.gap2.flush();
         self.lp1 = flush(self.lp1);
@@ -458,6 +516,32 @@ impl Generator for Wind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn level(cfg: WindConfig, wind_ms: f32) -> f32 {
+        let mut w = Wind::new(48_000.0, 3, cfg);
+        let mut c = Controls::default();
+        c.env.wind_ms = wind_ms;
+        c.gust = wind_slider(wind_ms);
+        let mut buf = [0.0f32; 512];
+        let mut e = 0.0f64;
+        for _ in 0..200 {
+            w.render(&mut buf, &c);
+            e += buf.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+        }
+        10.0 * (e / (200.0 * 512.0)).log10() as f32
+    }
+
+    #[test]
+    fn sand_hisses_only_in_a_wind() {
+        let calm = level(Wind::dune_sand(), 2.0);
+        let windy = level(Wind::dune_sand(), 9.0);
+        let breeze = level(Wind::breeze(), 9.0);
+        let howl = level(Wind::ridge_howl(), 9.0);
+        let snow = level(Wind::blowing_snow(), 9.0);
+        eprintln!("dune sand 2 m/s {calm:.1} dB, 9 m/s {windy:.1} dB; breeze {breeze:.1}; ridge howl {howl:.1}; blowing snow {snow:.1}");
+        assert!(windy > calm + 15.0);
+        assert!(howl.is_finite() && snow.is_finite());
+    }
 
     #[test]
     fn aeolian_tone_follows_wind_speed() {

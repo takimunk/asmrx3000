@@ -219,6 +219,9 @@ struct Shared {
     /// 1 while the streamed objects (not the scene's) are reported.
     flight_shown: AtomicU32,
     flight_objects: FlightBridge,
+    /// Where the listener is in the landscape (UI terrain), and whether it was published.
+    flight_frame: crate::flight::bridge::FrameBridge,
+    flight_framed: AtomicU32,
     /// Bird telemetry (`asmr_get_birds`).
     birds: crate::director::BirdBridge,
     seed: u64,
@@ -309,6 +312,8 @@ impl Engine {
             flight_requested: AtomicU32::new(0),
             flight_shown: AtomicU32::new(0),
             flight_objects: FlightBridge::new(),
+            flight_frame: crate::flight::bridge::FrameBridge::new(),
+            flight_framed: AtomicU32::new(0),
             birds: crate::director::BirdBridge::new(),
             seed: desc.seed,
             head: HeadPoseInput::new(),
@@ -408,6 +413,12 @@ impl Engine {
         let sr = self.shared.telemetry[telemetry::SAMPLE_RATE as usize].load();
         let pack = Box::new(Flight::new(sr, self.shared.seed ^ 0xF1_6000));
         self.shared.flight_inbox.store(Box::into_raw(pack), Ordering::Release);
+    }
+
+    /// Where the listener is in the flight landscape and what it is (None before flight mode
+    /// was first built). Any thread.
+    pub fn flight_frame(&self) -> Option<crate::flight::bridge::Frame> {
+        (self.shared.flight_framed.load(Ordering::Acquire) != 0).then(|| self.shared.flight_frame.read())
     }
 
     /// Shape of a streamed object (river bed, lake shore, ridge line) as listener-relative
@@ -1124,6 +1135,10 @@ impl Dsp {
                 shared.flight_shown.store(1, Ordering::Release);
             }
             None => shared.flight_shown.store(0, Ordering::Release),
+        }
+        if let Some(f) = self.flight.as_deref() {
+            f.publish_frame(&shared.flight_frame);
+            shared.flight_framed.store(1, Ordering::Release);
         }
         if let Some(f) = self.flight.as_deref() {
             let pose = f.pose();

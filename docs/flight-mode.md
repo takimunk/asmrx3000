@@ -42,12 +42,14 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 | 1000 | `flight.speed` (macro) | 0..25 m/s | 6 | walk 1.5, run 5, glide 12, fast flight 25; the actual speed ramps at 2.5 m/s² |
 | 1001 | `flight.altitude` | 1.2..40 m (log) | follows speed | ears above the ground. Follows the speed: 1.7 m walking, under the crowns at a run, about 20 m (above the canopy) in fast flight. Gentle swells of up to ±12 % above walking height |
 | 1002 | `flight.curviness` | 0..1 | 0.35 | how much the course wanders when not steered by head; 1 = turn radius 250 m |
-| 1003 | `flight.biome` | preset | mixed | mixed, broadleaf, taiga, river_valley, meadows, highlands |
+| 1003 | `flight.biome` | preset | mixed | mixed, broadleaf, taiga, river_valley, meadows, highlands, desert, snowy_mountains, lake_shore, sea_coast, big_river (docs/world.md) |
 | 1004 | `flight.density` | 0..2 | 1 | trees and stands; takes effect immediately (thins or fills the generated forest) |
 | 1005 | `flight.seed` | 0..999 | 0 | another landscape |
 | 1006 | `flight.airflow` | 0..3 | 1 | wind noise of motion at the ears (1 = physical, subtle) |
 | 1007 | `flight.steer_by_head` | preset | yaw | off, yaw (fly where you look), yaw_pitch (also climb and dive with the head); live only while AirPods poses arrive |
 | 1008 | `flight.turn_rate` | 5..90 °/s | 30 | fastest turn when steering by head, reached with the head ~43° off course |
+| 1009 | `flight.relief` | 0..2 | 1 | relief scale (0 flat .. 2 twice as steep); regenerates |
+| 1010 | `flight.stops` | 0..1 | 0.5 | how often and how long the flight eases down and lingers at places (docs/world.md) |
 
 A new biome or seed fades every voice out (0.8 s), regenerates the landscape around the
 listener and fades the new one in. Your position and heading carry on.
@@ -86,21 +88,25 @@ It is streamed **in 2D around the listener**, whichever way it flies:
     430 m long, any direction, meandering. They come as brook over pebbles, rocky brook or
     slow river, with water sites every 15 m and riffle/pool variation.
   * **lakes** (rotated ellipses) with lapping sites along the shore.
-  * **ridges**: walls 4..12 m high and 60..160 m long, sometimes with a **waterfall**.
+  * **ridges**: rocky crests in the relief, 6..26 m high, 80..180 m long, sometimes with a
+    **waterfall** down a face.
   * **campfires**: in the most open spot of a few.
 
   Every feature that can reach a tile exists before the tile is made. Features carve the
   forest: no trees in water, on ridges or around a camp.
-* The six **biomes** differ in forest share, stand density and scale, species, and how often
-  water, rock, falls and camps appear (`land::BIOMES`).
+* Eleven **biomes** differ in relief, ground, forest share, stand density and scale,
+  species, and how often water, rock, falls and camps appear (`land::BIOMES`). The relief,
+  water bodies, surfaces, the sea, the big river and the new biomes are in **docs/world.md**.
+* Tiles also carry the **terrain** on a 5 m grid, surf on the shoreline and wind over the most
+  exposed crest.
 
 Storage is toroidal: 16 × 16 tile slots with 320 trees and 16 birds each, and 8 × 8 macro
-slots with 8 features and 96 sites each, indexed by coordinates modulo the ring. It is
+slots with 8 features and 128 sites each, indexed by coordinates modulo the ring. It is
 allocated once when flight mode is built, so turning around, circling or flying anywhere
 keeps the amount of content bounded and never allocates.
 
-Streaming makes at most one tile and one tree set per audio block: mean ≈1 µs, worst
-≈60 µs per block at 25 m/s. After a reseed it makes six per block while the voices fade in.
+Streaming makes at most one tile and one tree set per audio block, nearest first: mean
+≈1–2 µs, worst ≈220 µs per block at 25 m/s (a tile with its terrain, or a macro cell). After a reseed it makes six per block while the voices fade in.
 
 ## Motion and steering
 
@@ -125,7 +131,9 @@ which integrates a turn rate ω:
   smooth curvature, three slow sines over the distance flown (530, 310, 170 m; turn radius
   250 m at curviness 1). The head only looks around.
 
-Altitude is smoothed over 2.5 s and swells gently above walking height. Every emitter is
+Altitude is smoothed over 2.5 s and swells gently above walking height; the flight level
+follows the relief (docs/world.md). With `flight.stops` the flight eases down and lingers at
+places worth it. Every emitter is
 placed listener-relative (travel frame, +x = where you fly) each block, and the propagation
 gets its exact relative velocity:
 
@@ -136,15 +144,18 @@ the propagation itself (retarded-time delay lines), not from an effect. Head tra
 the head within the travel frame, and the predicted pose's neck parallax applies here too.
 
 The acoustic environment follows the ground under the listener:
-* **ear height** = altitude, so the ground reflection (image source) changes as you climb.
-  The `EAR_HEIGHT` clamp was widened from 3 m to 60 m for this.
-* **ground type**: forest floor, grass in meadows, water over lakes and rivers.
+* **ear height** = altitude above the ground under the listener, so the ground reflection
+  (image source) changes as you climb. The `EAR_HEIGHT` clamp was widened from 3 m to 60 m.
+* **ground type**: the surface under the listener (forest floor, grass, sand, snow, rock,
+  water); every emitter also reflects off the ground at its own specular point.
+* **terrain**: diffraction over hills per emitter, slope echoes, a reverb that follows the
+  enclosure (docs/world.md).
 * **stand density**: trunk scattering and the forest reverb tail.
 
 These are quantised (5 % in height, 50 trunks/ha) so the reverb and ground model are only
 rebuilt when they really change.
 
-Every 4 blocks (~5 ms) the trunks within 30 m, plus boulders (spheres) and ridges (walls),
+Every 4 blocks (~5 ms) the trunks within 30 m, plus boulders (spheres),
 are fed to the propagation with `Acoustics::update_geometry`, a real-time-safe variant of
 `set_trees`/`set_obstacles` added for this. It refills the reserved buffers, rebuilds the
 diffraction obstacles and the 8 early-reflection trunks, and does not reset the environment.
@@ -163,13 +174,14 @@ let outgoing voices fade (0.35 s) while new ones fade in.
 |---|---|---|---|---|
 | near crowns | 14 | 10 | the nearest trees within 40 m, crown = foliage of its species, area = crown | 1/d |
 | stands | 8 | 6 | aggregate cells within 220 m, area = the cell's crowns minus those voiced individually | √area / d |
-| birds | 10 | 8 | streamed birds within 150 m; slots have species (2 chaffinch, 2 robin, 2 song thrush, nightingale, wood pigeon, cuckoo, tawny owl), and a bird takes the voice of the slot it gets | song activity / d, flying ×4 |
-| water | 8 | 6 | river, lake and waterfall sites within 220 m | weight / d |
+| birds | 14 | 8 | streamed birds within 150 m; slots have species (2 chaffinch, 2 robin, 2 song thrush, nightingale, wood pigeon, cuckoo, tawny owl, blackbird, skylark, gull, raven), and a bird takes the voice of the slot it gets | song activity / d, flying ×4 |
+| water | 8 | 6 | river, lake, waterfall, surf and big-river sites within 220 m | weight / d |
 | insects | 4 | 3 | meadow patches within 90 m | 1/d |
 | fire | 2 | 1 | campfires within 150 m | 1/d |
-| rain | 4 | 4 | four patches around the listener; surface follows the ground (under canopy, meadow, on water) | — |
+| rain | 4 | 4 | four patches around the listener; surface follows the ground (under canopy, meadow, on water, sand, rock, snow); snowfall when it snows | — |
+| air | 4 | 3 | wind over exposed ground within 160 m: dune sand, ridge howl, blowing snow, breeze on open crests | weight / d |
 
-So **at most 38 emitters sound at once, out of 50**. The scene has 43, most of them asleep
+So **at most 41 emitters sound at once, out of 58**. The scene has 43, most of them asleep
 (rain and thunder).
 
 Area sources are extended: a crown of radius a heard from d gets the factor
@@ -290,13 +302,13 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
 
 ## Limits and next steps
 
-* The ground is flat for the acoustics (one plane at −altitude). Ridges and boulders
-  diffract but do not echo. Hills would need a terrain-aware ground model in the propagation.
+* The relief reaches the acoustics as per-emitter diffraction, a per-emitter ground plane,
+  slope echoes and the reverb level (docs/world.md); a tilted ground plane is not modelled.
 * There is no trunk avoidance: at walking height a course steered straight into a trunk
   passes through it (the trunk stops being an obstacle within 1 m).
-* Rivers are drawn as x(y) (crossing the course); a river running along the course after a
-  turn is heard but not drawn. Ridges, waterfalls, camps and meadows are reported but not
-  drawn. The UI session owns the look.
+* The relief, rivers, lakes, the sea and the big river are drawn from the engine's own
+  heightfield (Stage/FlightTerrain.swift). Waterfalls, camps and meadows are reported but
+  not drawn as models.
 * Steering by head needs AirPods poses (`asmr_set_head_pose`); without them the course
   wanders by curviness. Keyboard steering would be a small addition (a turn-rate input).
 * The first switch-on costs ~100 ms on the calling thread (the app calls it on the main

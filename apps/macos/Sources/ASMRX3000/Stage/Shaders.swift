@@ -51,6 +51,9 @@ enum Shaders {
         float4 haze;         // horizon y px (where the level ground meets the sky), -, -, -
         float4 listener;     // head position xyz, its distance from the eye
         float4x4 invViewProj;
+        float4 world;        // flight relief: snow cover, sand cover, bare rock above this slope, flying 0/1
+        float4 precip;       // rate mm/h, snow 1 / rain 0, fog distance scale, sea 0/1
+        float4 motion;       // velocity of the air past the eye (m/s, travel frame), -
     };
 
     struct Inst {
@@ -82,6 +85,11 @@ enum Shaders {
         float3 world;
         float3 normal;
         float part;
+        // Flight relief: water = (flow x, flow y in the travel frame, kind, depth);
+        // ground = (-, -, -, height above the nearest water).
+        float4 extra;
+        // World-anchored position (terrain chunks: chunk-local + origin), for water and sand.
+        float2 anchor;
     };
 
     float3 deform(float3 p, float3 n, float part, constant Inst& I, float time, thread float3& nOut) {
@@ -132,6 +140,8 @@ enum Shaders {
         o.world = w;
         o.normal = normalize((I.model * float4(n, 0)).xyz);
         o.part = v.part;
+        o.extra = float4(float3(v.n).xy, v.n[2], v.pad);
+        o.anchor = float3(v.p).xy + I.info.zw;
         return o;
     }
 
@@ -151,7 +161,50 @@ enum Shaders {
         float time = F.cam.w;
         float3 L = F.sun.xyz;
 
-        if (mat == M_WATER) {
+        bool relief = F.world.w > 0.5;
+        float foam = 0.0;
+        if (mat == M_WATER && relief) {
+            // Flight water (lakes, rivers, the sea): a few travelling waves in world space,
+            // turned into the travel frame. Rivers ripple downstream at their flow speed,
+            // lakes shiver in the wind, the sea swells towards the shore; foam where it is
+            // shallow, and on the sea in bands running up the beach.
+            float2 p = in.anchor;
+            float2 flow = in.extra.xy;
+            float kind = in.extra.z;
+            float depth = in.extra.w;
+            float speed = length(flow);
+            float2 fd = speed > 0.02 ? flow / speed : float2(0.8, 0.6);
+            float2 fp = float2(-fd.y, fd.x);
+            float2 g = float2(0.0);
+            if (kind > 2.5) {
+                // Sea: long swell and a chop on it.
+                float s1 = dot(p, float2(0.31, 0.95)) * 0.35 - time * 0.9;
+                float s2 = dot(p, float2(-0.7, 0.71)) * 0.9 - time * 1.7;
+                float s3 = dot(p, float2(0.95, -0.2)) * 2.3 - time * 2.6;
+                g = 0.10 * cos(s1) * float2(0.31, 0.95) + 0.05 * cos(s2) * float2(-0.7, 0.71) + 0.03 * cos(s3) * float2(0.95, -0.2);
+                float band = fract(depth * 0.55 - time * 0.11 + 0.05 * sin(p.x * 0.05 + p.y * 0.03));
+                foam = smoothstep(0.06, 0.0, band) * smoothstep(2.5, 0.4, depth) * 0.7;
+            } else if (kind > 1.5) {
+                // River: ripples carried downstream, wrinkles across.
+                float a = dot(p, fd) * 2.6 - time * (1.0 + 3.0 * speed);
+                float b = dot(p, fp) * 4.1 + 0.7 * sin(dot(p, fd) * 0.9 - time * speed);
+                g = (0.05 + 0.06 * speed) * (cos(a) * fd + 0.6 * cos(b) * fp);
+                float2 fq = float2(dot(p, fd) * 0.6 - time * speed * 0.6, dot(p, fp) * 1.5);
+                float2 ff = fract(fq) - 0.5;
+                float fleck = step(0.86, hash21(floor(fq))) * smoothstep(0.3, 0.0, length(ff * float2(0.45, 2.2)));
+                foam = fleck * smoothstep(0.15, 0.9, speed) * 0.45;
+            } else {
+                // Lake: cat's-paws of wind ripples, coming and going in patches.
+                float w1 = 0.6 * sin(dot(p, float2(0.13, -0.21)) + time * 0.3) + 0.4 * sin(dot(p, float2(-0.07, 0.11)) - time * 0.2);
+                float a = dot(p, float2(0.8, 0.6)) * 2.1 + 2.0 * sin(dot(p, float2(-0.31, 0.27))) - time * 1.4;
+                float b = dot(p, float2(-0.5, 0.86)) * 3.3 + 1.7 * sin(dot(p, float2(0.23, 0.19))) - time * 2.1;
+                g = (0.02 + 0.03 * max(w1, 0.0)) * (cos(a) * float2(0.8, 0.6) + 0.7 * cos(b) * float2(-0.5, 0.86));
+            }
+            // Fine waves fade with distance (no moiré), the sky's reflection takes over.
+            g *= clamp(1.4 - length(eye - in.world) / 45.0, 0.25, 1.0);
+            foam = max(foam, smoothstep(0.35, 0.0, depth) * (0.55 + 0.45 * sin(time * 1.3 + p.x * 0.7 + p.y * 0.5)));
+            n = normalize((I.model * float4(-g.x, -g.y, 1.0, 0.0)).xyz);
+        } else if (mat == M_WATER) {
             // Ripples run downstream (-y), quicker with more flow.
             float ph = in.world.y * 3.1 + time * (1.2 + 3.0 * F.counts.z);
             n = normalize(float3(0.07 * sin(in.world.x * 5.0 + ph * 0.6), 0.12 * sin(ph) + 0.05 * sin(in.world.x * 11.0 - ph * 1.7), 1.0));
@@ -173,9 +226,29 @@ enum Shaders {
         float diff = max(dot(n, L), 0.0) * lit;
         float sky = 0.5 + 0.5 * n.z;
         float tone;
-        if (mat == M_WATER) {
+        // Flight ground: snow, sand, bare rock (albedo goes in a.z for the shading pass).
+        float albedo = 0.0;
+        if (mat == M_WATER && relief) {
+            // Reflection of the sky: the bright haze near the horizon at grazing angles, the
+            // darker sky overhead looking down (Schlick's Fresnel).
+            float3 R = reflect(-V, n);
+            float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 5.0);
+            float skyTone = mix(0.95, 0.35, smoothstep(0.0, 0.6, R.z));
+            float spec = pow(max(dot(R, L), 0.0), 60.0) * lit;
+            tone = mix(0.04, skyTone, fres) + 1.2 * spec + 1.1 * foam;
+        } else if (mat == M_WATER) {
             float spec = pow(max(dot(reflect(-V, n), L), 0.0), 40.0) * lit;
             tone = 0.42 + 0.2 * lit + 1.4 * spec;
+        } else if (mat == M_GROUND && relief) {
+            float nz = clamp(n.z, 0.05, 1.0);
+            float slope = sqrt(1.0 - nz * nz) / nz;
+            float rock = smoothstep(F.world.z * 0.8, F.world.z * 1.15, slope);
+            float beach = in.extra.w < 900.0 ? smoothstep(2.8, 1.4, in.extra.w) * step(-0.5, in.extra.w) : 0.0;
+            float sand = max(F.world.y, beach) * (1.0 - rock);
+            float snow = F.world.x * (1.0 - rock);
+            albedo = snow > 0.01 ? 0.45 + 0.55 * snow : 0.45 * sand;
+            albedo -= 0.6 * rock * (1.0 - snow);
+            tone = 0.05 + 0.95 * diff + 0.1 * sky * snow;
         } else if (mat == M_STONE) {
             tone = 0.20 + 0.85 * diff + 0.1 * sky;        // marble keeps its light
         } else if (mat == M_BIRD) {
@@ -190,7 +263,8 @@ enum Shaders {
             tone = 0.06 + 0.7 * diff;
         }
         float dist = length(eye - in.world);
-        tone *= mix(1.0, 0.7, clamp((dist - 24.0) / 24.0, 0.0, 1.0));
+        float distS = dist / max(F.precip.z, 1.0);
+        tone *= mix(1.0, 0.7, clamp((distS - 24.0) / 24.0, 0.0, 1.0));
 
         // The engraver's line runs along the surface: around trunks and crowns, along the
         // river, across the ground.
@@ -213,7 +287,7 @@ enum Shaders {
         if (mat == M_GROUND || mat == M_SECTION) { id = -1.0; flags = 0.0; }
 
         GBuf o;
-        o.a = float4(clamp(tone, 0.0, 1.5), float(mat) + 32.0 * flags, angle, dist / 60.0);
+        o.a = float4(clamp(tone, 0.0, 1.5), float(mat) + 32.0 * flags, mat == M_GROUND ? albedo : angle, dist / 60.0);
         o.b = float4(in.world, id);
         return o;
     }
@@ -285,15 +359,31 @@ enum Shaders {
             fog = 1.0;
         } else {
             float2 r = RANGE[mat];
+            if (mat == M_GROUND && F.world.w > 0.5) {
+                // Flight relief: sand mid grey, snow pale, bare rock dark (albedo in a.z).
+                float alb = a.z;
+                float2 sandR = float2(0.15, 0.47), snowR = float2(0.32, 0.84), rockR = float2(0.07, 0.26);
+                r = alb >= 0.0 ? mix(mix(r, sandR, min(alb / 0.45, 1.0)), snowR, clamp((alb - 0.45) / 0.55, 0.0, 1.0))
+                               : mix(r, rockR, clamp(-alb / 0.6, 0.0, 1.0));
+            }
             float t = clamp(tone, 0.0, 1.0);
             if (sel) t = min(t + 0.18, 1.0);
             v = mix(r.x, r.y, smoothstep(0.0, 1.0, t)) * dim;
             // Sun glints on the water.
             if (mat == M_WATER) v += max(tone - 1.0, 0.0) * 0.35 * dim;
             if (mat == M_GROUND) v *= 1.0 - 0.25 * F.env.y;      // wet ground darkens
-            // Distance fog: clear around the herm, the far land dissolves into the sky.
-            fog = 1.0 - exp(-max(dist - 6.0, 0.0) / mix(24.0, 28.0, day));
-            fog = max(fog, smoothstep(60.0, 150.0, dist));
+            // Distance fog: clear around the herm, the far land dissolves into the sky (flight
+            // sees further: mountains stand in the haze).
+            float fd = dist / max(F.precip.z, 1.0);
+            fog = 1.0 - exp(-max(fd - 6.0, 0.0) / mix(24.0, 28.0, day));
+            fog = max(fog, smoothstep(60.0, 150.0, fd));
+            if (F.world.w > 0.5) {
+                // Flight: an aerial perspective over the relief, ridges fading into the haze
+                // out to the far edge of the land (~600 m).
+                float span = 50.0 * F.precip.z;
+                fog = 1.0 - exp(-max(dist - 12.0, 0.0) / span);
+                fog = max(fog, smoothstep(420.0, 600.0, dist));
+            }
             v = mix(v, fogC, fog);
         }
 
@@ -443,6 +533,71 @@ enum Shaders {
         }
 
         v = mix(v, inkC, g * (1.0 - 0.6 * fog));
+
+        // Rain and snow over the whole scene: four layers of particles at 2.5..23 m from the
+        // eye, each hidden behind what is nearer. Their direction and speed on screen are the
+        // projection of the air's motion past the eye at that depth (the fall, the wind, the
+        // flight), so near drops streak fast and long, far ones drift slowly, and in fast flight
+        // they slant towards you. Rain: thin streaks (motion blur). Snow: soft swaying flakes.
+        float rate = F.precip.x;
+        if (rate > 0.05) {
+            bool snowing = F.precip.y > 0.5;
+            float2 ndc = float2(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+            float4 q0 = F.invViewProj * float4(ndc, 0.0, 1.0);
+            float4 q1 = F.invViewProj * float4(ndc, 1.0, 1.0);
+            float3 ro = F.cam.xyz;
+            float3 rd = normalize(q1.xyz / q1.w - q0.xyz / q0.w);
+            float sceneD = mat == M_VOID ? 1.0e4 : dist;
+            float cov = 0.0;
+            float dens = snowing ? clamp(0.15 + rate * 0.08, 0.0, 0.7) : clamp(0.12 + rate * 0.03, 0.0, 0.85);
+            for (int k = 0; k < 4; k++) {
+                float D = 2.5 * pow(2.1, float(k));
+                if (sceneD < D) break;
+                float3 P = ro + rd * D;
+                float4 c0 = F.viewProj * float4(P, 1.0);
+                float4 c1 = F.viewProj * float4(P + F.motion.xyz * 0.05, 1.0);
+                float2 s0 = float2(c0.x / c0.w, -c0.y / c0.w) * 0.5 * F.view.xy;
+                float2 s1 = float2(c1.x / c1.w, -c1.y / c1.w) * 0.5 * F.view.xy;
+                float2 dv = (s1 - s0) / 0.05;
+                float spd = max(length(dv), 4.0 * s);
+                float2 dir = length(dv) > 1e-3 ? normalize(dv) : float2(0.0, 1.0);
+                float2 perp = float2(-dir.y, dir.x);
+                float cs = (snowing ? 30.0 : 16.0) * s / (1.0 + 0.8 * float(k));
+                float u = dot(px, perp) / cs;
+                float col = floor(u);
+                float h1 = hash21(float2(col, float(k) * 13.1 + 0.5));
+                float along = dot(px, dir) / cs - time * spd / cs + h1 * 17.0;
+                float cell = floor(along);
+                float h3 = hash21(float2(col + 0.37, cell + float(k) * 3.3));
+                if (h3 > dens) continue;
+                float fu = fract(u) - 0.5 - (h1 - 0.5) * 0.5;
+                float fa = fract(along);
+                float fade = 1.0 - 0.18 * float(k);
+                if (snowing) {
+                    fu += 0.2 * sin(time * (1.1 + h1) + h3 * 6.28 + cell * 1.7);
+                    float rr = 0.07 + 0.06 * h3;
+                    float dd = length(float2(fu, fa - 0.5));
+                    cov = max(cov, smoothstep(rr, rr * 0.35, dd) * fade);
+                } else {
+                    float len = clamp(spd * 0.02 / cs, 0.12, 0.85);
+                    float across = abs(fu) * cs;
+                    float line = cut(across, max(0.7 * s, 1.0)) * step(fa, len) * (0.3 + 0.7 * fa / len);
+                    cov = max(cov, line * fade * 0.6);
+                }
+            }
+            float pc = snowing ? mix(0.6, 0.92, day) : mix(0.3, 0.62, day);
+            v = mix(v, pc, cov * (snowing ? 0.85 : 0.55) * clamp(0.4 + rate * 0.15, 0.0, 1.0));
+            // Rain rings where drops land nearby.
+            if (!snowing && rate > 0.3 && (mat == M_GROUND || mat == M_WATER) && dist < 30.0) {
+                float2 cell = floor(b.xy * 1.6);
+                float ph = fract(time * 1.7 + hash21(cell));
+                if (hash21(cell + 9.1) < clamp(rate * 0.04, 0.0, 0.7)) {
+                    float2 c = (cell + 0.2 + 0.6 * float2(hash21(cell + 1.7), hash21(cell + 4.1))) / 1.6;
+                    float rr = 0.02 + ph * 0.1;
+                    v = mix(v, inkC, cut(abs(length(b.xy - c) - rr) / pxWorld, 0.8) * (1.0 - ph) * 0.18 * (1.0 - fog));
+                }
+            }
+        }
         v = v + (1.0 - v) * light;
         // A lightning strike lights the whole picture for a moment.
         v += F.env.z * 0.35 * (1.0 - v);

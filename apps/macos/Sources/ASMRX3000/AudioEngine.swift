@@ -269,6 +269,16 @@ final class AudioEngine: ObservableObject {
         out.append(contentsOf: rawObjects.prefix(Int(n)))
     }
 
+    /// Flight mode: where the listener is in the landscape and what it is (nil before flight
+    /// mode was first built). See Stage/FlightTerrain.swift.
+    func readFlightFrame() -> AsmrFlightFrame? {
+        var f = AsmrFlightFrame()
+        return asmr_get_flight_frame(core, &f) != 0 ? f : nil
+    }
+
+    /// Actual rain (or snow) rate, mm/h, for the precipitation drawn over the scene.
+    var rainRate: Float { telemetry(ASMR_TELEMETRY_RAIN_RATE) }
+
     /// What each scene bird is doing (species, state, flight style, wingbeat): Stage/Birds.swift.
     func readBirds(_ out: inout [AsmrBirdInfo]) -> Int {
         out.withUnsafeMutableBufferPointer { Int(asmr_get_birds(core, $0.baseAddress, UInt32($0.count))) }

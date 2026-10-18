@@ -16,9 +16,11 @@
 //! * Nothing on the audio thread allocates: storage is sized in [`Flight::new`], which runs
 //!   on whichever thread turns flight mode on (see `Engine::set_param`).
 
+pub mod acoustic;
 pub mod airflow;
 pub mod bridge;
 pub mod land;
+pub mod terrain;
 #[cfg(test)]
 mod tests;
 
@@ -33,14 +35,17 @@ use crate::physics::diffraction::Obstacle;
 use crate::physics::ground::GroundType;
 use crate::rng::Rng;
 use crate::scene::{object_flags, vary_water, Emitter, Entity, Geometry, ObjectInfo, ObjectKind, World};
+use crate::shaping::NF;
 use crate::sources::{
-    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Water, Wings,
+    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Water, Wind, Wings,
 };
 use crate::windfield::WindField;
 
+use acoustic::{Echoes, PathTerrain};
 use airflow::Airflow;
-use bridge::{FlightBridge, Snapshot};
+use bridge::{FlightBridge, FrameBridge, Snapshot};
 use land::{BirdState, FeatureKind, Land, SiteKind, TILES};
+use terrain::Surface;
 
 /// Turning radius of the wandering path at curviness 1 (steering by head off), m.
 const MIN_RADIUS: f64 = 250.0;
@@ -66,6 +71,10 @@ const REGEN_S: f32 = 0.8;
 const ACCEL: f32 = 2.5;
 /// Farthest distance any emitter is voiced from (delay lines carry ~235 m).
 const MAX_RANGE: f32 = 220.0;
+/// Index of ~1 kHz on the propagation's fit grid (for broadband estimates of a spectral loss).
+const MID_BAND: usize = 22;
+/// Deceleration when easing into a stop, m/s².
+const STOP_DECEL: f32 = 1.0;
 
 /// Ids of objects reported to the UI that have a shape: see `asmr_get_object_path`.
 pub use bridge::PATH_POINTS;
@@ -79,25 +88,28 @@ enum Pool {
     Insects,
     Fire,
     Rain,
+    /// Wind over exposed ground: dune sand, ridge howl, blowing snow, grass on open crests.
+    Air,
 }
 
 /// (pool, slots, voiced at once). Spare slots let outgoing voices fade while new ones fade in.
-const POOLS: [(Pool, usize, usize); 7] = [
+const POOLS: [(Pool, usize, usize); 8] = [
     (Pool::Near, 14, 10),
     (Pool::Cell, 8, 6),
-    (Pool::Bird, 10, 8),
+    (Pool::Bird, 14, 8),
     (Pool::Water, 8, 6),
     (Pool::Insects, 4, 3),
     (Pool::Fire, 2, 1),
     (Pool::Rain, 4, 4),
+    (Pool::Air, 4, 3),
 ];
 
-/// Emitters in flight mode (fixed: the level-of-detail bound). At most 38 sound at once
+/// Emitters in flight mode (fixed: the level-of-detail bound). At most 41 sound at once
 /// (the voiced counts above); the rest are spares that fade out while others fade in.
-pub const EMITTERS: usize = 50;
+pub const EMITTERS: usize = 58;
 
 /// Species of the bird slots (a streamed bird takes a slot of its species when one is free).
-const BIRD_SLOTS: [Species; 10] = [
+const BIRD_SLOTS: [Species; 14] = [
     Species::Chaffinch,
     Species::Chaffinch,
     Species::Robin,
@@ -108,6 +120,10 @@ const BIRD_SLOTS: [Species; 10] = [
     Species::WoodPigeon,
     Species::Cuckoo,
     Species::TawnyOwl,
+    Species::Blackbird,
+    Species::Skylark,
+    Species::Gull,
+    Species::Raven,
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -229,6 +245,11 @@ pub struct Pose {
     pub turn: f32,
     /// Vertical speed, m/s.
     pub climb: f32,
+    /// Ground height under the listener and height of the ears, m above sea level.
+    pub ground: f32,
+    pub ear: f32,
+    /// Stopped at a place: 0 cruising .. 1 lingering.
+    pub linger: f32,
     /// sin / cos of the heading.
     sin: f64,
     cos: f64,
@@ -270,10 +291,53 @@ pub struct Flight {
     dirty: bool,
     birds_level: f32,
     /// Features near the listener (refreshed with the level of detail).
-    near: [usize; 32],
+    near: [usize; land::LOCAL],
     n_near: usize,
     /// Block until which streaming runs with a larger budget (after a reseed).
     filled_until: u64,
+    relief_ctl: f32,
+    /// What the terrain does to each slot's path (refreshed with the level of detail).
+    paths: Box<[PathTerrain]>,
+    /// Its loss on the propagation's fit grid, dB.
+    path_db: Box<[[f32; NF]]>,
+    echoes: Echoes,
+    route: Route,
+    /// Precipitation falls as snow (snowy biome or below freezing).
+    snowing: bool,
+    /// Incremented whenever the landscape is regenerated (UI terrain caches key on it).
+    generation: u32,
+    /// Smoothed ground the flight level follows (looks ahead over rises).
+    terrain_follow: f32,
+}
+
+/// Stops and slow-downs at places worth lingering (a lake shore, a waterfall, the surf, the
+/// big river's bank, a viewpoint): approach, ease down, stand there a while, fly on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Visit {
+    Cruise,
+    Approach,
+    Linger,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Route {
+    visit: Visit,
+    /// Where to stop (world) and the site's id.
+    at: (f64, f64),
+    id: u32,
+    /// Seconds left lingering / before looking for the next place.
+    timer: f32,
+    cooldown: f32,
+    visited: [u32; 16],
+    next_visited: usize,
+    /// How far the flight level comes down to standing height (0..1, smoothed).
+    down: f32,
+}
+
+impl Route {
+    fn new() -> Self {
+        Self { visit: Visit::Cruise, at: (0.0, 0.0), id: 0, timer: 0.0, cooldown: 20.0, visited: [0; 16], next_visited: 0, down: 0.0 }
+    }
 }
 
 /// Crown sound of `area` m². `exposure`: wind in the crown relative to the open canopy
@@ -302,15 +366,27 @@ fn water(preset: u8, length: f32, variation: [f32; 3]) -> ModelConfig {
     ModelConfig::Water(vary_water(&c, variation))
 }
 
-fn rain(ground: u32) -> ModelConfig {
+/// Rain (or snow) patches around the listener on the ground below.
+fn rain(ground: Surface, snow: bool) -> ModelConfig {
     let name = match ground {
-        2 => "on_water",
-        1 => "meadow",
-        _ => "under_canopy",
+        Surface::Water => "on_water",
+        Surface::Grass => "meadow",
+        Surface::Sand => "on_soil",
+        Surface::Rock => "on_rock",
+        Surface::Snow => "snowfall",
+        Surface::Forest => "under_canopy",
     };
     let mut c = Rain::preset(name).unwrap_or_default();
     c.area_m2 = 60.0;
+    if snow {
+        c.snow = 1.0;
+    }
     ModelConfig::Rain(c)
+}
+
+fn air(preset: u8) -> ModelConfig {
+    let name = Wind::PRESETS.get(preset as usize).copied().unwrap_or("breeze");
+    ModelConfig::Wind(Wind::preset(name).unwrap_or_else(Wind::breeze))
 }
 
 impl Flight {
@@ -333,7 +409,8 @@ impl Flight {
                     Pool::Water => (SourceKind::Water, Some(water(3, 10.0, [1.0, 1.0, 0.0]))),
                     Pool::Insects => (SourceKind::Insect, Insects::preset("field_cricket").map(ModelConfig::Insects)),
                     Pool::Fire => (SourceKind::Fire, Fire::preset("campfire").map(ModelConfig::Fire)),
-                    Pool::Rain => (SourceKind::Rain, Some(rain(0))),
+                    Pool::Rain => (SourceKind::Rain, Some(rain(Surface::Forest, false))),
+                    Pool::Air => (SourceKind::Wind, Some(air(0))),
                     Pool::Bird => (SourceKind::Bird, None),
                 };
                 let generator: Box<dyn crate::sources::Generator> = match cfg {
@@ -348,6 +425,7 @@ impl Flight {
                 };
                 let (okind, geometry) = match pool {
                     Pool::Bird => (ObjectKind::Bird, Geometry::Point),
+                    Pool::Air => (ObjectKind::Source, Geometry::Source { model: ModelKind::Wind, path: None }),
                     _ => (ObjectKind::Source, Geometry::Source { model: model_of(kind), path: None }),
                 };
                 entities.push(Entity { id: index as u32, kind: okind, position: Vec3::default(), geometry, flags: 0, emitters: index..index + 1 });
@@ -375,7 +453,9 @@ impl Flight {
         debug_assert_eq!(emitters.len(), EMITTERS);
         let mut acoustics = Acoustics::new(sr, EMITTERS);
         acoustics.set_trees(Some(&[]));
-        let pose = Pose { height: controls::flight_altitude(6.0), ..Default::default() };
+        let height = controls::flight_altitude(6.0);
+        let ground = land.ground(0.0, 0.0);
+        let pose = Pose { height, ground, ear: ground + height, ..Default::default() };
         let mut f = Self {
             sample_rate: sr,
             land,
@@ -408,8 +488,16 @@ impl Flight {
             dirty: true,
             birds_level: 0.6,
             filled_until: 0,
-            near: [0; 32],
+            near: [0; land::LOCAL],
             n_near: 0,
+            relief_ctl: 1.0,
+            paths: vec![PathTerrain::NONE; EMITTERS].into_boxed_slice(),
+            path_db: vec![[0.0; NF]; EMITTERS].into_boxed_slice(),
+            echoes: Echoes::new(sr),
+            route: Route::new(),
+            snowing: false,
+            generation: 0,
+            terrain_follow: f32::NAN,
         };
         f.locate();
         f
@@ -420,6 +508,7 @@ impl Flight {
         self.pose.speed = speed.clamp(0.0, 30.0);
         self.altitude = controls::flight_altitude(self.pose.speed);
         self.pose.height = self.altitude;
+        self.pose.ear = self.pose.ground + self.pose.height;
     }
 
     pub fn pose(&self) -> Pose {
@@ -451,12 +540,18 @@ impl Flight {
         (self.pose.sin, self.pose.cos) = self.pose.heading.sin_cos();
     }
 
-    /// Listener-relative position of a world point `z` metres above the ground.
+    /// Listener-relative position of a world point at absolute height `z` (m above sea level).
     #[inline]
     fn rel(&self, x: f64, y: f64, z: f32) -> Vec3 {
         let (s, c) = (self.pose.sin, self.pose.cos);
         let (dx, dy) = (x - self.pose.x, y - self.pose.y);
-        Vec3::new((c * dx + s * dy) as f32, (-s * dx + c * dy) as f32, z - self.pose.height)
+        Vec3::new((c * dx + s * dy) as f32, (-s * dx + c * dy) as f32, z - self.pose.ear)
+    }
+
+    /// Listener-relative position of a point `above` metres over the ground (or the water).
+    #[inline]
+    fn rel_on(&self, x: f64, y: f64, above: f32) -> Vec3 {
+        self.rel(x, y, self.land.top(x, y) + above)
     }
 
     /// Velocity in the listener frame of a point at `rel` moving with `own` (world frame).
@@ -508,6 +603,8 @@ impl Flight {
             self.dirty = false;
         }
         self.environment(inp);
+        let (amb_rain, amb) = self.ambient(inp);
+        let c_air = crate::physics::air::speed_of_sound(amb.temperature_c as f64) as f32;
 
         for ch in self.bus.iter_mut() {
             ch[..len].fill(0.0);
@@ -542,7 +639,7 @@ impl Flight {
             ent.flags = if flying { object_flags::MOVING } else { 0 };
             let em = &mut self.world.emitters[idx];
             em.position = rel;
-            em.controls.env = inp.ambient;
+            em.controls.env = if slot.pool == Pool::Rain { amb_rain } else { amb };
             if let Target::Bird { idx: b, .. } = slot.target {
                 let bird = &self.land.birds[b as usize];
                 let (activity, calling, flap) = bird_voice(bird, inp, bird_density);
@@ -585,16 +682,24 @@ impl Flight {
             let d = rel.length();
             let spread = d / (d * d + slot.extent * slot.extent).sqrt().max(1e-3);
             let g = gain * slot.fade * slot.gain * spread;
-            mixer.feed(MIX_SLOT0 + idx, tmp, g * (mix * core::f32::consts::FRAC_PI_2).sin(), em.generator.busy());
+            // Terrain between it and the listener: diffraction over hills, the local ground.
+            let terrain = &self.path_db[idx];
+            let hidden = 10f32.powf(terrain[MID_BAND] / 20.0);
+            mixer.feed(MIX_SLOT0 + idx, tmp, g * hidden * (mix * core::f32::consts::FRAC_PI_2).sin(), em.generator.busy());
             let mut src = Source::at(rel, g);
-            src.eq_db = eq_db;
+            for i in 0..NF {
+                src.eq_db[i] = eq_db[i] + terrain[i];
+            }
             src.send = send;
             src.velocity = Some(vel);
-            if em.kind == SourceKind::Water {
-                src.ground = Some(GroundType::Water);
-            }
+            let path = &self.paths[idx];
+            src.ground_z = Some(path.ground - self.pose.ear);
+            src.ground = Some(if em.kind == SourceKind::Water { GroundType::Water } else { path.surface.ground() });
+            // Its share of the field at the listener, for the slope echoes.
+            self.echoes.add(tmp, g * hidden / (d + 4.0));
             self.acoustics.propagate(idx, &src, tmp, &mut self.bus);
         }
+        self.echoes.render(&mut self.bus, len, c_air);
         match bed.as_mut() {
             None => self.acoustics.render(&mut self.bus, &inp.head, len, &mut self.left[..len], &mut self.right[..len]),
             Some((_, head)) => {
@@ -633,16 +738,22 @@ impl Flight {
             self.ctl = Some(*st);
             self.dirty = true;
         }
-        let target = st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0);
+        let cruise = st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0);
+        let stops = st.get(id::FLIGHT_STOPS).clamp(0.0, 1.0);
+        self.update_route(dt, stops);
+        let target = self.route_speed(cruise);
         let dv = (target - self.pose.speed).clamp(-ACCEL * dt, ACCEL * dt);
         self.pose.speed += dv;
         let alt = st.get(id::FLIGHT_ALTITUDE).clamp(1.2, 40.0);
+        // Standing at a place: down to standing height.
+        let alt = alt + (alt.min(1.7) - alt) * self.route.down;
         self.altitude += (alt - self.altitude) * (1.0 - (-dt / 2.5).exp());
         self.curviness = st.get(id::FLIGHT_CURVINESS).clamp(0.0, 1.0);
         self.density = st.get(id::FLIGHT_DENSITY).clamp(0.0, 2.0);
         let seed = st.get(id::FLIGHT_SEED).round().max(0.0) as u32;
         let biome = st.get(id::FLIGHT_BIOME).round().max(0.0) as u32;
-        if (seed != self.seed_ctl || biome != self.biome_ctl) && self.regen == 0.0 {
+        let relief = (st.get(id::FLIGHT_RELIEF).clamp(0.0, 2.0) * 20.0).round() / 20.0;
+        if (seed != self.seed_ctl || biome != self.biome_ctl || relief != self.relief_ctl) && self.regen == 0.0 {
             self.regen = REGEN_S;
             for s in self.slots.iter_mut() {
                 if s.pool != Pool::Rain {
@@ -656,13 +767,17 @@ impl Flight {
                 self.regen = 0.0;
                 self.seed_ctl = seed;
                 self.biome_ctl = biome;
+                self.relief_ctl = relief;
                 for s in self.slots.iter_mut() {
                     if s.pool != Pool::Rain {
                         *s = Slot { target: Target::None, want: false, fade: 0.0, ..*s };
                     }
                 }
                 let seed = self.seed ^ (seed as u64).wrapping_mul(0x9E37_79B9);
-                self.land.reset(seed, biome);
+                self.land.reset(seed, biome, relief);
+                self.generation = self.generation.wrapping_add(1);
+                self.terrain_follow = f32::NAN;
+                self.route = Route::new();
                 // Refilled over the next blocks (6 tiles each), not all at once.
                 self.land.stream(self.pose.x, self.pose.y, 6);
                 self.filled_until = self.blocks + 200;
@@ -686,9 +801,14 @@ impl Flight {
         let beyond = |a: f32| a.signum() * (a.abs() - DEAD_ZONE).max(0.0);
         let target = if mode > 0 {
             (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn
+        } else if self.route.visit == Visit::Approach {
+            // Heading for a place to stop: turn towards it (gently).
+            let r = self.rel(self.route.at.0, self.route.at.1, 0.0);
+            let bearing = r.y.atan2(r.x);
+            (1.2 * bearing).clamp(-0.35, 0.35)
         } else {
             let k = curvature(self.land.seed, self.pose.s) * self.curviness as f64;
-            (k * self.pose.speed as f64) as f32
+            (k * self.pose.speed as f64) as f32 + self.coast_bias()
         };
         self.pose.turn += (target - self.pose.turn).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
         if mode >= 2 {
@@ -715,9 +835,135 @@ impl Flight {
         let swell = (base - 2.5).clamp(0.0, 12.0) * 0.12;
         let n = land::noise2(self.land.seed, 0xA17, self.pose.x / 160.0, self.pose.y / 160.0) - 0.5;
         let h = (base + 2.0 * swell * n).max(1.0);
-        self.pose.climb = if dt > 0.0 { (h - self.pose.height) / dt } else { 0.0 };
-        self.pose.height = h;
-        self.world.ground_z = -h;
+        // Follow the terrain: the flight level rides over the highest ground just ahead (so a
+        // rise is climbed before it is reached), rising quicker than it sinks into a valley.
+        let here = self.land.top(self.pose.x, self.pose.y);
+        let mut ahead = here;
+        let v = self.pose.speed.max(1.0) as f64;
+        for t in [0.6, 1.2, 2.0] {
+            let d = v * t;
+            ahead = ahead.max(self.land.top(self.pose.x + d * self.pose.cos, self.pose.y + d * self.pose.sin) - 0.08 * d as f32);
+        }
+        if !self.terrain_follow.is_finite() {
+            self.terrain_follow = ahead;
+        }
+        let tau = if ahead > self.terrain_follow { 0.9 } else { 2.2 };
+        self.terrain_follow += (ahead - self.terrain_follow) * (1.0 - (-dt / tau).exp());
+        let ear = (self.terrain_follow + h).max(here + h.min(1.2));
+        let prev = self.pose.ear;
+        self.pose.ground = here;
+        self.pose.ear = ear;
+        self.pose.climb = if dt > 0.0 && prev.is_finite() { ((ear - prev) / dt).clamp(-30.0, 30.0) } else { 0.0 };
+        self.pose.height = ear - here;
+        self.world.ground_z = -self.pose.height;
+    }
+
+    /// On a sea coast the wandering course keeps to the shore: it turns back towards land
+    /// when the sea lies ahead and drifts towards the sea far inland (turn rate, rad/s).
+    fn coast_bias(&self) -> f32 {
+        if self.land.params.biome.relief.sea <= 0.0 {
+            return 0.0;
+        }
+        let d = (60.0 + 6.0 * self.pose.speed as f64).min(180.0);
+        let at = |a: f64| {
+            let h = self.pose.heading + a;
+            self.land.ground(self.pose.x + d * h.cos(), self.pose.y + d * h.sin())
+        };
+        let (ahead, left, right) = (at(0.0), at(0.7), at(-0.7));
+        let toward = |higher: bool| if (left > right) == higher { 1.0 } else { -1.0 };
+        if ahead < 1.5 {
+            0.16 * toward(true)
+        } else if ahead > 18.0 && left.min(right) < ahead {
+            0.05 * toward(false)
+        } else {
+            0.0
+        }
+    }
+
+    /// Speed the route allows: the cruise, easing into a stop, nothing while lingering.
+    fn route_speed(&self, cruise: f32) -> f32 {
+        match self.route.visit {
+            Visit::Cruise => cruise,
+            Visit::Approach => {
+                let d = (self.route.at.0 - self.pose.x).hypot(self.route.at.1 - self.pose.y) as f32;
+                cruise.min((2.0 * STOP_DECEL * (d - 10.0).max(0.0)).sqrt())
+            }
+            Visit::Linger => 0.0,
+        }
+    }
+
+    /// Advances the stop-and-go: approach → linger → fly on.
+    fn update_route(&mut self, dt: f32, stops: f32) {
+        let (px, py) = (self.pose.x, self.pose.y);
+        let speed = self.pose.speed;
+        let seed = self.land.seed;
+        let r = &mut self.route;
+        r.cooldown -= dt;
+        let ease = |x: &mut f32, to: f32, tau: f32| *x += (to - *x) * (1.0 - (-dt / tau).exp());
+        match r.visit {
+            Visit::Cruise => ease(&mut r.down, 0.0, 3.0),
+            Visit::Approach => {
+                ease(&mut r.down, 0.0, 3.0);
+                let (dx, dy) = (r.at.0 - px, r.at.1 - py);
+                let d = dx.hypot(dy) as f32;
+                let ahead = (dx * self.pose.cos + dy * self.pose.sin) as f32;
+                if d < 12.0 || (speed < 0.4 && d < 40.0) {
+                    r.visit = Visit::Linger;
+                    let u = land::unit(land::hash(seed, r.id as i64, 1, 0x5709));
+                    r.timer = (14.0 + 30.0 * stops) * (0.7 + 0.6 * u);
+                } else if ahead < -5.0 || stops <= 0.0 {
+                    // Passed it (steering by head went elsewhere): fly on.
+                    r.visit = Visit::Cruise;
+                    r.cooldown = 10.0;
+                }
+            }
+            Visit::Linger => {
+                ease(&mut r.down, 1.0, 4.0);
+                r.timer -= dt;
+                if r.timer <= 0.0 || stops <= 0.0 {
+                    r.visit = Visit::Cruise;
+                    r.cooldown = 40.0 - 25.0 * stops;
+                    r.visited[r.next_visited] = r.id;
+                    r.next_visited = (r.next_visited + 1) % r.visited.len();
+                }
+            }
+        }
+        let linger = if r.visit == Visit::Linger { 1.0 } else { 0.0 };
+        self.pose.linger += (linger - self.pose.linger) * (1.0 - (-dt / 1.5).exp());
+    }
+
+    /// Looks ahead for a place worth stopping at (level-of-detail rate).
+    fn find_stop(&mut self, stops: f32, steering: bool) {
+        if self.route.visit != Visit::Cruise || self.route.cooldown > 0.0 || stops <= 0.0 || self.pose.speed < 0.5 || self.regen > 0.0 {
+            return;
+        }
+        let (c, s) = (self.pose.cos, self.pose.sin);
+        let cone = if steering { 0.9 } else { 0.6 };
+        let mut best: Option<(f64, usize)> = None;
+        for (i, x) in self.land.sites.iter().enumerate() {
+            if !x.alive || !x.scenic || self.route.visited.contains(&x.id) {
+                continue;
+            }
+            let (dx, dy) = (x.x - self.pose.x, x.y - self.pose.y);
+            let d = dx.hypot(dy);
+            let ahead = c * dx + s * dy;
+            if !(30.0..320.0).contains(&d) || ahead < cone * d {
+                continue;
+            }
+            // Not every place: a share by the stops setting, decided once per place.
+            if land::unit(land::hash(self.land.seed, x.id as i64, 0, 0x570B)) > 0.1 + 0.85 * stops {
+                continue;
+            }
+            if best.map_or(true, |b| d < b.0) {
+                best = Some((d, i));
+            }
+        }
+        if let Some((_, i)) = best {
+            let x = self.land.sites[i];
+            self.route.visit = Visit::Approach;
+            self.route.at = (x.x, x.y);
+            self.route.id = x.id;
+        }
     }
 
     /// Birds: perched singing, flushed by the passing listener, flying off to a new perch.
@@ -753,7 +999,7 @@ impl Flight {
                     let side = -hs * dx + hc * dy;
                     let dz = b.pos[2] - pose.height as f64;
                     let d = (dx * dx + dy * dy + dz * dz).sqrt() as f32;
-                    let flush_at = 6.0 + 0.9 * speed;
+                    let flush_at = 2.0 + 1.2 * b.species().def().flush + 0.9 * speed;
                     if d < flush_at && ahead > -4.0 {
                         b.checked = true;
                         let mut r = land::Stream::new(land::hash(seed, b.id as i64, 0, 0xF1A5));
@@ -763,6 +1009,8 @@ impl Flight {
                             Species::SongThrush | Species::Cuckoo => 0.5,
                             Species::Chaffinch => 0.4,
                             Species::Robin => 0.25,
+                            Species::Gull | Species::Raven => 0.6,
+                            Species::Skylark => 0.45,
                             _ => 0.2,
                         };
                         let p = shy * (0.3 + 0.7 * (speed / 8.0).min(1.0));
@@ -805,26 +1053,26 @@ impl Flight {
             Target::Tree { tile, k, id } => {
                 let t = self.land.tile_trees(tile as usize).get(k as usize)?;
                 (t.id == id).then(|| {
-                    let r = self.rel(t.x, t.y, t.crown_z);
+                    let r = self.rel(t.x, t.y, t.ground + t.crown_z);
                     (r, self.rel_vel(r, [0.0; 3]), false)
                 })
             }
             Target::Cell { i, j } => {
                 let c = &self.land.tiles[self.land.tile(i, j)?].cell;
-                let r = self.rel(c.x, c.y, c.canopy_z);
+                let r = self.rel(c.x, c.y, c.ground + c.canopy_z);
                 Some((r, self.rel_vel(r, [0.0; 3]), false))
             }
             Target::Bird { idx, id } => {
                 let b = &self.land.birds[idx as usize];
                 (b.alive && b.id == id).then(|| {
-                    let r = self.rel(b.pos[0], b.pos[1], b.pos[2] as f32);
+                    let r = self.rel_on(b.pos[0], b.pos[1], b.pos[2] as f32);
                     (r, self.rel_vel(r, b.vel), b.state == BirdState::Flying)
                 })
             }
             Target::Site { idx, id } => {
                 let x = &self.land.sites[idx as usize];
                 (x.alive && x.id == id).then(|| {
-                    let r = self.rel(x.x, x.y, x.z);
+                    let r = self.rel_on(x.x, x.y, x.z);
                     (r, self.rel_vel(r, [0.0; 3]), false)
                 })
             }
@@ -837,7 +1085,7 @@ impl Flight {
 
     /// Chooses which streamed things the pools voice.
     fn lod(&mut self, inp: &Inputs) {
-        let mut near = [0usize; 32];
+        let mut near = [0usize; land::LOCAL];
         self.n_near = self.land.local_features(self.pose.x, self.pose.y, 25.0, &mut near);
         self.near = near;
         let density = self.density;
@@ -852,7 +1100,7 @@ impl Flight {
                 if tr.rank >= tree_rank {
                     continue;
                 }
-                let d = self.rel(tr.x, tr.y, tr.crown_z).length();
+                let d = self.rel(tr.x, tr.y, tr.ground + tr.crown_z).length();
                 if d < 40.0 {
                     near.push(1.0 / d.max(0.5), Target::Tree { tile: t as u16, k: k as u16, id: tr.id });
                 }
@@ -880,7 +1128,7 @@ impl Flight {
             if area < 15.0 {
                 continue;
             }
-            let d = self.rel(c.x, c.y, c.canopy_z).length();
+            let d = self.rel(c.x, c.y, c.ground + c.canopy_z).length();
             if d < MAX_RANGE {
                 cells.push(area.sqrt() / d.max(5.0), Target::Cell { i: tile.i, j: tile.j });
             }
@@ -905,7 +1153,11 @@ impl Flight {
             if !b.alive || b.rank >= threshold {
                 continue;
             }
-            let d = self.rel(b.pos[0], b.pos[1], b.pos[2] as f32).length();
+            let (dx, dy) = (b.pos[0] - px, b.pos[1] - py);
+            if dx * dx + dy * dy > 160.0 * 160.0 {
+                continue;
+            }
+            let d = self.rel_on(b.pos[0], b.pos[1], b.pos[2] as f32).length();
             if d < 150.0 {
                 let song = b.species().song_activity(inp.hour).max(0.05);
                 let boost = if b.state == BirdState::Flying { 4.0 } else { 1.0 };
@@ -920,16 +1172,22 @@ impl Flight {
         let mut water = Best::<16>::new();
         let mut insects = Best::<8>::new();
         let mut fire = Best::<4>::new();
+        let mut air = Best::<8>::new();
         for (i, x) in self.land.sites.iter().enumerate() {
             if !x.alive {
                 continue;
             }
-            let d = self.rel(x.x, x.y, x.z).length();
+            let (dx, dy) = (x.x - px, x.y - py);
+            if dx * dx + dy * dy > (MAX_RANGE * MAX_RANGE) as f64 {
+                continue;
+            }
+            let d = self.rel_on(x.x, x.y, x.z).length();
             let t = Target::Site { idx: i as u16, id: x.id };
             match x.kind {
                 SiteKind::Water if d < MAX_RANGE => water.push(x.weight / d.max(2.0), t),
                 SiteKind::Insects if d < 90.0 => insects.push(x.weight / d.max(2.0), t),
                 SiteKind::Fire if d < 150.0 => fire.push(x.weight / d.max(2.0), t),
+                SiteKind::Air if d < 160.0 => air.push(x.weight / d.max(4.0), t),
                 _ => {}
             }
         }
@@ -937,16 +1195,52 @@ impl Flight {
             self.assign(Pool::Water, &water);
             self.assign(Pool::Insects, &insects);
             self.assign(Pool::Fire, &fire);
+            self.assign(Pool::Air, &air);
         }
 
-        // Rain patches follow the listener; their surface follows the ground below.
-        let ground = self.land.ground_near(px, py, &self.near[..self.n_near]);
+        // Rain (or snow) patches follow the listener; their surface follows the ground below.
+        let ground = self.land.surface_at(px, py);
         for i in Self::range(Pool::Rain) {
-            let cfg = rain(ground);
+            let cfg = rain(ground, self.snowing);
             if self.world.emitters[i].base != Some(cfg) {
                 self.world.emitters[i].base = Some(cfg);
                 self.dirty = true;
             }
+        }
+
+        // Places to stop at, and what the terrain does to every voiced path.
+        let steering = inp.head_tracked && inp.st.get(id::FLIGHT_STEER).round() > 0.0;
+        self.find_stop(inp.st.get(id::FLIGHT_STOPS).clamp(0.0, 1.0), steering);
+        self.terrain_paths();
+        if self.blocks % (LOD_EVERY * 4) == 1 {
+            let relief = self.relief_ctl;
+            let scale = (0.5 + 0.5 * relief).min(1.2);
+            self.echoes.scan(&self.land, self.pose.x, self.pose.y, self.pose.ear, self.pose.heading, scale);
+        }
+    }
+
+    /// Terrain between every sounding slot and the listener (profile diffraction, local
+    /// ground), turned into a spectral loss on the propagation's fit grid.
+    fn terrain_paths(&mut self) {
+        let lis = [self.pose.x, self.pose.y, self.pose.ear as f64];
+        let freqs = self.acoustics.context().design.freqs;
+        let c = self.acoustics.context().speed_of_sound;
+        for i in 0..self.slots.len() {
+            let slot = self.slots[i];
+            if slot.target == Target::None || slot.pool == Pool::Rain {
+                self.paths[i] = PathTerrain { ground: self.pose.ground, surface: self.land.surface_at(self.pose.x, self.pose.y), ..PathTerrain::NONE };
+                self.path_db[i] = [0.0; NF];
+                continue;
+            }
+            // The emitter's world position from its listener-relative one.
+            let r = self.world.emitters[i].position;
+            let (s, co) = (self.pose.sin, self.pose.cos);
+            let wx = self.pose.x + co * r.x as f64 - s * r.y as f64;
+            let wy = self.pose.y + s * r.x as f64 + co * r.y as f64;
+            let src = [wx, wy, (self.pose.ear + r.z) as f64];
+            let p = acoustic::terrain_path(&self.land, src, lis);
+            self.paths[i] = p;
+            p.loss_db(&freqs, c, &mut self.path_db[i]);
         }
     }
 
@@ -1018,6 +1312,7 @@ impl Flight {
                     SiteKind::Water => Some(water(x.preset, x.length, x.variation)),
                     SiteKind::Insects => Insects::preset(Insects::PRESETS.get(x.preset as usize).copied().unwrap_or("field_cricket")).map(ModelConfig::Insects),
                     SiteKind::Fire => Fire::preset("campfire").map(ModelConfig::Fire),
+                    SiteKind::Air => Some(air(x.preset)),
                 }
             }
             Target::Bird { idx, .. } => {
@@ -1062,7 +1357,10 @@ impl Flight {
                             }
                             break 'scan;
                         }
-                        self.trunks[n] = Trunk { x: r.x, y: r.y, radius: tr.trunk_r, height: tr.top() };
+                        // Trunks stand on the listener's ground plane in the propagation: keep
+                        // their tops where they are.
+                        let height = (tr.ground + tr.top() - self.pose.ground).max(0.5);
+                        self.trunks[n] = Trunk { x: r.x, y: r.y, radius: tr.trunk_r, height };
                         n += 1;
                     }
                 }
@@ -1070,35 +1368,19 @@ impl Flight {
             break;
         }
         let trunks = n;
+        // Boulders diffract; ridges and hills are part of the relief (terrain_paths).
         let mut m = 0;
-        let h = self.pose.height;
         for f in self.land.features.iter() {
-            if !f.alive || m >= self.obstacles.len() {
+            if !f.alive || m >= self.obstacles.len() || f.kind != FeatureKind::Rock {
                 continue;
             }
-            match f.kind {
-                FeatureKind::Rock => {
-                    let r = self.rel(f.x, f.y, 0.7 * f.size);
-                    if r.length() < 80.0 {
-                        self.obstacles[m] = Obstacle::Sphere { center: r, radius: f.size };
-                        m += 1;
-                    }
-                }
-                FeatureKind::Ridge => {
-                    for w in f.path[..f.path_len as usize].windows(2) {
-                        if m >= self.obstacles.len() {
-                            break;
-                        }
-                        let a = self.rel(w[0][0], w[0][1], 0.0);
-                        let b = self.rel(w[1][0], w[1][1], 0.0);
-                        if a.length().min(b.length()) < 150.0 {
-                            self.obstacles[m] = Obstacle::Wall { x0: a.x, y0: a.y, x1: b.x, y1: b.y, z0: -h - 1.0, z1: -h + f.z };
-                            m += 1;
-                        }
-                    }
-                }
-                _ => {}
+            let (dx, dy) = (f.x - px, f.y - py);
+            if dx * dx + dy * dy > 80.0 * 80.0 {
+                continue;
             }
+            let r = self.rel_on(f.x, f.y, 0.7 * f.size);
+            self.obstacles[m] = Obstacle::Sphere { center: r, radius: f.size };
+            m += 1;
         }
         // The trunks move with the emitters (both are rigid in the world), and each
         // propagator refits its spectra when its own path moved enough (0.15 m when
@@ -1111,31 +1393,54 @@ impl Flight {
         self.acoustics.update_geometry(&self.trunks[..trunks], &self.obstacles[..m], refit);
     }
 
-    /// Ground, stand density and ear height for the propagation (quantised, so the forest
-    /// tail and ground model are rebuilt only when they really change).
+    /// Ground, stand density, ear height, temperature and reverb for the propagation
+    /// (quantised, so the forest tail and ground model are rebuilt only when they really
+    /// change). The reverb follows the relief: a valley or a cirque rings longer, an open plain
+    /// or a dune field is dry, snow swallows the tail.
     fn environment(&mut self, inp: &Inputs) {
         let (px, py) = (self.pose.x, self.pose.y);
         let near = &self.near[..self.n_near];
-        let ground = self.land.ground_near(px, py, near);
+        let surface = self.land.surface_at(px, py);
         let b = self.land.biome_def();
         let ahead = (px + 15.0 * self.pose.cos, py + 15.0 * self.pose.sin);
         let local = b.density_ha * self.density * self.land.cover_near(px, py, near).max(self.land.cover_near(ahead.0, ahead.1, near));
         let q = (local / 50.0).round() * 50.0;
         let ear = self.pose.height;
-        let (g0, d0, e0) = self.env_key;
+        let (_, d0, e0) = self.env_key;
         let ear_q = if (ear - e0).abs() > (0.04 * e0).max(0.05) { ear } else { e0 };
         let dens = if (q - d0).abs() >= 50.0 { q } else { d0 };
-        self.env_key = (ground, dens, ear_q);
-        let _ = g0;
+        self.env_key = (surface as u32, dens, ear_q);
         let mut env = inp.acoustic;
-        env.ground = match ground {
-            2 => GroundType::Water,
-            1 => GroundType::Grass,
-            _ => GroundType::ForestFloor,
-        };
+        env.ground = surface.ground();
         env.tree_density_per_ha = dens.max(0.0);
         env.ear_height = ear_q;
+        env.temperature_c = (env.temperature_c + b.temperature).clamp(-30.0, 45.0);
+        self.snowing = b.snow > 0.5 || env.temperature_c < 0.5;
+        let enclosure = (self.echoes.enclosure * 10.0).round() / 10.0;
+        let snow = if surface == Surface::Snow { 0.6 } else { 1.0 };
+        env.reverb *= (0.6 + 2.2 * enclosure).min(1.8) * snow;
         self.acoustics.set_environment(&env);
+    }
+
+    /// Weather as the generators hear it here: the biome's temperature and wind; while it
+    /// snows, the precipitation reaches only the snow patches (flakes do not patter on leaves
+    /// or water). Returns (for the rain/snow patches, for everything else).
+    fn ambient(&self, inp: &Inputs) -> (Ambient, Ambient) {
+        let b = self.land.biome_def();
+        let mut a = inp.ambient;
+        a.temperature_c += b.temperature;
+        a.wind_ms *= b.wind;
+        if b.sand > 0.5 {
+            a.humidity *= 0.4;
+        }
+        let precip = a;
+        if self.snowing {
+            a.rain_mm_h = 0.0;
+            a.drip_mm_h = 0.0;
+            a.puddles = 0.0;
+            a.leaf_wetness = 0.0;
+        }
+        (precip, a)
     }
 
     // -----------------------------------------------------------------------------------
@@ -1150,9 +1455,8 @@ impl Flight {
     /// Publishes the streamed objects for the UI (audio thread).
     pub fn publish(&self, bridge: &FlightBridge) {
         let mut snap = bridge.begin();
-        let h = self.pose.height;
-        let ground = -h;
-        // Features first: they are few and big.
+        // Features first: they are few and big. Heights are relative to the ears, on the
+        // terrain (rivers and lakes at their water level).
         for f in self.land.features.iter() {
             if !f.alive {
                 continue;
@@ -1161,37 +1465,77 @@ impl Flight {
             if r.x * r.x + r.y * r.y > 260.0 * 260.0 {
                 continue;
             }
+            let mid = f.levels[f.path_len as usize / 2];
             let (kind, z) = match f.kind {
-                FeatureKind::River => (ObjectKind::River, ground),
-                FeatureKind::Lake => (ObjectKind::Lake, ground),
-                FeatureKind::Ridge | FeatureKind::Rock => (ObjectKind::Rock, ground + f.z),
-                FeatureKind::Waterfall => (ObjectKind::Source, ground + f.z),
-                FeatureKind::Campfire | FeatureKind::Meadow => (ObjectKind::Source, ground),
+                FeatureKind::River => (ObjectKind::River, mid - self.pose.ear),
+                FeatureKind::Lake => (ObjectKind::Lake, f.level - self.pose.ear),
+                FeatureKind::Ridge => (ObjectKind::Rock, self.land.ground(f.x, f.y) - self.pose.ear),
+                FeatureKind::Rock => (ObjectKind::Rock, self.land.ground(f.x, f.y) + f.z - self.pose.ear),
+                FeatureKind::Waterfall => (ObjectKind::Source, self.land.ground(f.x, f.y) + f.z - self.pose.ear),
+                FeatureKind::Campfire | FeatureKind::Meadow => (ObjectKind::Source, self.land.ground(f.x, f.y) - self.pose.ear),
             };
             snap.object(ObjectInfo { id: f.id, kind: kind as u32, x: r.x, y: r.y, z, flags: 0 });
             if f.path_len > 0 {
-                let pts = f.path[..f.path_len as usize].iter().map(|p| self.rel(p[0], p[1], 0.0));
+                let n = f.path_len as usize;
+                let pts = f.path[..n].iter().enumerate().map(|(k, p)| {
+                    let z = match f.kind {
+                        FeatureKind::River => f.levels[k],
+                        FeatureKind::Lake => f.level,
+                        _ => self.land.ground(p[0], p[1]),
+                    };
+                    self.rel(p[0], p[1], z)
+                });
                 snap.path(f.id, pts);
             }
         }
         // Birds that exist at the current BIRDS level.
         let threshold = 0.5 * (self.birds_level / 0.6).clamp(0.0, 1.67);
+        let mut shown = 0;
         for b in self.land.birds.iter() {
-            if !b.alive || b.rank >= threshold {
+            if !b.alive || b.rank >= threshold || shown >= 64 {
                 continue;
             }
-            let r = self.rel(b.pos[0], b.pos[1], b.pos[2] as f32);
+            let (dx, dy) = (b.pos[0] - self.pose.x, b.pos[1] - self.pose.y);
+            if dx * dx + dy * dy > 110.0 * 110.0 {
+                continue;
+            }
+            shown += 1;
+            let r = self.rel_on(b.pos[0], b.pos[1], b.pos[2] as f32);
             if r.length() < 160.0 {
                 let flags = if b.state == BirdState::Flying { object_flags::MOVING } else { 0 };
                 snap.object(ObjectInfo { id: b.id, kind: ObjectKind::Bird as u32, x: r.x, y: r.y, z: r.z, flags });
             }
         }
-        self.publish_trees(&mut snap, ground);
+        self.publish_trees(&mut snap);
     }
 
+    /// Publishes where the listener is in the landscape and what it looks like, for the UI's
+    /// terrain (it samples the relief itself with `asmr_terrain_sample`).
+    pub fn publish_frame(&self, bridge: &FrameBridge) {
+        let b = self.land.biome_def();
+        bridge.publish(&bridge::Frame {
+            x: self.pose.x,
+            y: self.pose.y,
+            heading: self.pose.heading as f32,
+            ear_z: self.pose.ear,
+            ground_z: self.pose.ground,
+            relief: self.land.relief,
+            seed: self.land.seed,
+            biome: self.land.biome,
+            generation: self.generation,
+            linger: self.pose.linger,
+            snow: if self.snowing { 1.0 } else { 0.0 },
+            snow_cover: b.snow,
+            sand_cover: b.sand,
+            rock_slope: b.rock_slope,
+            sea: if b.relief.sea > 0.0 { 1.0 } else { 0.0 },
+            enclosure: self.echoes.enclosure,
+            _pad: 0.0,
+        });
+    }
 
     /// The nearest trees that fit in the snapshot (radius from a distance histogram).
-    fn publish_trees(&self, snap: &mut Snapshot, ground: f32) {
+    fn publish_trees(&self, snap: &mut Snapshot) {
         let room = bridge::OBJECTS.saturating_sub(snap.len());
         if room == 0 {
             return;
@@ -1225,7 +1569,7 @@ impl Flight {
                 if tr.rank < tree_rank {
                     let r = self.rel(tr.x, tr.y, 0.0);
                     if r.x * r.x + r.y * r.y < radius * radius {
-                        snap.object(ObjectInfo { id: tr.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: ground, flags: 0 });
+                        snap.object(ObjectInfo { id: tr.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: tr.ground - self.pose.ear, flags: (tr.species as u32 + 1) << 8 });
                     }
                 }
             }
@@ -1325,6 +1669,12 @@ pub struct FlightDesc {
     /// Wind noise of motion, 0..3 (1 = default).
     #[serde(default)]
     pub airflow: Option<f32>,
+    /// Relief scale, 0 (flat) .. 2 (1 = as the biome).
+    #[serde(default)]
+    pub relief: Option<f32>,
+    /// Stops at places worth lingering, 0 (never) .. 1 (at every one, longer).
+    #[serde(default)]
+    pub stops: Option<f32>,
 }
 
 fn yes() -> bool {
@@ -1355,6 +1705,8 @@ impl FlightDesc {
         set(id::FLIGHT_SEED, self.seed.map(|s| s as f32));
         set(id::FLIGHT_DENSITY, self.density);
         set(id::FLIGHT_AIRFLOW, self.airflow);
+        set(id::FLIGHT_RELIEF, self.relief);
+        set(id::FLIGHT_STOPS, self.stops);
         if self.start {
             engine.set_param(crate::engine::param::FLIGHT, 1.0);
         }

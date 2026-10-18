@@ -64,6 +64,8 @@ enum {
     ASMR_GROUND_COMPACT_SOIL = 3, /* 2000 kPa s/m^2 */
     ASMR_GROUND_SNOW = 4,         /* 20 kPa s/m^2 */
     ASMR_GROUND_ASPHALT = 5,      /* acoustically rigid */
+    ASMR_GROUND_SAND = 6,         /* loose dry sand, 250 kPa s/m^2 */
+    ASMR_GROUND_ROCK = 7,         /* bare rock, 3000 kPa s/m^2 */
 };
 
 /* Telemetry (asmr_get_telemetry). */
@@ -270,7 +272,9 @@ enum {
     ASMR_CONTROL_FLIGHT_SPEED = 1000,     /* macro, m/s 0..25 [6]: walk 1.5, run 5, glide 12, fast flight 25 */
     ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
     ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* wandering of the course when not steered by head: 0 straight .. 1 (turn radius 250 m) [0.35] */
-    ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands [mixed]; option names via asmr_get_control_option */
+    ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands, desert,
+                                             snowy_mountains, lake_shore, sea_coast, big_river [mixed]; option names via
+                                             asmr_get_control_option (docs/world.md) */
     ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
     ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
     ASMR_CONTROL_FLIGHT_AIRFLOW = 1006,   /* wind noise of motion at the ears x 0..3 [1 = physical, subtle below ~10 m/s] */
@@ -280,6 +284,9 @@ enum {
                                              Live only while asmr_set_head_pose samples arrive; otherwise (and with off) the
                                              course wanders by flight.curviness and turning the head only looks around. */
     ASMR_CONTROL_FLIGHT_TURN_RATE = 1008, /* "flight.turn_rate", deg/s 5..90 [30]: fastest turn, reached with the head ~43 deg off course */
+    ASMR_CONTROL_FLIGHT_RELIEF = 1009,    /* "flight.relief", relief scale 0 (flat) .. 2 [1 = as the biome]; regenerates like a new seed */
+    ASMR_CONTROL_FLIGHT_STOPS = 1010,     /* "flight.stops", 0..1 [0.5]: how often and how long the flight eases down and lingers at
+                                             places (lake shore, waterfall, surf, the big river, a viewpoint); 0 = never */
     /* Mix intent (docs/sound-director.md): art direction for the real-time sound director, never
      * per-block levels. Focus: -1 background .. 0 neutral .. +1 foreground. */
     ASMR_CONTROL_MIX_CLARITY = 1100,       /* macro 0..1 [0.6]: 0 = raw physical mix, 1 = strongest separation */
@@ -360,6 +367,42 @@ uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t
    (x, y, z) triples, up to max_points (24 at most); returns the number of points, 0 for objects
    without a shape and outside flight mode. `out` holds 3 * max_points floats. Any thread. */
 uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out, uint32_t max_points);
+
+/* Flight mode: where the listener is in the landscape and what the landscape is (docs/world.md).
+   Heights are absolute (m above sea level): a terrain sample at world (x, y) with ground height g
+   sits at travel-frame height g - ear_z, at travel-frame (x, y) = R(-heading) * (world - (x, y)). */
+typedef struct {
+    double x, y;          /* listener position in the landscape, m (world frame) */
+    float heading;        /* course heading, rad; travel frame = world rotated by -heading */
+    float ear_z;          /* absolute height of the ears */
+    float ground_z;       /* absolute height of the ground under the listener */
+    float relief;         /* flight.relief the landscape was made with */
+    uint64_t seed;        /* landscape seed and biome index: pass to asmr_terrain_new */
+    uint32_t biome;
+    uint32_t generation;  /* changes whenever the landscape is regenerated */
+    float linger;         /* 0 cruising .. 1 stopped at a place (flight.stops) */
+    float snow;           /* precipitation falls as snow (1) or rain (0) */
+    float snow_cover;     /* how the ground looks: snow cover 0..1, */
+    float sand_cover;     /* sand cover 0..1, */
+    float rock_slope;     /* bare rock above this slope (rise per metre), */
+    float sea;            /* 1 when the landscape has a sea */
+    float enclosure;      /* skyline elevation all around (sine), 0 open .. ~0.5 deep valley */
+    float pad;
+} AsmrFlightFrame;
+
+/* Fills `out` and returns 1 once flight mode has been built (else 0). Any thread. */
+uint32_t asmr_get_flight_frame(const AsmrEngine *engine, AsmrFlightFrame *out);
+
+/* A sampler of the flight relief for the UI: a pure function of (seed, biome, relief, place), the
+   same the engine hears. Allocates a few MB; UI thread. */
+typedef struct AsmrTerrain AsmrTerrain;
+AsmrTerrain *asmr_terrain_new(uint64_t seed, uint32_t biome, float relief);
+void asmr_terrain_free(AsmrTerrain *terrain);
+/* nx * ny samples on a world grid from (x0, y0), `step` m apart, row by row (index j * nx + i),
+   6 floats each: ground height, water level (-1e9 where dry), flow x, flow y (m/s, world frame),
+   height above the nearest water (beaches), water kind (0 none, 1 lake, 2 river, 3 sea).
+   `out` holds 6 * nx * ny floats. Returns the number of samples. */
+uint32_t asmr_terrain_sample(AsmrTerrain *terrain, double x0, double y0, float step, uint32_t nx, uint32_t ny, float *out);
 
 /* Prompt control (docs/prompt-control.md). Control thread. JSON strings, UTF-8. Read-only
    state/prompt calls write their NUL-terminated result into `out` only if `max` > its length,
