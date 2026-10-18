@@ -1,12 +1,29 @@
 import CAsmr
 import SwiftUI
 
-/// The engine's control tree as a few macro levers. Each lever is its group's pictogram and a
-/// slider whose fill is the live waveform of that sound. The pictogram (or the chevron) opens
-/// the group's drawer: its physical parameters, named, one group at a time.
+extension Control {
+    /// ASMR_CONTROL_FLAG_LEVEL (1 << 4, flags::LEVEL in Rust): a group's loudness trim,
+    /// "<group>.level", dB -40...+12, default 0, -40 mutes, NaN resets to 0 dB. It never follows
+    /// its macro. Spelled out here so the shell builds against a core without the flag yet.
+    static let levelFlag: UInt32 = 1 << 4
+    var isLevel: Bool { flags & Control.levelFlag != 0 }
+    /// A level at the bottom of its range is silent.
+    var isMuted: Bool { isLevel && value <= min + 0.01 }
+}
+
+/// The engine's control tree in two plainly separate sections:
 ///
-/// Generic over the tree: the groups listed in `primary` come first (flight joins them while
-/// flying); every other group, including ones added to the engine later, waits behind "more".
+///   ЗВУК  how loud each group of sounds is: one dB trim per group (controls with
+///         ASMR_CONTROL_FLAG_LEVEL), a mute on its pictogram, and the mix's clarity. Pure gain;
+///         nothing in the forest changes.
+///   МИР   what happens in the forest: the macro levers (river flow, wind speed, rain rate, the
+///         hour, flight speed…). The slider's fill is the live waveform of that group, so the
+///         lever shows what it does to the sound; its name and value are always written next to it.
+///
+/// Every lever shows its name and value with units at rest. A world lever's pictogram (or
+/// chevron) opens that group's drawer: its physical parameters, named, one group at a time.
+/// Generic over the tree: groups added to the engine later land behind "ещё"; while the engine
+/// has no level controls the sound section holds only the mix.
 struct LeverPanel: View {
     let model: AppModel
     @ObservedObject var controls: ControlsModel
@@ -15,8 +32,11 @@ struct LeverPanel: View {
     @AppStorage("levers.showAll") private var showAllStored = false
 
     static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT]
-    /// Lives in the transport row instead.
-    static let elsewhere = [ASMR_GROUP_MASTER]
+    /// Lives in the transport row (master) or in the sound section (mix) instead.
+    static let elsewhere = [ASMR_GROUP_MASTER, ASMR_GROUP_MIX]
+    /// Order of the groups in the sound section.
+    static let soundOrder = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_FOLIAGE, ASMR_GROUP_RAIN,
+                             ASMR_GROUP_BIRDS, ASMR_GROUP_INSECTS, ASMR_GROUP_FIRE]
 
     init(model: AppModel, controls: ControlsModel, stills: StillFrames?) {
         self.model = model
@@ -28,7 +48,7 @@ struct LeverPanel: View {
     private var showAll: Bool { stills.map(\.showAll) ?? showAllStored }
     private var drawer: UInt32? { stills != nil ? stills?.drawer : controls.expanded }
 
-    /// The levers in display order: (always shown, behind "more").
+    /// The world levers in display order: (always shown, behind "more").
     static func split(_ macros: [Control], flying: Bool) -> (shown: [Control], more: [Control]) {
         var order = primary
         if flying { order.insert(ASMR_GROUP_FLIGHT, at: 0) }
@@ -52,20 +72,78 @@ struct LeverPanel: View {
         }
     }
 
+    /// The groups' loudness trims, in the sound section's order. `ASMR_PREVIEW_LEVELS=1` makes
+    /// stand-ins (inert, 0 dB) while the engine has none, to preview the layout.
+    static func levels(_ controls: [Control]) -> [Control] {
+        var found = controls.filter(\.isLevel)
+        if found.isEmpty, ProcessInfo.processInfo.environment["ASMR_PREVIEW_LEVELS"] == "1" {
+            found = controls.filter { $0.isMacro && soundOrder.contains(Int($0.group)) }.map { m in
+                let head = m.key.split(separator: ".").first.map(String.init) ?? m.key
+                let preview: [String: Float] = ["water": 0, "wind": -6, "foliage": -3, "rain": 0, "birds": 4, "insects": -40, "fire": 0]
+                return Control(id: m.id + 50, group: m.group, parent: m.id, flags: Control.levelFlag, min: -40, max: 12,
+                               value: preview[head] ?? 0, defaultValue: 0, key: head + ".level", unit: "dB")
+            }
+        }
+        func rank(_ c: Control) -> Int { soundOrder.firstIndex(of: Int(c.group)) ?? 100 + Int(c.group) }
+        return found.sorted { rank($0) < rank($1) }
+    }
+
     var body: some View {
         let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         if let id = drawer, let macro = controls.controls.first(where: { $0.id == id }) {
-            Drawer(macro: macro, children: controls.children(of: id), hour: hour, scrolls: stills == nil,
+            Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: stills == nil,
                    set: set, close: { controls.expanded = nil })
         } else {
-            levers(hour: hour)
+            VStack(alignment: .leading, spacing: 0) {
+                sound(hour: hour)
+                world(hour: hour)
+            }
         }
     }
 
-    private func levers(hour: Float?) -> some View {
+    /// A group's parameters for its drawer: the level lives in the sound section, and a source
+    /// gain is redundant once the group has a level.
+    private func drawerChildren(of id: UInt32) -> [Control] {
+        let all = controls.children(of: id)
+        let hasLevel = all.contains(where: \.isLevel)
+        return all.filter { c in
+            !c.isLevel && !(hasLevel && c.key.hasSuffix(".gain"))
+        }
+    }
+
+    // MARK: Sound
+
+    @ViewBuilder private func sound(hour: Float?) -> some View {
+        let levels = Self.levels(controls.controls)
+        let mix = controls.macros.first { Int($0.group) == ASMR_GROUP_MIX }
+        // Without level controls (an older core) the section keeps only the mix's clarity.
+        if !levels.isEmpty || mix != nil {
+            SectionHeader(title: "Звук", note: levels.isEmpty ? "микс" : "громкость групп, дБ")
+            let cells: [SoundCell.Kind] = levels.map { .level($0) } + (mix.map { [.mix($0)] } ?? [])
+            let rows = stride(from: 0, to: cells.count, by: 2).map { Array(cells[$0..<Swift.min($0 + 2, cells.count)]) }
+            VStack(spacing: 0) {
+                ForEach(rows.indices, id: \.self) { r in
+                    HStack(spacing: Popover.soundColumnGap) {
+                        ForEach(rows[r], id: \.id) { cell in
+                            SoundCell(kind: cell, hour: hour, meters: model.stage.meters, set: set,
+                                      open: { controls.expanded = cell.id })
+                        }
+                        if rows[r].count == 1 { Spacer(minLength: 0) }
+                    }
+                    .frame(height: Popover.soundRowHeight)
+                }
+            }
+            .padding(.bottom, Grid.x3)
+        }
+    }
+
+    // MARK: World
+
+    private func world(hour: Float?) -> some View {
         let split = Self.split(controls.macros, flying: audio.flying)
         let shown = showAll ? split.shown + split.more : split.shown
         return VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(title: "Мир", note: audio.flying ? "полёт над лесом" : "что происходит в лесу")
             ZStack(alignment: .topLeading) {
                 Group {
                     if let stills {
@@ -75,11 +153,12 @@ struct LeverPanel: View {
                     }
                 }
                 .frame(width: Popover.sliderWidth, height: Popover.leverHeight * CGFloat(shown.count))
-                .padding(.leading, Popover.iconColumn)
+                .opacity(0.8)
+                .padding(.leading, Popover.iconColumn + Popover.nameColumn)
 
                 VStack(spacing: 0) {
                     ForEach(shown, id: \.id) { m in
-                        LeverRow(control: m, hour: hour, hasChildren: !controls.children(of: m.id).isEmpty,
+                        WorldRow(control: m, hour: hour, hasChildren: !drawerChildren(of: m.id).isEmpty,
                                  meters: model.stage.meters, set: set, open: { controls.expanded = m.id })
                             .frame(height: Popover.leverHeight)
                     }
@@ -99,60 +178,312 @@ struct LeverPanel: View {
     }
 }
 
+/// "ЗВУК ───── громкость групп, дБ": a section's name, a hairline, and what its levers are.
+private struct SectionHeader: View {
+    let title: String
+    let note: String
+
+    var body: some View {
+        HStack(spacing: Grid.x2) {
+            Text(title.uppercased())
+                .font(Ink.text(Ink.Size.caption))
+                .tracking(1.2)
+                .foregroundStyle(Ink.paper.opacity(0.8))
+                .fixedSize()
+            Rectangle().fill(Ink.hairline).frame(height: 1)
+            Text(note)
+                .font(Ink.text(Ink.Size.caption))
+                .foregroundStyle(Ink.ash)
+                .fixedSize()
+        }
+        .frame(height: 18)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 // MARK: - Naming and values
 
 enum ControlText {
-    /// "water.rock_size" → "Rock size"; a macro is named by its group.
+    /// A parameter's name, in Russian: "water.rock_size" → "Размер камней". A macro is named by
+    /// what it sets (see `lever`); a level by its group. Unknown keys fall back to the key itself.
     static func name(_ c: Control) -> String {
+        if c.isLevel { return group(c) }
         if c.isMacro { return group(c) }
-        let leaf = c.key.split(separator: ".").last.map(String.init) ?? c.key
+        if let n = names[c.key] { return n }
+        let parts = c.key.split(separator: ".").map(String.init)
+        if parts.count == 3, parts[1] == "focus" { return "Фокус: " + (groupNames[parts[2]] ?? parts[2]).lowercased() }
+        let leaf = parts.last ?? c.key
         return sentence(leaf.replacingOccurrences(of: "_", with: " "))
+    }
+
+    /// The name of a world lever: what the macro is, physically.
+    static func lever(_ c: Control) -> String {
+        names[c.key] ?? group(c)
     }
 
     static func group(_ c: Control) -> String {
         switch Int(c.group) {
-        case ASMR_GROUP_WATER: return "Water"
-        case ASMR_GROUP_WIND: return "Wind"
-        case ASMR_GROUP_FOLIAGE: return "Foliage"
-        case ASMR_GROUP_RAIN: return "Rain"
-        case ASMR_GROUP_BIRDS: return "Birds"
-        case ASMR_GROUP_MASTER: return "Volume"
-        case ASMR_GROUP_ENVIRONMENT: return "Time and weather"
-        case ASMR_GROUP_INSECTS: return "Insects"
-        case ASMR_GROUP_FIRE: return "Fire"
-        case ASMR_GROUP_FLIGHT: return "Flight"
+        case ASMR_GROUP_WATER: return "Вода"
+        case ASMR_GROUP_WIND: return "Ветер"
+        case ASMR_GROUP_FOLIAGE: return "Листва"
+        case ASMR_GROUP_RAIN: return "Дождь"
+        case ASMR_GROUP_BIRDS: return "Птицы"
+        case ASMR_GROUP_MASTER: return "Громкость"
+        case ASMR_GROUP_ENVIRONMENT: return "Время и погода"
+        case ASMR_GROUP_INSECTS: return "Насекомые"
+        case ASMR_GROUP_FIRE: return "Костёр"
+        case ASMR_GROUP_FLIGHT: return "Полёт"
+        case ASMR_GROUP_MIX: return "Микс"
         default:
             let head = c.key.split(separator: ".").first.map(String.init) ?? c.key
-            return sentence(head.replacingOccurrences(of: "_", with: " "))
+            return groupNames[head] ?? sentence(head.replacingOccurrences(of: "_", with: " "))
         }
     }
 
+    private static let groupNames = [
+        "water": "Вода", "wind": "Ветер", "foliage": "Листва", "rain": "Дождь", "birds": "Птицы",
+        "insects": "Насекомые", "fire": "Костёр", "flight": "Полёт", "mix": "Микс", "env": "Время и погода",
+    ]
+
+    private static let names = [
+        // Macros: the world levers.
+        "water.flow": "Течение воды", "wind.speed": "Скорость ветра", "foliage.density": "Густота листвы",
+        "rain.rate": "Сила дождя", "birds.activity": "Активность птиц", "env.time_of_day": "Время суток",
+        "insects.activity": "Активность насекомых", "fire.heat": "Жар костра", "flight.speed": "Скорость полёта",
+        "mix.clarity": "Ясность",
+        // Water.
+        "water.regime": "Водоём", "water.speed": "Скорость течения", "water.depth": "Глубина",
+        "water.width": "Ширина", "water.rock_size": "Размер камней", "water.aeration": "Пена и пузыри",
+        "water.turbulence": "Турбулентность", "water.gain": "Громкость воды",
+        // Wind and foliage.
+        "wind.gustiness": "Порывистость", "wind.exposure": "Открытость", "wind.character": "Характер",
+        "wind.whistle": "Свист", "foliage.dryness": "Сухость", "foliage.flutter": "Трепет",
+        "foliage.creak": "Скрип стволов", "foliage.exposure": "Открытость",
+        // Rain.
+        "rain.storm": "Гроза", "rain.surface": "Поверхность", "rain.drying": "Высыхание", "rain.gain": "Громкость дождя",
+        // Birds, environment, insects, fire.
+        "birds.orbit": "Кружат рядом", "env.temperature": "Температура", "env.humidity": "Влажность",
+        "env.season": "Сезон", "insects.warmth": "Тепло", "fire.moisture": "Влажность дров", "fire.resin": "Смола",
+        // Flight.
+        "flight.altitude": "Высота", "flight.curviness": "Извилистость", "flight.biome": "Ландшафт",
+        "flight.density": "Густота леса", "flight.seed": "Местность", "flight.airflow": "Шум воздуха",
+        "flight.steer_by_head": "Рулить головой", "flight.turn_rate": "Скорость поворота",
+        // Mix.
+        "mix.density": "Птиц одновременно", "mix.soloists": "Солистов", "mix.loudness": "Целевая громкость",
+        "mix.dynamics": "Выравнивание",
+    ]
+
+    private static let options = [
+        "scene": "как в сцене",
+        // water.regime
+        "still_lake": "тихое озеро", "lake_lapping": "плеск озера", "slow_river": "медленная река",
+        "brook_pebbles": "ручей по гальке", "brook_rocks": "ручей по камням", "rapids": "пороги",
+        "small_waterfall": "водопадик", "drips": "капель", "trickle": "струйка",
+        // wind.character
+        "breeze": "бриз", "forest_roar": "гул леса", "storm": "буря", "power_lines": "провода",
+        "fence_wire": "проволока", "gap_howl": "вой в щели", "hollow_tree": "дупло", "whistle": "свист",
+        // rain.surface
+        "light_drizzle": "морось", "steady_rain": "ровный дождь", "downpour": "ливень", "on_leaves": "по листьям",
+        "on_soil": "по земле", "on_rock": "по камню", "on_water": "по воде", "puddles": "лужи",
+        "tin_roof": "жесть", "wood_deck": "доски", "meadow": "луг", "under_canopy": "под кроной",
+        "under_conifer": "под елью",
+        // env.season
+        "spring": "весна", "summer": "лето", "autumn": "осень", "winter": "зима",
+        // flight.biome
+        "mixed": "смешанный лес", "broadleaf": "дубрава", "taiga": "тайга", "river_valley": "речная долина",
+        "meadows": "луга", "highlands": "нагорье",
+        // flight.steer_by_head
+        "off": "нет", "yaw": "поворотом", "yaw_pitch": "поворотом и наклоном",
+    ]
+
+    static func option(_ raw: String) -> String {
+        options[raw] ?? raw.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private static let units = [
+        "m/s": "м/с", "m": "м", "mm/h": "мм/ч", "kW": "кВт", "°C": "°C", "°/s": "°/с", "x": "×",
+        "dB": "дБ", "LUFS": "LUFS", "Hz": "Гц",
+    ]
+
     static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+    private static func minus(_ s: String) -> String { s.replacingOccurrences(of: "-", with: "−") }
 
     static func value(_ c: Control) -> String {
         let index = Int(c.value.rounded())
         if c.isDiscrete {
             if index >= 0, index < c.options.count, !c.options[index].isEmpty {
-                return c.options[index].replacingOccurrences(of: "_", with: " ")
+                return option(c.options[index])
             }
             return String(index)
+        }
+        if c.isLevel {
+            if c.isMuted { return "выкл" }
+            let db = Int(c.value.rounded())
+            return db > 0 ? "+\(db) дБ" : minus("\(db) дБ")
+        }
+        switch c.key {
+        case "foliage.dryness" where c.value < 0: return "по сезону"
+        case "flight.seed": return "№ \(index)"
+        case "mix.soloists": return String(index)
+        default: break
         }
         if c.unit == "h" {
             let m = Int((c.value * 60).rounded()) % (24 * 60)
             return String(format: "%02d:%02d", m / 60, m % 60)
         }
+        if c.unit == "x" {
+            return "×" + (c.value >= 10 ? String(format: "%.0f", c.value) : String(format: "%.1f", c.value))
+        }
         if c.unit.isEmpty {
+            // Unitless: a share of the range, or a factor when 1 is "as built" in the middle.
+            if c.min < 0 { return minus((c.value > 0 ? "+" : "") + "\(Int((c.value / Swift.max(c.max, 1) * 100).rounded())) %") }
+            if c.max > 1.01 { return "×" + String(format: "%.1f", c.value) }
             return "\(Int((c.fraction * 100).rounded())) %"
         }
-        let v = abs(c.value) >= 100 ? String(format: "%.0f", c.value)
-            : abs(c.value) >= 10 ? String(format: "%.1f", c.value) : String(format: "%.2f", c.value)
-        return "\(v.replacingOccurrences(of: "-", with: "−")) \(c.unit)"
+        let a = abs(c.value)
+        let v = a < 0.005 ? "0" : a >= 10 ? String(format: "%.0f", c.value)
+            : a >= 1 ? String(format: "%.1f", c.value) : String(format: "%.2f", c.value)
+        return minus("\(v) \(units[c.unit] ?? c.unit)")
     }
 }
 
-// MARK: - Lever
+// MARK: - Sound
 
-private struct LeverRow: View {
+/// One cell of the sound section: the group's pictogram (click: mute), its name, a dB rail
+/// with a mark at 0 dB, and the value. The mix's clarity takes the last cell and opens its
+/// drawer instead.
+private struct SoundCell: View {
+    enum Kind {
+        case level(Control)
+        case mix(Control)
+        var control: Control { switch self { case let .level(c), let .mix(c): return c } }
+        var id: UInt32 { control.id }
+    }
+
+    let kind: Kind
+    var hour: Float?
+    @ObservedObject var meters: Meters
+    let set: (UInt32, Float) -> Void
+    let open: () -> Void
+    @State private var hovering = false
+    @State private var dragging = false
+    /// What a mute toggles back to.
+    @State private var unmuted: Float = 0
+
+    var body: some View {
+        let c = kind.control
+        let muted = c.isMuted
+        let track = Track(group: c.group)
+        let audible = track.map { meters.audible.contains($0) } ?? false
+        HStack(spacing: Grid.x1 + 2) {
+            Button(action: tapIcon) {
+                IconView(icon: Icon.forControl(c, hour: hour),
+                         color: muted ? Ink.ash : hovering ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
+                         size: 16, animating: hovering && meters.live && !muted, struck: muted, lineWidth: 1)
+                    .frame(width: 20, height: Popover.soundRowHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help(isMix ? "Микс: подробно" : muted ? "Включить \(ControlText.group(c).lowercased())" : "Выключить \(ControlText.group(c).lowercased())")
+            .accessibilityLabel(isMix ? "Микс: подробно" : muted ? "Включить звук: \(ControlText.group(c))" : "Выключить звук: \(ControlText.group(c))")
+
+            Text(isMix ? ControlText.lever(c) : ControlText.group(c))
+                .font(Ink.text(Ink.Size.caption))
+                .foregroundStyle(muted ? Ink.ash : hovering || dragging ? Ink.paper : Ink.graphite)
+                .lineLimit(1)
+                .frame(width: 70, alignment: .leading)
+
+            GeometryReader { geo in
+                Rail(control: c, width: geo.size.width, active: hovering || dragging, muted: muted)
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { g in
+                            dragging = true
+                            set(c.id, c.value(atFraction: Float(g.location.x / geo.size.width)))
+                        }
+                        .onEnded { _ in dragging = false })
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { set(c.id, isMix ? c.defaultValue : .nan) })
+            }
+
+            if isMix {
+                Button(action: open) {
+                    HStack(spacing: 2) {
+                        Text(ControlText.value(c))
+                        IconView(icon: .chevron, color: hovering ? Ink.graphite : Ink.ash, size: 11, lineWidth: 1)
+                    }
+                    .frame(width: 52, height: Popover.soundRowHeight, alignment: .trailing)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .foregroundStyle(Ink.paper.opacity(0.85))
+            } else {
+                Text(ControlText.value(c))
+                    .foregroundStyle(muted ? Ink.ash : c.value == 0 ? Ink.graphite : Ink.paper)
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+        .font(Ink.text(Ink.Size.caption))
+        .lineLimit(1)
+        .frame(width: Popover.soundColumnWidth)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .help(isMix ? "Насколько разведены звуки: двойной щелчок — как было" : "Двойной щелчок по шкале — 0 дБ")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(isMix ? ControlText.lever(c) : "Громкость: \(ControlText.group(c))")
+        .accessibilityValue(ControlText.value(c))
+        .accessibilityAdjustableAction { dir in
+            let step: Float = isMix ? 0.05 : 1 / 52
+            set(c.id, c.value(atFraction: c.fraction + (dir == .increment ? step : -step)))
+        }
+    }
+
+    private var isMix: Bool { if case .mix = kind { return true } else { return false } }
+
+    private func tapIcon() {
+        let c = kind.control
+        if isMix { open(); return }
+        if c.isMuted {
+            set(c.id, unmuted > c.min + 0.01 ? unmuted : 0)
+        } else {
+            unmuted = c.value
+            set(c.id, c.min)
+        }
+    }
+}
+
+/// A thin rail: filled up to the knob, a tick at the default (0 dB).
+private struct Rail: View {
+    let control: Control
+    let width: CGFloat
+    let active: Bool
+    var muted = false
+
+    var body: some View {
+        let x = CGFloat(control.fraction) * width
+        let zero = control.max > control.min ? CGFloat((control.defaultValue - control.min) / (control.max - control.min)) * width : 0
+        Canvas { ctx, size in
+            let mid = size.height / 2
+            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: size.width, height: 2), cornerRadius: 1), with: .color(Ink.hairline))
+            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: x, height: 2), cornerRadius: 1),
+                     with: .color(muted ? Ink.hairline : Ink.graphite))
+            if control.isLevel {
+                ctx.fill(Path(CGRect(x: min(max(zero - 0.5, 0), size.width - 1), y: mid - 4, width: 1, height: 8)),
+                         with: .color(Ink.ash))
+            }
+            let kw: CGFloat = active ? 3 : 2, kh: CGFloat = active ? 14 : 10
+            ctx.fill(Path(roundedRect: CGRect(x: min(max(x - kw / 2, 0), size.width - kw), y: mid - kh / 2, width: kw, height: kh),
+                          cornerRadius: 1), with: .color(muted ? Ink.ash : Ink.paper))
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - World
+
+private struct WorldRow: View {
     let control: Control
     var hour: Float?
     let hasChildren: Bool
@@ -165,19 +496,29 @@ private struct LeverRow: View {
     var body: some View {
         let track = Track(group: control.group)
         let audible = track.map { meters.audible.contains($0) } ?? false
+        let lit = hovering || dragging
         HStack(spacing: 0) {
             Button(action: open) {
-                IconView(icon: Icon.forControl(control, hour: hour),
-                         color: hovering ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
-                         size: 18, level: audible ? 0.6 : 0, animating: hovering && meters.live)
-                    .frame(width: Popover.iconColumn, height: Popover.leverHeight, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(spacing: 0) {
+                    IconView(icon: Icon.forControl(control, hour: hour),
+                             color: lit ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
+                             size: 18, level: audible ? 0.6 : 0, animating: hovering && meters.live)
+                        .frame(width: Popover.iconColumn, alignment: .leading)
+                    Text(ControlText.lever(control))
+                        .font(Ink.text(Ink.Size.body))
+                        .foregroundStyle(lit ? Ink.paper : Ink.graphite)
+                        .lineLimit(1)
+                        .frame(width: Popover.nameColumn - Grid.x2, alignment: .leading)
+                }
+                .frame(height: Popover.leverHeight)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
             .disabled(!hasChildren)
-            .help(hasChildren ? "\(ControlText.group(control)): details" : ControlText.group(control))
-            .accessibilityLabel(hasChildren ? "Open \(ControlText.group(control)) details" : ControlText.group(control))
+            .padding(.trailing, Grid.x2)
+            .help(hasChildren ? "\(ControlText.group(control)): подробно" : ControlText.group(control))
+            .accessibilityLabel(hasChildren ? "\(ControlText.group(control)): подробно" : ControlText.group(control))
 
             GeometryReader { geo in
                 let w = geo.size.width
@@ -186,19 +527,8 @@ private struct LeverRow: View {
                     Color.clear.contentShape(Rectangle())
                     RoundedRectangle(cornerRadius: 1)
                         .fill(Ink.paper)
-                        .frame(width: hovering || dragging ? 3 : 2, height: hovering || dragging ? 18 : 14)
+                        .frame(width: lit ? 3 : 2, height: lit ? 18 : 14)
                         .position(x: min(max(x, 1.5), w - 1.5), y: geo.size.height / 2)
-                    if hovering || dragging {
-                        Text("\(ControlText.group(control))  \(ControlText.value(control))")
-                            .font(Ink.text(Ink.Size.caption))
-                            .foregroundStyle(Ink.paper)
-                            .padding(.horizontal, Grid.x1 + 2)
-                            .padding(.vertical, 1)
-                            .background(RoundedRectangle(cornerRadius: 3).fill(Ink.panel.opacity(0.9)))
-                            .fixedSize()
-                            .frame(width: w, height: geo.size.height, alignment: x > w * 0.6 ? .leading : .trailing)
-                            .allowsHitTesting(false)
-                    }
                 }
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { g in
@@ -207,15 +537,22 @@ private struct LeverRow: View {
                     }
                     .onEnded { _ in dragging = false })
             }
+            .frame(width: Popover.sliderWidth)
             .accessibilityElement()
-            .accessibilityLabel(ControlText.group(control))
+            .accessibilityLabel(ControlText.lever(control))
             .accessibilityValue(ControlText.value(control))
             .accessibilityAdjustableAction { dir in
                 set(control.id, control.value(atFraction: control.fraction + (dir == .increment ? 0.05 : -0.05)))
             }
 
+            Text(ControlText.value(control))
+                .font(Ink.text(Ink.Size.body))
+                .foregroundStyle(lit ? Ink.paper : Ink.paper.opacity(0.8))
+                .lineLimit(1)
+                .frame(width: Popover.valueColumn, alignment: .trailing)
+
             Button(action: open) {
-                IconView(icon: .chevron, color: hovering ? Ink.graphite : Ink.ash, size: 14)
+                IconView(icon: .chevron, color: lit ? Ink.graphite : Ink.ash, size: 14)
                     .frame(width: Popover.chevronColumn, height: Popover.leverHeight, alignment: .trailing)
                     .contentShape(Rectangle())
             }
@@ -229,7 +566,7 @@ private struct LeverRow: View {
     }
 }
 
-/// "More": the hidden groups' pictograms; click to show their levers too.
+/// "Ещё": the hidden groups' pictograms; click to show their levers too.
 private struct MoreRow: View {
     let more: [Control]
     var hour: Float?
@@ -244,13 +581,16 @@ private struct MoreRow: View {
                     .rotationEffect(.degrees(showAll ? 90 : 0))
                     .frame(width: Popover.iconColumn - Grid.x2, alignment: .leading)
                 if showAll {
-                    Text("Fewer").foregroundStyle(hovering ? Ink.paper : Ink.graphite)
+                    Text("Свернуть").foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                 } else {
+                    Text("Ещё \(more.count):").foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                     ForEach(more, id: \.id) { m in
-                        IconView(icon: Icon.forControl(m, hour: hour), color: hovering ? Ink.graphite : Ink.ash, size: 14,
-                                 lineWidth: 1)
+                        HStack(spacing: Grid.x1) {
+                            IconView(icon: Icon.forControl(m, hour: hour), color: hovering ? Ink.graphite : Ink.ash, size: 14,
+                                     lineWidth: 1)
+                            Text(ControlText.group(m).lowercased()).foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+                        }
                     }
-                    Text("\(more.count) more").foregroundStyle(hovering ? Ink.paper : Ink.ash)
                 }
                 Spacer()
             }
@@ -260,7 +600,7 @@ private struct MoreRow: View {
         .buttonStyle(.plain)
         .focusable(false)
         .onHover { hovering = $0 }
-        .accessibilityLabel(showAll ? "Show fewer levers" : "Show \(more.count) more levers")
+        .accessibilityLabel(showAll ? "Показать меньше" : "Показать ещё \(more.count)")
     }
 }
 
@@ -297,10 +637,10 @@ private struct Drawer: View {
                 .focusable(false)
                 .onHover { hoveringBack = $0 }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
-                .accessibilityLabel("Back to all sounds")
-                .help("Back   ⌘←")
+                .accessibilityLabel("Назад ко всем рычагам")
+                .help("Назад   ⌘←")
                 Spacer()
-                Text(ControlText.value(macro))
+                Text("\(ControlText.lever(macro)): \(ControlText.value(macro))")
                     .font(Ink.text(Ink.Size.body))
                     .foregroundStyle(Ink.graphite)
             }
@@ -338,7 +678,7 @@ private struct ChildRow: View {
                 .font(Ink.text(Ink.Size.body))
                 .foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                 .lineLimit(1)
-                .frame(width: 112, alignment: .leading)
+                .frame(width: 136, alignment: .leading)
             if control.isDiscrete {
                 Presets(control: control, set: set)
             } else {
@@ -354,7 +694,7 @@ private struct ChildRow: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help(control.isOverridden ? "Double-click the slider to follow \(ControlText.group(control)) again" : "")
+        .help(control.isOverridden ? "Двойной щелчок по шкале: снова за рычагом «\(ControlText.lever(control))»" : "")
         .accessibilityElement(children: .combine)
         .accessibilityLabel(ControlText.name(control))
         .accessibilityValue(ControlText.value(control))
@@ -428,7 +768,7 @@ private struct Presets: View {
     private func title(_ i: Int) -> String {
         let index = Int(control.min) + i
         if index >= 0, index < control.options.count, !control.options[index].isEmpty {
-            return control.options[index].replacingOccurrences(of: "_", with: " ")
+            return ControlText.option(control.options[index])
         }
         return String(index)
     }
