@@ -12,7 +12,11 @@ struct ASMRX3000App: App {
             exit(0)
         }
         if let i = CommandLine.arguments.firstIndex(of: "--prompt-live"), i + 1 < CommandLine.arguments.count {
-            PromptCheck.run(CommandLine.arguments[i + 1])
+            PromptCheck.run(Array(CommandLine.arguments[(i + 1)...]))
+            exit(0)
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "--voice-check") {
+            VoiceCheck.run(i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil)
             exit(0)
         }
         if let i = CommandLine.arguments.firstIndex(of: "--menubar-frames"), i + 1 < CommandLine.arguments.count {

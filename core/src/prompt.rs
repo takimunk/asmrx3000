@@ -1222,6 +1222,7 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
 
     // Place.
     let flying = p(param::FLIGHT) > 0.5;
+    let playing = p(param::PLAYING) > 0.5;
     let biome = opt("flight.biome").unwrap_or("mixed");
     let kinds = |k: u32| v.live.objects.iter().filter(|o| o.kind == k && o.flags & object_flags::ABSENT == 0).count();
     let (trees, rivers, lakes, rocks) = (kinds(0), kinds(1), kinds(4), kinds(5));
@@ -1236,7 +1237,8 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     };
     if flying {
         let pace = if speed < 0.3 { "зависли на месте".to_string() } else { format!("{:.0} м/с", speed) };
-        parts.push(("place", format!("Полёт, ландшафт «{}»: {pace}, высота {:.0} м.", biome_ru(biome), altitude.max(0.0))));
+        let height = if altitude >= 0.5 { format!(", высота {:.0} м", altitude) } else { String::new() };
+        parts.push(("place", format!("Полёт, ландшафт «{}»: {pace}{height}.", biome_ru(biome))));
     } else {
         let mut what: Vec<&str> = Vec::new();
         if trees > 0 {
@@ -1302,6 +1304,22 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
             parts.push(("water", format!("{}: {} {dir_ru}, ~{:.0} м.", capitalize(name), distance_ru(d), d)));
             json!({"sounding": true, "regime": regime, "nearest_m": r3(d), "direction": dir_en, "flow": r3(get("water.flow").unwrap_or(0.0))})
         }
+        None if !playing => {
+            // Paused: nothing sounds, but the water is still there.
+            let near = v.live.objects.iter().filter(|o| (o.kind == 1 || o.kind == 4) && o.flags & object_flags::ABSENT == 0)
+                .map(|o| (o, (o.x * o.x + o.y * o.y).sqrt())).min_by(|a, b| a.1.total_cmp(&b.1));
+            match near {
+                Some((o, d)) => {
+                    let (dir_en, dir_ru) = direction(o.x, o.y);
+                    parts.push(("water", format!("{}: {dir_ru}, ~{:.0} м (звук на паузе).", if o.kind == 4 { "Озеро" } else { "Река" }, d)));
+                    json!({"sounding": false, "regime": regime, "nearest_m": r3(d), "direction": dir_en, "flow": r3(get("water.flow").unwrap_or(0.0))})
+                }
+                None => {
+                    parts.push(("water", "Воды рядом нет.".into()));
+                    json!({"sounding": false, "regime": regime, "flow": r3(get("water.flow").unwrap_or(0.0))})
+                }
+            }
+        }
         None => {
             parts.push(("water", "Воды не слышно.".into()));
             json!({"sounding": false, "regime": regime, "flow": r3(get("water.flow").unwrap_or(0.0))})
@@ -1365,7 +1383,6 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
         let rest: Vec<&str> = loud.iter().skip(1).take(2).map(|(n, _)| group_ru(n)).collect();
         parts.push(("loudest", if rest.is_empty() { format!("Громче всего {}.", group_ru(first)) } else { format!("Громче всего {}, потом {}.", group_ru(first), rest.join(" и ")) }));
     }
-    let playing = p(param::PLAYING) > 0.5;
     if !playing {
         parts.insert(0, ("playing", "Звук на паузе.".into()));
     }
