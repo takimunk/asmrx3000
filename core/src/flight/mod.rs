@@ -26,7 +26,8 @@ use crate::acoustics::{Acoustics, Emitter as Source, Environment as Acoustic, Tr
 use crate::ambisonics::CHANNELS;
 use crate::controls::{self, id, Bases, ControlState};
 use crate::director::Species;
-use crate::engine::{kind_gain, scope, scope_track, SourceKind, BLOCK, SCOPE_TRACKS};
+use crate::engine::{scope, scope_track, SourceKind, BLOCK, SCOPE_TRACKS};
+use crate::mix::{EmitterView, Mix, SoundClass};
 use crate::math::{Mat3, Vec3};
 use crate::physics::diffraction::Obstacle;
 use crate::physics::ground::GroundType;
@@ -135,6 +136,22 @@ struct Slot {
     extent: f32,
     species: Species,
     vel: Vec3,
+}
+
+/// Mix-layer slots of the flight emitters start after the scene's.
+const MIX_SLOT0: usize = crate::engine::MAX_SOURCES;
+const _: () = assert!(MIX_SLOT0 + EMITTERS <= crate::mix::MAX_SLOTS);
+
+/// Identity of what a slot voices (the mix layer resets its history when it changes).
+fn target_key(t: &Target) -> u64 {
+    match *t {
+        Target::None => 0,
+        Target::Tree { tile, k, id } => 1 << 60 | (tile as u64) << 44 | (k as u64) << 28 | (id as u64 & 0x0FFF_FFFF),
+        Target::Cell { i, j } => 2 << 60 | ((i as u32 as u64) << 30 & 0x0FFF_FFFF_C000_0000) | (j as u32 as u64 & 0x3FFF_FFFF),
+        Target::Bird { idx, id } => 3 << 60 | (idx as u64) << 32 | id as u64,
+        Target::Site { idx, id } => 4 << 60 | (idx as u64) << 32 | id as u64,
+        Target::Rain(i) => 5 << 60 | i as u64,
+    }
 }
 
 /// Best-`N` candidates by priority (descending), fixed size.
@@ -346,6 +363,10 @@ impl Flight {
                     variation: [1.0, 1.0, 0.0],
                     level: 0.0,
                     rel: Vec3::default(),
+                    class: match cfg {
+                        Some(c) => SoundClass::of_model(c.kind()),
+                        None => SoundClass::Bird(species),
+                    },
                 });
                 let target = if pool == Pool::Rain { Target::Rain(j as u8) } else { Target::None };
                 slots.push(Slot { pool, target, want: pool == Pool::Rain, fade: 0.0, gain: 1.0, ref_area: 1.0, extent: 5.0, species, vel: Vec3::default() });
@@ -466,6 +487,7 @@ impl Flight {
         out_r: &mut [f32],
         mut bed: Option<(&mut [[f32; BLOCK]; crate::bed::CHANNELS], Option<&Mat3>)>,
         peaks: &mut [f32; SCOPE_TRACKS],
+        mixer: &mut Mix,
     ) {
         let len = out_l.len().min(out_r.len()).min(BLOCK);
         let sr = self.sample_rate;
@@ -532,9 +554,24 @@ impl Flight {
             let mut c = em.controls;
             c.water = inp.water * em.flow;
             c.neural = inp.neural;
+            c.legacy_levels = mixer.bypass;
             c.gust = (inp.wind_slider + (inp.wind.local(rel.y) - inp.wind_slider) * inp.gustiness).max(0.0);
+            // Sound director: calibrated level, role, masking EQ, phrase permits.
+            let view = EmitterView {
+                key: target_key(&slot.target),
+                class: em.class,
+                kind: em.kind,
+                rel,
+                wants: c.activity > 0.02,
+                busy: em.generator.busy(),
+                flying,
+            };
+            let voice = mixer.voice(MIX_SLOT0 + idx, &view);
+            let (gain, eq_db, send) = (voice.gain, *voice.eq_db, voice.send);
+            if !voice.permit {
+                c.activity = 0.0;
+            }
             em.generator.render(tmp, &c);
-            let gain = kind_gain(em.kind);
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2 * slot.fade * slot.gain;
             let peak = tmp.iter().fold(0.0f32, |m, v| m.max(v.abs())) * gain * slot.fade * slot.gain;
@@ -547,7 +584,11 @@ impl Flight {
             // Extended source of radius a seen from d: intensity ~ 1/(d² + a²), not 1/d².
             let d = rel.length();
             let spread = d / (d * d + slot.extent * slot.extent).sqrt().max(1e-3);
-            let mut src = Source::at(rel, gain * slot.fade * slot.gain * spread);
+            let g = gain * slot.fade * slot.gain * spread;
+            mixer.feed(MIX_SLOT0 + idx, tmp, g * (mix * core::f32::consts::FRAC_PI_2).sin(), em.generator.busy());
+            let mut src = Source::at(rel, g);
+            src.eq_db = eq_db;
+            src.send = send;
             src.velocity = Some(vel);
             if em.kind == SourceKind::Water {
                 src.ground = Some(GroundType::Water);

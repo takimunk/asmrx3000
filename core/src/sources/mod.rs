@@ -106,6 +106,8 @@ pub struct Controls {
     pub env: Ambient,
     /// Prefer trained neural voices where a species has one (ASMR_PARAM_NEURAL_BIRDS).
     pub neural: bool,
+    /// A/B renders of the mix before the sound director: skip voice level matching.
+    pub legacy_levels: bool,
 }
 
 /// A mono sound generator. Called on the audio thread once per control block:
@@ -119,6 +121,12 @@ pub trait Generator: Send {
     /// Event rate for telemetry (bubbles per second for water), else 0.
     fn event_rate(&self) -> f32 {
         0.0
+    }
+    /// In the middle of a phrase (song or call) right now. The mix layer counts concurrent
+    /// phrases and holds a new one back by setting `activity` to 0 until a slot frees;
+    /// generators must never cut a phrase they started because of that.
+    fn busy(&self) -> bool {
+        false
     }
     /// Runtime reconfiguration (audio thread, no allocation). Physical models accept their own
     /// `ModelConfig` variant and glide to it; everything else ignores it.
@@ -157,6 +165,9 @@ impl Generator for Flyer {
     }
     fn pitch(&self) -> f32 {
         self.voice.pitch()
+    }
+    fn busy(&self) -> bool {
+        self.voice.busy()
     }
 }
 
@@ -330,6 +341,18 @@ impl SoundDesc {
 }
 
 impl ModelConfig {
+    pub fn kind(&self) -> ModelKind {
+        match self {
+            ModelConfig::Wind(_) => ModelKind::Wind,
+            ModelConfig::Foliage(_) => ModelKind::Foliage,
+            ModelConfig::Water(_) => ModelKind::Water,
+            ModelConfig::Rain(_) => ModelKind::Rain,
+            ModelConfig::Thunder(_) => ModelKind::Thunder,
+            ModelConfig::Fire(_) => ModelKind::Fire,
+            ModelConfig::Insects(_) => ModelKind::Insects,
+        }
+    }
+
     pub fn build(self, sr: f32, seed: u64) -> Box<dyn Generator> {
         match self {
             ModelConfig::Wind(c) => Box::new(Wind::new(sr, seed, c)),

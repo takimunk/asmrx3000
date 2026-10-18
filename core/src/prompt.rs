@@ -548,6 +548,17 @@ fn describe(key: &str) -> &'static str {
         "fire.heat" => "Campfire heat release, kW, logarithmic (5 embers, 20 campfire, 100 big fire, 500 bonfire). Only audible if the scene has a fire.",
         "fire.moisture" => "Wood moisture 0.02..0.6: wet wood hisses and steams, dry wood cracks less often.",
         "fire.resin" => "Resin content 0..1: resinous pine pops and crackles.",
+        "mix.clarity" => "Mix intent (art direction, not levels): how hard the sound director separates sounds. 0 = raw physical mix, 0.6 default, 1 = very clear (few soloists, strong masking reduction, fewer simultaneous bird phrases). Raise for 'clearer', 'less mush', 'focus'; lower for 'wild', 'immersive wall of sound'.",
+        "mix.density" => "How many bird phrases may overlap (0 = one at a time, staggered; 1 = no limit). Follows clarity unless set. Lower for 'calm', 'sparse', 'one bird at a time'.",
+        "mix.soloists" => "How many sounds may stand in the foreground at once, 1..4 (default 2). The rest blend into the background bed.",
+        "mix.loudness" => "Target loudness of the mix for headphones, LUFS (−22 default; −26 quiet, relaxing; −18 lively). Change only on requests about overall level or calm vs energetic.",
+        "mix.dynamics" => "How strongly loudness is evened out (0 = natural dynamics, thunder at full force; 0.7 default; 1 = very even, sleep-friendly).",
+        "mix.focus.water" => "Foreground (+1) .. neutral (0) .. background (−1) for the river and water. +1 for 'listen to the river', −1 for 'birds over the river'.",
+        "mix.focus.wind" => "Foreground .. background for wind and leaves (−1..1).",
+        "mix.focus.birds" => "Foreground .. background for birds (−1..1). +1 for 'birdsong', 'birdwatching'.",
+        "mix.focus.rain" => "Foreground .. background for rain and thunder (−1..1).",
+        "mix.focus.insects" => "Foreground .. background for crickets and insects (−1..1).",
+        "mix.focus.fire" => "Foreground .. background for the campfire (−1..1).",
         "flight.speed" => "Flight mode only (the user switches it on with the flight button): forward speed through an endless generated landscape, m/s. 0 hover, 1.5 walk, 5 run, 12 glide, 25 fast flight. Altitude follows unless set.",
         "flight.altitude" => "Flight mode: ears above the ground, m, logarithmic (1.7 walking among trunks, 5 under the crowns, 20 just above the canopy, 40 high). Follows the speed unless set.",
         "flight.curviness" => "Flight mode: how much the path bends, 0 straight .. 1 (turn radius 250 m). Takes effect ~200 m ahead.",
@@ -580,6 +591,12 @@ comes with wind; a storm needs rain. Keep the rest of the scene as it is.
 - Positions: listener at the origin, +x forward, +y left, +z up, metres. Only objects marked \
 movable can be moved (moves). Birds live on trees: to bring birds to one side, move trees there or \
 raise birds.activity.
+- Mix intent (mix.*) is art direction, not a fader: when the request names what to listen to \
+(\"слушать реку\", \"focus on the birds\") or how busy it should feel, set mix.focus.* for the groups \
+involved (+0.6..1 in front, −0.4..−1 behind) and mix.clarity / mix.density; when the scene changes \
+character (storm, night, dawn chorus), set a fitting focus too (storm: rain +0.5; dawn: birds +0.5). \
+Leave mix.loudness and mix.dynamics alone unless asked about overall level or calm. The sound \
+director does the real-time levelling itself.
 - explanation: one short line (≤ 70 characters) in the user's language, saying what you changed, \
 plain words, no numbers unless asked. If the request is not about the sound scene, make no changes \
 and say so briefly.";
@@ -615,6 +632,11 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14):
 «больше птиц слева» (tree 4 is movable at [6, -3, 0]) →
 {\"explanation\":\"Больше птиц, дерево с птицами слева.\",\"changes\":[\
 {\"key\":\"birds.activity\",\"value\":0.95}],\"moves\":[{\"object\":4,\"position\":[4,6,0]}]}
+
+«хочу слушать реку, птицы пусть будут фоном» →
+{\"explanation\":\"Река впереди, птицы отошли в фон.\",\"changes\":[\
+{\"key\":\"mix.focus.water\",\"value\":0.8},{\"key\":\"mix.focus.birds\",\"value\":-0.5},\
+{\"key\":\"mix.clarity\",\"value\":0.75}]}
 
 «верни реку как была» →
 {\"explanation\":\"Река снова как в сцене.\",\"changes\":[{\"key\":\"water.regime\",\"value\":\"scene\"},\

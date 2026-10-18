@@ -18,6 +18,7 @@ pub mod flight;
 pub mod headpose;
 mod hrtf;
 pub mod math;
+pub mod mix;
 mod nearfield;
 mod num;
 mod physics;
@@ -196,6 +197,17 @@ pub unsafe extern "C" fn asmr_get_controls(engine: *const Engine, out: *mut Cont
     match (engine.as_ref(), out.is_null()) {
         (Some(e), false) => e.controls(slice::from_raw_parts_mut(out, max as usize)) as u32,
         _ => 0,
+    }
+}
+
+/// Sound director telemetry (`AsmrMixInfo`). Any thread.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_mix(engine: *const Engine, out: *mut mix::MixInfo) {
+    if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
+        *out = e.mix_info();
     }
 }
 

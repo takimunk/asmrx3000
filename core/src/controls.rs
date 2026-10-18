@@ -33,6 +33,8 @@ pub mod group {
     pub const FIRE: u32 = 8;
     /// Flight mode (flight/): speed, altitude, path, landscape.
     pub const FLIGHT: u32 = 9;
+    /// Mix intent (the sound director, docs/sound-director.md).
+    pub const MIX: u32 = 10;
 }
 
 /// Mirrors `ASMR_CONTROL_FLAG_*`.
@@ -122,6 +124,17 @@ pub mod id {
     pub const FLIGHT_AIRFLOW: u32 = 1006;
     pub const FLIGHT_STEER: u32 = 1007;
     pub const FLIGHT_TURN_RATE: u32 = 1008;
+    pub const MIX_CLARITY: u32 = 1100;
+    pub const MIX_DENSITY: u32 = 1101;
+    pub const MIX_SOLOISTS: u32 = 1102;
+    pub const MIX_LOUDNESS: u32 = 1103;
+    pub const MIX_DYNAMICS: u32 = 1104;
+    pub const MIX_FOCUS_WATER: u32 = 1105;
+    pub const MIX_FOCUS_WIND: u32 = 1106;
+    pub const MIX_FOCUS_BIRDS: u32 = 1107;
+    pub const MIX_FOCUS_RAIN: u32 = 1108;
+    pub const MIX_FOCUS_INSECTS: u32 = 1109;
+    pub const MIX_FOCUS_FIRE: u32 = 1110;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -158,7 +171,7 @@ use flags::{DISCRETE as D, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 45;
+const N: usize = 56;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -206,6 +219,17 @@ static DEFS: [Def; N] = [
     def(FLIGHT_AIRFLOW, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 3.0, "flight.airflow", "", Store::Local),
     def(FLIGHT_STEER, g::FLIGHT, FLIGHT_SPEED, D, 0.0, 2.0, "flight.steer_by_head", "", Store::Local),
     def(FLIGHT_TURN_RATE, g::FLIGHT, FLIGHT_SPEED, 0, 5.0, 90.0, "flight.turn_rate", "\u{b0}/s", Store::Local),
+    def(MIX_CLARITY, g::MIX, NO_PARENT, M, 0.0, 1.0, "mix.clarity", "", Store::Local),
+    def(MIX_DENSITY, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.density", "", Store::Local),
+    def(MIX_SOLOISTS, g::MIX, MIX_CLARITY, 0, 1.0, 4.0, "mix.soloists", "", Store::Local),
+    def(MIX_LOUDNESS, g::MIX, MIX_CLARITY, 0, -36.0, -10.0, "mix.loudness", "LUFS", Store::Local),
+    def(MIX_DYNAMICS, g::MIX, MIX_CLARITY, 0, 0.0, 1.0, "mix.dynamics", "", Store::Local),
+    def(MIX_FOCUS_WATER, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.water", "", Store::Local),
+    def(MIX_FOCUS_WIND, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.wind", "", Store::Local),
+    def(MIX_FOCUS_BIRDS, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.birds", "", Store::Local),
+    def(MIX_FOCUS_RAIN, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.rain", "", Store::Local),
+    def(MIX_FOCUS_INSECTS, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.insects", "", Store::Local),
+    def(MIX_FOCUS_FIRE, g::MIX, MIX_CLARITY, 0, -1.0, 1.0, "mix.focus.fire", "", Store::Local),
 ];
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -297,6 +321,20 @@ pub fn flight_altitude(speed: f32) -> f32 {
     1.7 + 18.3 * smoothstep(4.0, 22.0, speed)
 }
 
+/// Density of bird phrases that follows the clarity macro.
+fn mix_density(clarity: f32) -> f32 {
+    (0.9 - 0.6 * clarity).clamp(0.0, 1.0)
+}
+
+/// Foreground soloists that follow the clarity macro: 3 for a loose mix, 2 for a clear one.
+fn mix_soloists(clarity: f32) -> f32 {
+    if clarity < 0.4 {
+        3.0
+    } else {
+        2.0
+    }
+}
+
 /// Diurnal cycle shape, 1 at 15:00, −1 at 03:00.
 fn diurnal(hour: f32) -> f32 {
     (core::f32::consts::TAU * (hour - 15.0) / 24.0).cos()
@@ -380,6 +418,11 @@ impl ControlBank {
             FLIGHT_BIOME | FLIGHT_SEED => 0.0,
             FLIGHT_DENSITY | FLIGHT_AIRFLOW | FLIGHT_STEER => 1.0,
             FLIGHT_TURN_RATE => 30.0,
+            MIX_CLARITY => 0.6,
+            MIX_DENSITY => mix_density(0.6),
+            MIX_SOLOISTS => mix_soloists(0.6),
+            MIX_LOUDNESS => -22.0,
+            MIX_DYNAMICS => 0.7,
             _ => 0.0,
         }
     }
@@ -428,6 +471,9 @@ impl ControlBank {
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
             FLIGHT_ALTITUDE => flight_altitude(get(FLIGHT_SPEED)),
+            // Clearer mixes allow fewer simultaneous phrases and soloists.
+            MIX_DENSITY => mix_density(get(MIX_CLARITY)),
+            MIX_SOLOISTS => mix_soloists(get(MIX_CLARITY)),
             _ => return None,
         })
     }
@@ -584,7 +630,7 @@ pub fn options(id: u32) -> Vec<&'static str> {
 }
 
 pub fn group_name(g: u32) -> &'static str {
-    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight"].get(g as usize).copied().unwrap_or("other")
+    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight", "mix"].get(g as usize).copied().unwrap_or("other")
 }
 
 /// Number of controls.

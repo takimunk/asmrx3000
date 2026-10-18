@@ -21,21 +21,36 @@ pub struct BirdVoice {
     procedural: Bird,
     neural: Option<NeuralBird>,
     using_neural: bool,
+    /// Linear level match neural -> procedural (mix/calibration.rs).
+    neural_gain: f32,
 }
 
 /// Builds the voice for one bird. Parses the neural model on first use, so call it while
 /// building the scene, not from the audio thread.
 pub fn bird_voice(species: Species, procedural: Bird, sample_rate: f32, seed: u64) -> Box<dyn Generator> {
     let neural = model_name(species).and_then(neural::builtin).map(|m| NeuralBird::new(m, sample_rate, seed));
-    Box::new(BirdVoice { procedural, neural, using_neural: false })
+    let neural_gain = 10f32.powf(crate::mix::calibration::neural_trim_db(species) / 20.0);
+    Box::new(BirdVoice { procedural, neural, using_neural: false, neural_gain })
 }
 
 impl Generator for BirdVoice {
     fn render(&mut self, out: &mut [f32], c: &Controls) {
         self.using_neural = c.neural && !c.calling && self.neural.is_some();
         match &mut self.neural {
-            Some(n) if self.using_neural => n.render(out, &BirdControls { activity: c.activity, ..Default::default() }),
+            Some(n) if self.using_neural => {
+                n.render(out, &BirdControls { activity: c.activity, ..Default::default() });
+                if !c.legacy_levels {
+                    out.iter_mut().for_each(|v| *v *= self.neural_gain);
+                }
+            }
             _ => self.procedural.render(out, c),
+        }
+    }
+
+    fn busy(&self) -> bool {
+        match &self.neural {
+            Some(n) if self.using_neural => n.is_singing(),
+            _ => self.procedural.busy(),
         }
     }
 

@@ -64,6 +64,12 @@ struct Telemetry {
     var heading: Float = 0
     var worldX: Float = 0
     var worldY: Float = 0
+    /// Sound director: short-term loudness (LUFS, before volume), dynamics gain (dB),
+    /// foreground soloists and how masked they are (0..1).
+    var loudness: Float = -70
+    var mixGain: Float = 0
+    var soloists: Float = 0
+    var masking: Float = 0
 }
 
 /// Hosts the Rust engine inside AVAudioEngine. The Rust side does all DSP; this class only
@@ -86,7 +92,7 @@ final class AudioEngine: ObservableObject {
     private var stopWork: DispatchWorkItem?
     private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 128)
     private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 256)
-    private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
+    private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 96)
     private var controlNames: [UInt32: (String, String)] = [:]
 
     /// Binaural renderer. `core`: our MagLS decoder of the measured SADIE II HRTF (default).
@@ -239,8 +245,19 @@ final class AudioEngine: ObservableObject {
             speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED),
             heading: telemetry(ASMR_TELEMETRY_FLIGHT_HEADING),
             worldX: telemetry(ASMR_TELEMETRY_FLIGHT_X),
-            worldY: telemetry(ASMR_TELEMETRY_FLIGHT_Y)
+            worldY: telemetry(ASMR_TELEMETRY_FLIGHT_Y),
+            loudness: telemetry(ASMR_TELEMETRY_LOUDNESS_SHORT),
+            mixGain: telemetry(ASMR_TELEMETRY_MIX_GAIN_DB),
+            soloists: telemetry(ASMR_TELEMETRY_SOLOISTS),
+            masking: telemetry(ASMR_TELEMETRY_MASKING)
         )
+    }
+
+    /// Full sound-director telemetry: per-group loudness, masking and ducks, the soloists.
+    func mixInfo() -> AsmrMixInfo {
+        var info = AsmrMixInfo()
+        asmr_get_mix(core, &info)
+        return info
     }
 
     /// Scene objects (id, kind, position, flags). Ids are stable for the engine's lifetime.
