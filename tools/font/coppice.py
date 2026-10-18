@@ -3,6 +3,7 @@
 # dependencies = ["fonttools", "shapely>=2", "pillow"]
 # ///
 """Coppice Mono: a pixel-grid literary serif for terminals (PIXEL sets the bitmap size).
+Latin, figures, punctuation and the full Russian Cyrillic (А–я, Ёё, №, «», —, …, −).
 
 Every glyph is a centreline skeleton swept by a fixed elliptical nib (broad
 vertical stress: fat stems, hairline joins), plus hairline slab serifs.
@@ -775,6 +776,334 @@ def _(g): g.rect(70, -140, 530, 760)
 @glyph('\u258c')
 def _(g): g.rect(70, -140, 300, 760)
 
+# ───────────────────────── Cyrillic ─────────────────────────
+#
+# Same nib, serifs and pixel grid as the Latin. Capitals that share a Latin form (А В Е К М Н
+# О Р С Т Х) reuse its drawing; the rest are built from the same parts. Most Cyrillic
+# lowercase letters are small capitals in shape (в г д ж з и к л м н п т ц ч ш щ ъ ы ь э ю я),
+# so each such letter is one function of its height: CAP for the capital, XH for the
+# lowercase. Wide letters (Ж Ш Щ Ы Ю) are squeezed onto the mono cell like m and w.
+
+CL, CR = 80, 540     # capital stems
+WIDE_CYR = '\u0416\u0436\u0428\u0448\u0429\u0449\u042b\u044b\u042e\u044e\u043c\u0424\u0444\u2116'
+LL, LR = 60, 420     # lowercase stems
+
+def cyr(cap, low, L=None, R=None):
+    """Registers f(g, h, L, R) as the capital (h = CAP) and, if given, the lowercase (h = XH)."""
+    def deco(f):
+        GL[cap] = lambda g: f(g, CAP, CL, CR)
+        if low: GL[low] = lambda g: f(g, XH, LL, LR)
+        return f
+    return deco
+
+def serif_w(h): return 72 if h == CAP else 62
+
+def bar_top(g, x0, x1, h): g.s(line((x0, h - 11), (x1, h - 11)), HR)
+def bar_base(g, x0, x1): g.s(line((x0, 11), (x1, 11)), HR)
+
+def descender(g, x, depth=-150):
+    """A short hairline drop below the baseline (Д Ц Щ)."""
+    g.s(line((x, 11), (x, depth)), (14, 11))
+
+def bowl_low(g, L, R, h, top=None):
+    """Ь's bowl: from the stem at `top` round to the baseline (B's lower bowl at any height)."""
+    yb = top if top is not None else round(h * 0.56)
+    ry = (yb - 11) / 2
+    cy = 11 + ry
+    rx = min(ry * 1.08, (R - L) * 0.52)
+    cx = R - rx - 10
+    g.s(cat(line((L, yb), (cx, yb)), arc(cx, cy, rx, ry, 90, -90, 2.05), line((cx, 11), (L, 11))))
+
+def breve(g, cx, y, w=120):
+    g.s(arc(cx, y + 60, w, 64, 200, 340, 2.0), (16, 12), 1.0, 1.0)
+
+def dieresis(g, cx, y, r=None):
+    r = r or 44
+    g.dot(cx - 110, y, r); g.dot(cx + 110, y, r)
+
+@cyr('Б', 'б')            # Б б (lowercase б is its own form, overridden below)
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); bar_top(g, L, R - 10, h); vtick(g, R - 10, h - 11, h - 96)
+    bowl_low(g, L, R, h)
+    g.top(L, h, w, 0); g.foot(L, w, 0)
+
+@glyph('б')
+def _(g):
+    g.s(arc(250, CY, 205, RY, 0, 360, 2.12))
+    g.s(bez((50, 250), (50, 560), (150, 680), (420, 712)), N, 1.0, 0.6)
+    g.dot(432, 706, 36)
+
+@glyph('в')
+def _(g):
+    L, h = LL, XH
+    g.stem(L, 0, h)
+    g.s(cat(line((L, h - 11), (230, h - 11)), arc(230, 368, 132, 101, 90, -90, 2.05), line((230, 267), (L, 267))))
+    g.s(cat(line((L, 267), (250, 267)), arc(250, 139, 160, 128, 90, -90, 2.05), line((250, 11), (L, 11))))
+    g.top(L, h, 62, 0); g.foot(L, 62, 0)
+
+@cyr('Г', 'г')            # Г г
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); bar_top(g, L, R - 40, h); vtick(g, R - 40, h - 11, h - 100)
+    g.top(L, h, w, 0); g.foot(L, w, w)
+
+@cyr('Д', 'д')            # Д д
+def _(g, h, L, R):
+    w = serif_w(h)
+    l0, r0 = L - 40, R + 40
+    g.s(bez((L + 10, 18), (L + 90, 160), (L + 120, h * 0.6), (L + 120, h - 11)), MD)
+    bar_top(g, L + 120, R, h)
+    g.stem(R, 0, h)
+    bar_base(g, l0, r0)
+    descender(g, l0, -150 if h == CAP else -140); descender(g, r0, -150 if h == CAP else -140)
+    g.top(R, h, 0, w)
+
+@cyr('Ж', 'ж')            # Ж ж
+def _(g, h, L, R):
+    w = serif_w(h)
+    M = (L + R) / 2 + 10
+    mid = h * 0.48
+    g.stem(M, 0, h)
+    g.s(line((M - 10, mid + 4), (L - 30, h - 11)), HR); g.s(line((M + 10, mid + 4), (R + 50, h - 11)), HR)
+    g.s(line((M - 30, mid + 30), (L - 50, 16)), HV); g.s(line((M + 30, mid + 30), (R + 70, 16)), HV)
+    g.top(M, h, w * 0.6, w * 0.6); g.foot(M, w * 0.6, w * 0.6)
+
+def zeta(g, h, mirror=False):
+    k = h / 700
+    def P(x, y): return (x, y * k)
+    p = cat(bez(P(84, 570), P(100, 650), P(170, 689), P(250, 689)), bez(P(250, 689), P(350, 689), P(410, 640), P(410, 565)),
+            bez(P(410, 565), P(410, 480), P(340, 410), P(220, 392)), bez(P(220, 392), P(350, 382), P(460, 320), P(460, 200)),
+            bez(P(460, 200), P(460, 70), P(370, 11), P(250, 11)), bez(P(250, 11), P(160, 11), P(95, 50), P(72, 112)))
+    g.s(p); g.dot(86, 570 * k - 8, 37); g.dot(76, 112 * k - 4, 37)
+
+@glyph('З')
+def _(g): zeta(g, CAP)
+
+@glyph('з')
+def _(g): zeta(g, XH)
+
+def ii(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.stem(R, 0, h)
+    g.s(line((L, 14), (R, h - 14)), HV)
+    g.top(L, h, w, w); g.top(R, h, w, w); g.foot(L, w, w); g.foot(R, w, w)
+
+@cyr('И', 'и')            # И и
+def _(g, h, L, R): ii(g, h, L, R)
+
+@cyr('Й', 'й')            # Й й
+def _(g, h, L, R):
+    ii(g, h, L, R)
+    breve(g, (L + R) / 2, h + 50 if h == CAP else 560)
+
+def kk(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h)
+    g.s(line((L + 10, h * 0.43), (R + 6, h - 11)), HR)
+    g.s(line((L + h * 0.24, h * 0.62), (R + 40, 16)), HV)
+    g.top(L, h, w, w); g.foot(L, w, w); g.top(R + 6, h, 20, w); g.foot(R + 40, w, w)
+
+@glyph('К')
+def _(g): GL['K'](g)
+
+@glyph('к')
+def _(g): kk(g, XH, LL, LR)
+
+@cyr('Л', 'л')            # Л л
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.s(cat(bez((L - 50, 30), (L + 10, 40), (L + 90, 160), (L + 110, h - 11))), MD)
+    g.dot(L - 44, 40, 36)
+    bar_top(g, L + 110, R, h)
+    g.stem(R, 0, h)
+    g.top(R, h, 0, w); g.foot(R, w, w)
+
+def mm(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.stem(R, 0, h)
+    m = (L + R) / 2
+    g.s(line((L, h - 10), (m, h * 0.42)), HV); g.s(line((m, h * 0.42), (R, h - 10)), HR)
+    g.top(L, h, w * 0.8, 0); g.foot(L, w * 0.8, w * 0.8); g.top(R, h, 0, w * 0.8); g.foot(R, w * 0.8, w * 0.8)
+
+@glyph('М')
+def _(g): GL['M'](g)
+
+@glyph('м')
+def _(g): mm(g, XH, LL - 10, LR + 30)
+
+def nn(g, h, L, R, bar=None):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.stem(R, 0, h)
+    g.s(line((L, bar or h * 0.51), (R, bar or h * 0.51)), HR)
+    for x in (L, R):
+        g.top(x, h, w, w); g.foot(x, w, w)
+
+@glyph('Н')
+def _(g): GL['H'](g)
+
+@glyph('н')
+def _(g): nn(g, XH, LL, LR)
+
+@cyr('П', 'п')            # П п
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.stem(R, 0, h); bar_top(g, L, R, h)
+    g.top(L, h, w, 0); g.top(R, h, 0, w); g.foot(L, w, w); g.foot(R, w, w)
+
+@glyph('т')
+def _(g):
+    h = XH
+    g.stem(240, 0, h)
+    g.s(line((30, h - 11), (450, h - 11)), HR)
+    vtick(g, 30, h - 11, h - 90); vtick(g, 450, h - 11, h - 90)
+    g.foot(240, 72, 72)
+
+@glyph('У')
+def _(g):
+    h = CAP
+    g.s(line((30, h - 14), (330, 250)), HV)
+    g.s(line((620, h - 11), (300, 120)), HR)
+    g.s(bez((300, 120), (260, 30), (200, 11), (120, 11)), (30, 11), 1.0, 0.7)
+    g.dot(112, 40, 38)
+    g.top(30, h, 72, 72); g.top(620, h, 40, 72)
+
+@cyr('Ф', None)                # Ф
+def _(g, h, L, R):
+    m = (L + R) / 2 + 20
+    g.stem(m, 0, h)
+    g.s(arc(m, h * 0.52, 270, h * 0.27, 0, 360, 2.1))
+    g.top(m, h, 84, 84); g.foot(m, 84, 84)
+
+@glyph('ф')
+def _(g):
+    m = 250
+    g.stem(m, DESC, ASC)
+    g.s(arc(m, CY, 210, RY - 10, 0, 360, 2.1))
+    g.top(m, ASC, 62, 0)
+
+@cyr('Ц', 'ц')            # Ц ц
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.stem(R, 0, h)
+    bar_base(g, L, R + 50); descender(g, R + 50, -150 if h == CAP else -140)
+    g.top(L, h, w, w); g.top(R, h, w, w)
+
+@cyr('Ч', 'ч')            # Ч ч
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(R, 0, h)
+    g.s(cat(line((L, h - 20), (L, h * 0.62)), bez((L, h * 0.62), (L, h * 0.4), (L + 90, h * 0.38), (R, h * 0.4))), N, 1.0, 0.8)
+    g.top(L, h, w, w); g.top(R, h, w, w); g.foot(R, w, w)
+
+def sha(g, h, L, R, tail=False):
+    w = serif_w(h) * 0.7
+    M = (L + R) / 2
+    for x in (L, M, R):
+        g.stem(x, 0, h); g.top(x, h, w, w)
+    bar_base(g, L, R + (50 if tail else 0))
+    if tail: descender(g, R + 50, -150 if h == CAP else -140)
+
+@cyr('Ш', 'ш')            # Ш ш
+def _(g, h, L, R): sha(g, h, L - 20, R + 30)
+
+@cyr('Щ', 'щ')            # Щ щ
+def _(g, h, L, R): sha(g, h, L - 20, R + 10, tail=True)
+
+@cyr('Ъ', 'ъ')            # Ъ ъ
+def _(g, h, L, R):
+    S = L + 110
+    g.stem(S, 0, h); g.s(line((L - 60, h - 11), (S, h - 11)), HR); vtick(g, L - 60, h - 11, h - 96)
+    bowl_low(g, S, R + 30, h)
+
+@cyr('Ы', 'ы')            # Ы ы
+def _(g, h, L, R):
+    w = serif_w(h) * 0.7
+    g.stem(L - 20, 0, h); g.top(L - 20, h, w, w)
+    bowl_low(g, L - 20, R - 70, h)
+    g.stem(R + 30, 0, h); g.top(R + 30, h, w, w); g.foot(R + 30, w, w)
+
+@cyr('Ь', 'ь')            # Ь ь
+def _(g, h, L, R):
+    w = serif_w(h)
+    g.stem(L, 0, h); g.top(L, h, w, w)
+    bowl_low(g, L, R, h)
+
+@glyph('Э')
+def _(g):
+    g.s(arc(300, 350, 296, 349, 140, -144, 2.1), N, 1.0, 0.85)
+    g.dot(92, 614, 40)
+    g.s(line((220, 360), (590, 360)), HR)
+
+@glyph('э')
+def _(g):
+    g.s(arc(250, CY, 208, RY, 140, -142, 2.12), N, 1.0, 0.85)
+    g.dot(86, 392, 37)
+    g.s(line((150, CY + 4), (458, CY + 4)), HR)
+
+@cyr('Ю', 'ю')            # Ю ю
+def _(g, h, L, R):
+    w = serif_w(h) * 0.7
+    L = L - 30
+    g.stem(L, 0, h); g.top(L, h, w, w); g.foot(L, w, w)
+    g.s(line((L, h * 0.5), (L + 110, h * 0.5)), HR)
+    rx = (R + 40 - (L + 110)) / 2
+    g.s(arc(L + 110 + rx, h / 2, rx, h / 2 - 1, 0, 360, 2.12))
+
+@cyr('Я', 'я')            # Я я
+def _(g, h, L, R):
+    w = serif_w(h)
+    yb = round(h * 0.42)
+    ry = (h - 11 - yb) / 2
+    cx = L + ry * 1.0 + 40
+    g.stem(R, 0, h)
+    g.s(cat(line((R, h - 11), (cx, h - 11)), arc(cx, yb + ry, ry * 1.0 + 30, ry, 90, 270, 2.05), line((cx, yb), (R, yb))))
+    g.s(line((cx + 30, yb - 6), (L - 20, 16)), HV)
+    g.top(R, h, 0, w); g.foot(R, w, w); g.foot(L - 20, w, w * 0.6)
+
+@glyph('Ё')                     # Ё
+def _(g):
+    GL['E'](g); dieresis(g, 260, 800, 40)
+
+@glyph('ё')                     # ё
+def _(g):
+    GL['e'](g); dieresis(g, 250, 628, 44)
+
+for _cyr, _lat in zip('АВЕОРСТХаеорсух',
+                      'ABEOPCTXaeopcyx'):
+    GL[_cyr] = (lambda lat: lambda g: GL[lat](g))(_lat)
+
+# ───────────────────────── Russian punctuation ─────────────────────────
+
+def guillemet(g, x, right):
+    s = 1 if right else -1
+    g.s(cat(line((x - s * 70, 400), (x + s * 70, 250)), line((x + s * 70, 250), (x - s * 70, 100))), (14, 13))
+
+@glyph('«')
+def _(g): guillemet(g, 150, False); guillemet(g, 330, False)
+
+@glyph('»')
+def _(g): guillemet(g, 150, True); guillemet(g, 330, True)
+
+@glyph('…')
+def _(g):
+    for x in (60, 250, 440): g.dot(x, 52, 46)
+
+@glyph('−')
+def _(g): g.s(line((40, 300), (400, 300)), (11, 13))
+
+@glyph('№')
+def _(g):
+    g.stem(40, 0, CAP, (20, 11)); g.stem(330, 0, CAP, (20, 11))
+    g.s(line((40, 690), (330, 12)), MD)
+    g.s(arc(470, 520, 70, 90, 0, 360, 2.0), (14, 11))
+    g.s(line((390, 330), (550, 330)), HR)
+
+@glyph('⏎')
+def _(g):
+    g.s(cat(line((480, 560), (480, 260)), line((480, 260), (80, 260))), (14, 13))
+    g.s(cat(line((200, 380), (80, 260)), line((80, 260), (200, 140))), (14, 12))
+
 # ───────────────────────── assembly ─────────────────────────
 
 ROUND = set('ocegdbpqOCGQ0689')
@@ -793,7 +1122,7 @@ def build_glyph(ch, ital):
         return g.geom()
     geom = make(1.0)
     if MONO:
-        cell, d = 570, (BUF - 7 if ch in 'mwMW@&%' else BUF)   # crowded glyphs get a lighter fatten so counters stay open
+        cell, d = 570, (BUF - 7 if ch in 'mwMW@&%' + WIDE_CYR else BUF)   # crowded glyphs get a lighter fatten so counters stay open
         limit = 570 if ch == '_' else 480 if ch in '\u2588\u258c' else 540 if ch in '@%&' else 512
         minx, _, maxx, _ = geom.bounds
         if maxx - minx + 2 * d > limit:     # squeeze the skeleton, not the outline, so stems keep their weight
@@ -849,7 +1178,8 @@ def uni_name(ch):
             '+': 'plus', '=': 'equal', '&': 'ampersand', '@': 'at', '%': 'percent', '’': 'quoteright',
             '‘': 'quoteleft', '“': 'quotedblleft', '”': 'quotedblright', '–': 'endash',
             '—': 'emdash', '_': 'underscore', '|': 'bar', '<': 'less', '>': 'greater', '\\': 'backslash', '`': 'grave', '^': 'asciicircum', '~': 'asciitilde', '*': 'asterisk', '#': 'numbersign', '$': 'dollar', '[': 'bracketleft', ']': 'bracketright', '{': 'braceleft', '}': 'braceright', '\u2192': 'arrowright', '\u2190': 'arrowleft', '\u2191': 'arrowup', '\u2193': 'arrowdown', '\u2588': 'fullblock', '\u258c': 'leftblock',  '·': 'periodcentered', '×': 'multiply', '°': 'degree',
-            **{str(i): n for i, n in enumerate('zero one two three four five six seven eight nine'.split())}}.get(ch, ch)
+            **{str(i): n for i, n in enumerate('zero one two three four five six seven eight nine'.split())}}.get(
+                ch, ch if ch.isascii() else f'uni{ord(ch):04X}')
 
 def build(ital, out):
     order, cmap, metrics, glyphs = ['.notdef'], {}, {}, {}
