@@ -12,7 +12,7 @@ mod rng;
 mod sources;
 mod windfield;
 
-pub use engine::{param, telemetry, Engine, SourceInfo, SourceKind, MAX_SOURCES};
+pub use engine::{param, telemetry, Engine, ObjectInfo, SourceInfo, SourceKind, MAX_SOURCES};
 
 use std::slice;
 
@@ -94,5 +94,26 @@ pub unsafe extern "C" fn asmr_get_spectrum(engine: *const Engine, out: *mut f32,
 pub unsafe extern "C" fn asmr_get_wind_field(engine: *const Engine, out: *mut f32, points: u32) {
     if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
         e.wind_field(slice::from_raw_parts_mut(out, points as usize));
+    }
+}
+
+/// Stub of the scene-graph object API (objects = current sources).
+///
+/// # Safety
+/// `out` must point to `max` writable `AsmrObjectInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_objects(engine: *const Engine, out: *mut ObjectInfo, max: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.objects(slice::from_raw_parts_mut(out, max as usize)) as u32,
+        _ => 0,
+    }
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_object_position(engine: *const Engine, id: u32, x: f32, y: f32, z: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.move_object(id, x, y, z);
     }
 }

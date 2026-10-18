@@ -62,6 +62,22 @@ uint32_t asmr_get_sources(const AsmrEngine *engine, AsmrSourceInfo *out, uint32_
 void asmr_get_spectrum(const AsmrEngine *engine, float *out, uint32_t bands); /* 40 Hz..16 kHz, log bands, 0..1 */
 void asmr_get_wind_field(const AsmrEngine *engine, float *out, uint32_t points); /* left -> right */
 
+/* Scene objects (stub until the scene graph lands: objects = the sources above, id = index). */
+enum {
+    ASMR_OBJECT_MOVABLE = 1u << 0, /* the user may move it */
+    ASMR_OBJECT_MOVING = 1u << 1,  /* moves on its own (e.g. a flying bird) */
+};
+
+typedef struct AsmrObjectInfo {
+    uint32_t id;
+    uint32_t kind;
+    float x, y, z;
+    uint32_t flags;
+} AsmrObjectInfo;
+
+uint32_t asmr_get_objects(const AsmrEngine *engine, AsmrObjectInfo *out, uint32_t max);
+void asmr_set_object_position(const AsmrEngine *engine, uint32_t id, float x, float y, float z);
+
 #ifdef __cplusplus
 }
 #endif

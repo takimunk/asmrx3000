@@ -110,6 +110,9 @@ struct Shared {
     sources: Box<[AtomicF32]>,
     source_count: AtomicUsize,
     wind_field: Box<[AtomicF32]>,
+    /// Object positions requested by `move_object` (stub of the scene-graph ABI, see objects.rs).
+    object_pos: Box<[AtomicF32]>,
+    object_seq: Box<[AtomicU32]>,
 }
 
 enum Generator {
@@ -126,11 +129,12 @@ struct Slot {
     sh: [f32; CHANNELS],
     level: f32,
     rel: Vec3,
+    move_seq: u32,
 }
 
 impl Slot {
     fn new(kind: SourceKind, position: Vec3, generator: Generator) -> Self {
-        Self { kind, home: position, position, generator, sh: [0.0; CHANNELS], level: 0.0, rel: position }
+        Self { kind, home: position, position, generator, sh: [0.0; CHANNELS], level: 0.0, rel: position, move_seq: 0 }
     }
 }
 
@@ -211,7 +215,14 @@ impl Engine {
             sources: atomics(MAX_SOURCES * SOURCE_FIELDS),
             source_count: AtomicUsize::new(0),
             wind_field: atomics(WIND_FIELD_POINTS),
+            object_pos: atomics(MAX_SOURCES * 3),
+            object_seq: (0..MAX_SOURCES).map(|_| AtomicU32::new(0)).collect(),
         };
+        for (i, s) in slots.iter().take(MAX_SOURCES).enumerate() {
+            for (k, v) in [s.home.x, s.home.y, s.home.z].into_iter().enumerate() {
+                shared.object_pos[i * 3 + k].store(v);
+            }
+        }
         shared.params[param::VOLUME as usize].store(0.7);
         shared.params[param::WIND as usize].store(0.45);
         shared.params[param::BIRDS as usize].store(0.6);
@@ -362,6 +373,7 @@ impl Dsp {
         let sr = self.sample_rate;
         let dt = len as f32 / sr;
         let p = |k: u32| shared.params[k as usize].load();
+        self.apply_moves(shared);
 
         let playing = p(param::PLAYING) > 0.5;
         if !playing && self.fade < 1e-4 {
@@ -470,6 +482,18 @@ impl Dsp {
         self.time += dt as f64;
     }
 
+    fn apply_moves(&mut self, shared: &Shared) {
+        for (i, slot) in self.slots.iter_mut().take(MAX_SOURCES).enumerate() {
+            let seq = shared.object_seq[i].load(Ordering::Acquire);
+            if seq != slot.move_seq {
+                slot.move_seq = seq;
+                let f = |k: usize| shared.object_pos[i * 3 + k].load();
+                slot.home = Vec3::new(f(0), f(1), f(2));
+                slot.position = slot.home;
+            }
+        }
+    }
+
     fn publish(&self, shared: &Shared) {
         let count = self.slots.len().min(MAX_SOURCES);
         for (i, s) in self.slots.iter().take(count).enumerate() {
@@ -515,6 +539,61 @@ impl Dsp {
     }
 }
 
+/// Stub of the director branch's object API: objects are the current sources (id = index).
+impl Engine {
+    pub fn objects(&self, out: &mut [ObjectInfo]) -> usize {
+        let count = self.shared.source_count.load(Ordering::Acquire).min(out.len());
+        let orbiting = self.param(param::ORBIT) > 1e-3;
+        let mut src = [SourceInfo::default(); MAX_SOURCES];
+        self.sources(&mut src);
+        for (i, o) in out.iter_mut().take(count).enumerate() {
+            // The orbiting bird is slot 11 (first bird); see Engine::new.
+            let moving = orbiting && i == 11;
+            let (x, y, z) = if moving {
+                (src[i].world_x, src[i].world_y, src[i].world_z)
+            } else {
+                let f = |k: usize| self.shared.object_pos[i * 3 + k].load();
+                (f(0), f(1), f(2))
+            };
+            *o = ObjectInfo {
+                id: i as u32,
+                kind: src[i].kind,
+                x,
+                y,
+                z,
+                flags: if moving { OBJECT_MOVING } else { OBJECT_MOVABLE },
+            };
+        }
+        count
+    }
+
+    pub fn move_object(&self, id: u32, x: f32, y: f32, z: f32) {
+        let i = id as usize;
+        if i >= self.shared.source_count.load(Ordering::Acquire) || !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            return;
+        }
+        for (k, v) in [x, y, z].into_iter().enumerate() {
+            self.shared.object_pos[i * 3 + k].store(v);
+        }
+        self.shared.object_seq[i].fetch_add(1, Ordering::Release);
+    }
+}
+
+pub const OBJECT_MOVABLE: u32 = 1;
+pub const OBJECT_MOVING: u32 = 2;
+
+/// Mirrors `AsmrObjectInfo` in asmr.h.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ObjectInfo {
+    pub id: u32,
+    pub kind: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub flags: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,6 +622,22 @@ mod tests {
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
+    }
+
+    #[test]
+    fn moves_objects() {
+        let engine = Engine::new(48_000.0);
+        let mut objs = [ObjectInfo::default(); MAX_SOURCES];
+        assert_eq!(engine.objects(&mut objs), 13);
+        engine.move_object(6, 1.0, 2.0, 3.0);
+        engine.objects(&mut objs);
+        assert_eq!((objs[6].x, objs[6].y, objs[6].z), (1.0, 2.0, 3.0));
+        let mut l = vec![0.0f32; 128];
+        let mut r = vec![0.0f32; 128];
+        engine.render(&mut l, &mut r);
+        let mut src = [SourceInfo::default(); MAX_SOURCES];
+        engine.sources(&mut src);
+        assert_eq!((src[6].world_x, src[6].world_y, src[6].world_z), (1.0, 2.0, 3.0));
     }
 
     #[test]
