@@ -41,11 +41,12 @@ enum Shaders {
         float4 cam;          // eye xyz, time
         float4 view;         // width px, height px, px per point, radians per px
         float4 head;         // yaw, -, -, playing
-        float4 counts;       // river points, birds, water flow 0..1, -
+        float4 counts;       // river points, birds, water flow 0..1, generic sources
         float4 bracket;      // selected box in px (x0, y0, x1, y1); x1 < x0 = none
         float4 hoverBracket;
         float4 plumb;        // bird and ground point in px, for a selected bird
         float4 sun;          // direction to the sun xyz, plumb on
+        float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
     };
 
     struct Inst {
@@ -59,6 +60,8 @@ enum Shaders {
     constant int D_BIRD = 8;    // 4: screen x px, y px, px per metre, level
     constant int D_BIRDZ = 12;  // 4: distance from the eye, -, -, -
     constant int D_WIND = 16;   // 16 x 4 samples, +y (left) .. -y (right)
+    constant int D_GEN = 32;    // 8: generic sources x, y, z, level
+    constant int D_GENINFO = 40;// 8: kind (ASMR_SOURCE_*), screen x px, y px, px per metre
 
     constant int M_VOID = 0, M_GROUND = 1, M_WATER = 2, M_FOLIAGE = 3, M_WOOD = 4, M_BIRD = 5,
                  M_STONE = 6, M_SECTION = 7;
@@ -422,6 +425,74 @@ enum Shaders {
         // The plate itself is not quite black.
         g = max(g, 0.025 * hash21(px));
 
+        // Generic sources: rain curtains with splashes, a campfire's flames and glow, crickets.
+        float3 fireLight = float3(0);
+        float warm = 0.0;
+        for (int i = 0; i < int(F.counts.w); i++) {
+            float4 G = D[D_GEN + i];
+            float4 I = D[D_GENINFO + i];
+            int kind = int(I.x + 0.5);
+            float2 sp = I.yz;
+            float ppm = I.w;
+            if (kind == 3) {
+                if (G.w < 0.002) continue;
+                float lvl = clamp(0.35 + G.w * 25.0, 0.0, 1.0);
+                float R = 2.6 * ppm;
+                float dx = abs(px.x - sp.x);
+                float ex = smoothstep(R, R * 0.55, dx);
+                float ey = smoothstep(sp.y - 6.0 * ppm, sp.y - 4.5 * ppm, px.y) * smoothstep(sp.y + 0.8 * ppm, sp.y, px.y);
+                float k = (px.x + 0.22 * px.y) / (5.0 * s);
+                float ln = floor(k);
+                float fo = abs(fract(k) - 0.5) * 5.0 * s;
+                float ph = fract(px.y / ((22.0 + 14.0 * hash11(ln)) * s) - time * (1.4 + 0.5 * hash11(ln * 3.1)) + hash11(ln * 7.3));
+                g = max(g, cut(fo, 0.9) * step(ph, 0.16) * lvl * ex * ey * 0.7);
+                // Splashes: small rings that come and go on the ground and the water.
+                if ((mat == M_GROUND || mat == M_WATER) && length(b.xy - G.xy) < 2.6) {
+                    float2 cell = floor(b.xy * 2.5);
+                    float sph = fract(time * 1.3 + hash21(cell));
+                    float2 c = (cell + 0.2 + 0.6 * float2(hash21(cell + 1.7), hash21(cell + 4.1))) / 2.5;
+                    float rr = 0.03 + sph * 0.16;
+                    g = max(g, cut(abs(length(b.xy - c) - rr) / pxWorld, 1.0) * (1.0 - sph) * lvl * 0.7);
+                }
+            } else if (kind == 5) {
+                float lvl = clamp(0.35 + G.w * 8.0, 0.0, 1.0);
+                float flick = 0.75 + 0.25 * sin(time * 11.0) * sin(time * 7.3 + 1.0);
+                // Flames: engraved tongues that lick upwards.
+                float u = (px.x - sp.x) / (0.42 * ppm);
+                float v = (sp.y - px.y) / (1.35 * ppm * flick);
+                if (v > 0.0 && v < 1.0) {
+                    float w = 0.95 * pow(1.0 - v, 0.8) * (0.75 + 0.25 * sin(time * 12.0 + v * 7.0));
+                    float x2 = u + 0.3 * v * sin(v * 5.0 - time * 9.0);
+                    if (abs(x2) < w) {
+                        float lines = cut(abs(fract(px.x / (1.6 * s)) - 0.5) * 1.6 * s, 1.3);
+                        float a2 = lines * mix(1.0, 0.55, v) * lvl;
+                        fireLight += float3(1.0, 0.66, 0.32) * a2;
+                        g = max(g, a2 * 0.8);
+                    }
+                }
+                // Sparks drifting up.
+                for (int k = 0; k < 5; k++) {
+                    float ph = fract(time * 0.55 + float(k) * 0.23);
+                    float2 pos = sp + float2(sin(float(k) * 12.9 + time * 1.7) * 0.25, -(0.9 + ph * 1.6)) * ppm;
+                    fireLight += float3(1.0, 0.7, 0.35) * cut(length(px - pos), 1.6 * s) * (1.0 - ph) * lvl;
+                }
+                // Firelight on the ground around it.
+                if (mat != M_VOID) {
+                    float d = length(b.xy - G.xy);
+                    warm = max(warm, exp(-d * d / 7.0) * flick * lvl);
+                }
+            } else if (kind == 6) {
+                float lvl = clamp(G.w * 25.0, 0.0, 1.0);
+                if (lvl < 0.03 || mat != M_GROUND) continue;
+                float d = length(b.xy - G.xy);
+                float ph = fract(time * 2.4 + float(i) * 0.31);
+                float rr = 0.08 + ph * 0.6;
+                float an = atan2(b.y - G.y, b.x - G.x);
+                float dotted = step(fract(an * 6.0 / 3.14159), 0.5);
+                g = max(g, cut(abs(d - rr) / pxWorld, 1.0) * (1.0 - ph) * dotted * lvl * 0.6);
+            }
+        }
+
         // Hand colouring: thin watercolour washes laid under the lines, a little blotchy and
         // a little off register, as on an old tinted print.
         float2 off = float2(1.6, -1.1) * s;
@@ -437,8 +508,19 @@ enum Shaders {
         }
         // Lines take a faint warmth of their wash; the selection stays pure white.
         float3 ink = sel ? float3(1.0) : mix(float3(1.0, 0.985, 0.95), WASH[mat] * 1.6, 0.12);
-        float3 c = wash * (1.0 - g) + ink * g;
-        return float4(c, 1.0);
+        // Night: the plate dims and turns moonlit, blue-silver; the fire keeps its warmth.
+        float day = F.env.x;
+        wash *= mix(float3(0.45, 0.55, 0.85), float3(1.0), day);
+        g *= mix(0.6, 1.0, day);
+        ink = mix(float3(0.82, 0.88, 1.0), ink, day);
+        // Wet ground darkens.
+        if (mat == M_GROUND) wash *= 1.0 - 0.35 * F.env.y;
+        wash += float3(0.55, 0.3, 0.12) * warm * mix(0.9, 0.35, day);
+        g = max(g, g * (1.0 + warm * (1.0 - day)));   // firelight brings the lines back at night
+        float3 c = wash * (1.0 - g) + ink * g + fireLight;
+        // A lightning strike lights the whole plate for a moment, cold.
+        c += float3(0.8, 0.85, 1.0) * F.env.z * (0.1 + 0.25 * g);
+        return float4(min(c, float3(1.0)), 1.0);
     }
 
     // ---- spectrogram ---------------------------------------------------------------------------
@@ -504,7 +586,7 @@ enum Shaders {
 
     struct TrackU {
         float4 size;      // w px, h px, px per point, row count
-        float4 rows[8];   // per macro row: top px, height px, scope row (-1 none), slider fraction
+        float4 rows[16];  // per macro row: top px, height px, scope row (-1 none), slider fraction
     };
 
     // Each macro row shows its sound's live waveform as engraved vertical strokes. Up to the
@@ -524,7 +606,7 @@ enum Shaders {
 
         float P = 2.0 * s;
         float colX = (floor(px.x / P) + 0.5) * P;
-        float amp = r.z >= 0.0 ? scope.sample(smp, float2(colX / u.size.x, (r.z + 0.5) / 5.0)).r : 0.0;
+        float amp = r.z >= 0.0 ? scope.sample(smp, float2(colX / u.size.x, (r.z + 0.5) / float(scope.get_height()))).r : 0.0;
         float half_ = max(amp * r.y * 0.4, 0.5 * s);
         float stroke = cut(abs(px.x - colX), 0.95 * s) * step(abs(px.y - mid), half_);
 

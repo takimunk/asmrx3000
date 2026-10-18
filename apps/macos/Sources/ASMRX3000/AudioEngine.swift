@@ -2,7 +2,7 @@ import AVFoundation
 import CAsmr
 
 struct SourceInfo {
-    enum Kind: UInt32 { case water = 0, wind = 1, bird = 2 }
+    enum Kind: UInt32 { case water = 0, wind = 1, bird = 2, rain = 3, thunder = 4, fire = 5, insect = 6 }
     var kind: Kind
     var world: SIMD3<Float>
     var rel: SIMD3<Float>
@@ -22,10 +22,14 @@ struct Control: Equatable {
     var defaultValue: Float
     var key: String
     var unit: String
+    /// Names of a discrete control's presets (asmr_get_control_option), index = value.
+    var options: [String] = []
 
     var isMacro: Bool { flags & UInt32(ASMR_CONTROL_FLAG_MACRO) != 0 }
     var isLog: Bool { flags & UInt32(ASMR_CONTROL_FLAG_LOG) != 0 && min > 0 }
     var isDiscrete: Bool { flags & UInt32(ASMR_CONTROL_FLAG_DISCRETE) != 0 }
+    /// A child the user set; it no longer follows its macro.
+    var isOverridden: Bool { flags & UInt32(ASMR_CONTROL_FLAG_OVERRIDDEN) != 0 }
 
     /// Position along the slider, 0..1.
     var fraction: Float {
@@ -48,6 +52,10 @@ struct Telemetry {
     var sampleRate: Float = 0
     var bubbleRate: Float = 0
     var outputLevel: Float = 0
+    /// Lightning flash 0..1 (jumps to 1 on a strike).
+    var lightning: Float = 0
+    /// Leaf and ground wetness 0..1.
+    var wetness: Float = 0
 }
 
 /// Hosts the Rust engine inside AVAudioEngine. The Rust side does all DSP; this class only
@@ -66,8 +74,8 @@ final class AudioEngine: ObservableObject {
     private var coreRate: Double = 48_000
     private var headPose: (Float, Float, Float) = (0, 0, 0)
     private var stopWork: DispatchWorkItem?
-    private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 32)
-    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 32)
+    private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 128)
+    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 128)
     private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
     private var controlNames: [UInt32: (String, String)] = [:]
     /// Control values the user set, in order, re-applied when the core is rebuilt.
@@ -76,13 +84,25 @@ final class AudioEngine: ObservableObject {
     private var placed: [UInt32: SIMD3<Float>] = [:]
 
     init() {
-        core = asmr_engine_new(48_000)
+        core = Self.makeCore(48_000)
         applyParams()
         NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             self?.handleConfigurationChange()
         }
+    }
+
+    /// A JSON scene from `--scene path` (development and snapshots); otherwise the built-in one.
+    private static let sceneJSON: String? = {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--scene"), i + 1 < args.count else { return nil }
+        return try? String(contentsOfFile: args[i + 1], encoding: .utf8)
+    }()
+
+    private static func makeCore(_ rate: Float) -> OpaquePointer {
+        if let json = sceneJSON, let e = asmr_engine_new_with_scene(rate, json) { return e }
+        return asmr_engine_new(rate)
     }
 
     deinit {
@@ -168,7 +188,9 @@ final class AudioEngine: ObservableObject {
             gust: telemetry(ASMR_TELEMETRY_GUST),
             sampleRate: telemetry(ASMR_TELEMETRY_SAMPLE_RATE),
             bubbleRate: telemetry(ASMR_TELEMETRY_BUBBLE_RATE),
-            outputLevel: telemetry(ASMR_TELEMETRY_OUTPUT_LEVEL)
+            outputLevel: telemetry(ASMR_TELEMETRY_OUTPUT_LEVEL),
+            lightning: telemetry(ASMR_TELEMETRY_LIGHTNING),
+            wetness: telemetry(ASMR_TELEMETRY_WETNESS)
         )
     }
 
@@ -198,17 +220,36 @@ final class AudioEngine: ObservableObject {
                 names = (key, unit)
                 controlNames[raw.id] = names
             }
-            out.append(Control(id: raw.id, group: raw.group, parent: raw.parent == UInt32.max ? nil : raw.parent,
-                               flags: raw.flags, min: raw.min, max: raw.max, value: raw.value,
-                               defaultValue: raw.default_value, key: names.0, unit: names.1))
+            var c = Control(id: raw.id, group: raw.group, parent: raw.parent == UInt32.max ? nil : raw.parent,
+                            flags: raw.flags, min: raw.min, max: raw.max, value: raw.value,
+                            defaultValue: raw.default_value, key: names.0, unit: names.1)
+            if c.isDiscrete { c.options = options(for: c) }
+            out.append(c)
         }
+    }
+
+    private var optionNames: [UInt32: [String]] = [:]
+
+    private func options(for c: Control) -> [String] {
+        if let cached = optionNames[c.id] { return cached }
+        var names: [String] = []
+        var buf = [CChar](repeating: 0, count: 64)
+        for i in 0...max(Int(c.max), 0) {
+            let n = buf.withUnsafeMutableBufferPointer { asmr_get_control_option(core, c.id, UInt32(i), $0.baseAddress, 64) }
+            names.append(n > 0 ? String(cString: buf) : "")
+        }
+        optionNames[c.id] = names
+        return names
     }
 
     func setControl(_ id: UInt32, _ value: Float) {
         setControls.removeAll { $0.0 == id }
-        setControls.append((id, value))
+        if !value.isNaN { setControls.append((id, value)) }
         asmr_set_control(core, id, value)
     }
+
+    /// Hands a child back to its macro.
+    func releaseControl(_ id: UInt32) { setControl(id, .nan) }
 
     /// Live peak waveform of a track (ASMR_SCOPE_*), oldest first, one point per 64 samples.
     func readScope(_ track: Int, into out: inout [Float]) {
@@ -254,7 +295,7 @@ final class AudioEngine: ObservableObject {
         }
         if rate != coreRate {
             let old = core
-            core = asmr_engine_new(Float(rate))
+            core = Self.makeCore(Float(rate))
             coreRate = rate
             applyParams()
             asmr_engine_free(old)

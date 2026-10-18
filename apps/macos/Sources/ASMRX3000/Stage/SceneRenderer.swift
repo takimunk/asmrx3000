@@ -13,6 +13,7 @@ private struct FrameUniforms {
     var hoverBracket: SIMD4<Float>
     var plumb: SIMD4<Float>
     var sun: SIMD4<Float>
+    var env: SIMD4<Float>
 }
 
 private struct Instance {
@@ -34,7 +35,7 @@ final class SceneRenderer {
     private var terrain: Mesh?
     private var terrainRiver: [SIMD4<Float>] = []
     private let pole: Mesh?
-    private var data = [SIMD4<Float>](repeating: .zero, count: 32)
+    private var data = [SIMD4<Float>](repeating: .zero, count: 48)
     private var lastBird: [UInt32: SIMD3<Float>] = [:]
     private var heading: [UInt32: Float] = [:]
 
@@ -106,7 +107,8 @@ final class SceneRenderer {
             head: SIMD4(Float(stage.head.yaw), 0, 0, stage.audio.isPlaying ? 1 : 0),
             counts: .zero,
             bracket: SIMD4(0, 0, -1, -1), hoverBracket: SIMD4(0, 0, -1, -1),
-            plumb: .zero, sun: SIMD4(Self.sun, 0)
+            plumb: .zero, sun: SIMD4(Self.sun, 0),
+            env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0)
         )
         let instances = buildInstances(time: time, river: river, proj: proj, scale: scale, u: &u)
         if let t = stage.thing(stage.selection) {
@@ -273,8 +275,35 @@ final class SceneRenderer {
             let m = Self.transform(SIMD3(r.x, r.y, Terrain.height(r.x, r.y) - 0.05), yaw: 0.4, scale: 1)
             list.append((ruin, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
         }
-        u.counts = SIMD4(Float(min(river.count, 8)), Float(birds), stage.audio.water, 0)
+        // Generic sources, drawn quietly: rain curtains, a campfire, crickets in the grass.
+        var generic = 0
+        // Fire first, then crickets, then the loudest rain patches: the shader takes eight.
+        let order: [SourceInfo.Kind: Int] = [.fire: 0, .insect: 1, .rain: 2]
+        let candidates = stage.sources.filter { order[$0.kind] != nil }
+            .sorted { (order[$0.kind]!, -$0.level) < (order[$1.kind]!, -$1.level) }
+        for s in candidates where generic < 8 {
+            if isAbsent(s.world) { continue }
+            guard let sp = proj.project(s.world) else { continue }
+            if s.kind == .fire, let fire = lib["campfire"] {
+                let g = Terrain.height(s.world.x, s.world.y)
+                list.append((fire, Instance(model: Self.transform(SIMD3(s.world.x, s.world.y, g), yaw: 0.3, scale: 1),
+                                            info: SIMD4(-1, 0, 0, 0), anim: .zero)))
+            }
+            let base = s.kind == .fire ? (proj.project(SIMD3(s.world.x, s.world.y, Terrain.height(s.world.x, s.world.y) + 0.15)) ?? sp) : sp
+            data[32 + generic] = SIMD4(s.world, s.level)
+            data[40 + generic] = SIMD4(Float(s.kind.rawValue), base.point.x * scale, base.point.y * scale, focal / base.w * scale)
+            generic += 1
+        }
+        u.counts = SIMD4(Float(min(river.count, 8)), Float(birds), stage.audio.water, Float(generic))
         return list
+    }
+
+    /// Whether an engine object near this point is off stage (ASMR_OBJECT_FLAG_ABSENT).
+    private func isAbsent(_ p: SIMD3<Float>) -> Bool {
+        stage.objects.contains {
+            $0.kind == UInt32(ASMR_OBJECT_SOURCE) && $0.flags & UInt32(ASMR_OBJECT_FLAG_ABSENT) != 0
+                && simd_distance(SIMD3($0.x, $0.y, $0.z), p) < 0.75
+        }
     }
 
     private func localWind(_ y: Float) -> Float {
@@ -310,6 +339,15 @@ final class SceneRenderer {
         m.columns.2 *= scale
         m.columns.3 = SIMD4(t, 1)
         return m
+    }
+
+    /// 1 by day, 0 at night, with a dawn and a dusk between.
+    static func daylight(_ hour: Float) -> Float {
+        func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float {
+            let t = min(max((x - a) / (b - a), 0), 1)
+            return t * t * (3 - 2 * t)
+        }
+        return smooth(4.5, 7.5, hour) * (1 - smooth(18.5, 21.5, hour))
     }
 
     static func scaleMatrix(_ s: SIMD3<Float>) -> simd_float4x4 {

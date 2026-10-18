@@ -269,6 +269,22 @@ def column():
     return parts
 
 
+def campfire():
+    """A ring of stones with three logs leaned together, centred on the origin at ground level."""
+    parts = []
+    rnd = random.Random(31)
+    for k in range(10):
+        a = 2 * math.pi * k / 10 + rnd.uniform(-0.1, 0.1)
+        c = (math.cos(a) * 0.48, math.sin(a) * 0.48, 0.05)
+        parts.append((blob(f"fire_stone{k}", c, rnd.uniform(0.09, 0.13), 40 + k, detail=1, squash=(1.2, 1.0, 0.7), rough=0.3), STONE))
+    for k in range(3):
+        a = 2 * math.pi * k / 3 + 0.4
+        foot = Vector((math.cos(a) * 0.36, math.sin(a) * 0.36, 0.03))
+        top = Vector((math.cos(a) * 0.04, math.sin(a) * 0.04, 0.42))
+        parts.append((skeleton(f"fire_log{k}", [foot, top], [(0, 1)], [0.045, 0.035], subdiv=1), WOOD))
+    return parts
+
+
 # ---- export -----------------------------------------------------------------------------------
 
 
@@ -338,6 +354,7 @@ def main():
         ("bird_flying", lambda: bird(True)),
         ("herm", herm),
         ("ruin", column),
+        ("campfire", campfire),
     ]
     models = []
     for name, build in builders:

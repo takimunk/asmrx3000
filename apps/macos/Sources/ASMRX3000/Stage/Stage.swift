@@ -49,7 +49,7 @@ final class Meters: ObservableObject {
 
 /// Order matches the rows of the track scopes and ASMR_SCOPE_*.
 enum Track: Int, CaseIterable {
-    case water, wind, birds, flight, volume
+    case water, wind, birds, flight, volume, rain, insects, fire, thunder
 }
 
 /// Per-frame state shared by the scene and spectrogram renderers. Telemetry is sampled once per
@@ -92,6 +92,8 @@ final class Stage {
     private(set) var scopes = [Float](repeating: 0, count: Track.allCases.count * Stage.scopeColumns)
     private var scopeRaw = [Float](repeating: 0, count: Stage.scopeColumns * 2)
     private var scopeMax = [Float](repeating: 0.05, count: Track.allCases.count)
+    /// Raw peak of each track over the last ~85 ms: what "audible" means for the icons.
+    private var recentPeak = [Float](repeating: 0, count: Track.allCases.count)
 
     /// Scene time for animation, seconds.
     private(set) var time: Double = 0
@@ -160,6 +162,9 @@ final class Stage {
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
     }
 
+    /// The scene's time of day, hours.
+    var hour: Float { controls.controls.first { $0.key == "env.time_of_day" }?.value ?? 12 }
+
     func setLive(_ live: Bool) {
         if meters.live != live { meters.live = live }
     }
@@ -172,6 +177,7 @@ final class Stage {
             audio.readScope(t.rawValue, into: &scopeRaw)
             var peak: Float = 0
             for c in 0..<n { peak = max(peak, max(scopeRaw[2 * c], scopeRaw[2 * c + 1])) }
+            recentPeak[t.rawValue] = scopeRaw.suffix(64).max() ?? 0
             let m = max(scopeMax[t.rawValue] * 0.995, peak, 0.02)
             scopeMax[t.rawValue] = m
             let base = t.rawValue * n
@@ -182,26 +188,7 @@ final class Stage {
     }
 
     private func publishMeters() {
-        var water: Float = 0, windL: Float = 0, birds: Float = 0, flight: Float = 0
-        var birdIndex = 0
-        for s in sources {
-            switch s.kind {
-            case .water: water += s.level
-            case .wind: windL = max(windL, s.level)
-            case .bird:
-                if birdIndex == 0 { flight = s.level }
-                birds = max(birds, s.level)
-                birdIndex += 1
-            }
-        }
-        let levels: [Track: Float] = [
-            .water: min(water * 3.5, 1),
-            .wind: min(windL * 6, 1),
-            .birds: min(birds * 9, 1),
-            .flight: audio.orbit > 0.01 ? min(flight * 9, 1) : 0,
-            .volume: min(telemetry.outputLevel * 7, 1),
-        ]
-        let audible = Set(levels.filter { $0.value > 0.02 }.map(\.key))
+        let audible = Set(Track.allCases.filter { recentPeak[$0.rawValue] > 0.003 })
         if meters.audible != audible { meters.audible = audible }
     }
 

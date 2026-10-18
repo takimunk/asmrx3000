@@ -19,7 +19,7 @@ struct Popover: View {
     static let width: CGFloat = 560
     static let sceneHeight: CGFloat = 356
     static let spectrogramHeight: CGFloat = 104
-    static let rowHeight: CGFloat = 26
+    static let rowHeight: CGFloat = 23
     static let iconColumn: CGFloat = 34
 
     init(model: AppModel, stills: StillFrames? = nil) {
@@ -262,7 +262,7 @@ struct Tracks: View {
     @ObservedObject var controls: ControlsModel
     var stills: StillFrames?
 
-    static let childHeight: CGFloat = 22
+    static let childHeight: CGFloat = 20
 
     init(model: AppModel, stills: StillFrames?) {
         self.model = model
@@ -272,6 +272,7 @@ struct Tracks: View {
 
     var body: some View {
         let macros = controls.macros
+        let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         ZStack(alignment: .topLeading) {
             Group {
                 if let stills {
@@ -286,12 +287,12 @@ struct Tracks: View {
                 ForEach(macros, id: \.id) { m in
                     let kids = controls.children(of: m.id)
                     let open = controls.expanded == m.id && !kids.isEmpty
-                    MacroRow(control: m, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
+                    MacroRow(control: m, hour: hour, hasChildren: !kids.isEmpty, open: open, meters: model.stage.meters,
                              set: set, toggle: { toggle(m.id) })
                         .frame(height: Popover.rowHeight)
                     if open {
                         ForEach(Array(kids.enumerated()), id: \.element.id) { i, c in
-                            ChildRow(control: c, last: i == kids.count - 1, set: set)
+                            ChildRow(control: c, hour: hour, last: i == kids.count - 1, set: set)
                                 .frame(height: Self.childHeight)
                         }
                     }
@@ -339,13 +340,17 @@ extension Track {
         case ASMR_GROUP_WIND, ASMR_GROUP_FOLIAGE: self = .wind
         case ASMR_GROUP_BIRDS: self = .birds
         case ASMR_GROUP_MASTER: self = .volume
-        default: return nil
+        case ASMR_GROUP_RAIN: self = .rain
+        case ASMR_GROUP_INSECTS: self = .insects
+        case ASMR_GROUP_FIRE: self = .fire
+        default: return nil   // environment shapes every sound; it has no waveform of its own
         }
     }
 }
 
 private struct MacroRow: View {
     let control: Control
+    var hour: Float?
     let hasChildren: Bool
     let open: Bool
     @ObservedObject var meters: Meters
@@ -360,7 +365,7 @@ private struct MacroRow: View {
         HStack(spacing: 0) {
             Button(action: toggle) {
                 ZStack(alignment: .bottomTrailing) {
-                    IconView(icon: Icon.forControl(control), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
+                    IconView(icon: Icon.forControl(control, hour: hour), color: audible || open ? Ink.paper : Ink.graphite, size: 18,
                              level: audible ? 0.6 : 0, animating: meters.live && audible)
                         .frame(width: 22, height: 22)
                     if hasChildren {
@@ -418,6 +423,7 @@ private struct MacroRow: View {
 /// (or, for presets, a row of stops). Its name, value and unit appear only on hover.
 private struct ChildRow: View {
     let control: Control
+    var hour: Float?
     let last: Bool
     let set: (UInt32, Float) -> Void
     @State private var hovering = false
@@ -435,7 +441,7 @@ private struct ChildRow: View {
                     p.addQuadCurve(to: CGPoint(x: 17, y: mid), control: CGPoint(x: x, y: mid))
                     ctx.stroke(p, with: .color(Ink.graphite.opacity(0.7)), lineWidth: 0.6)
                 }
-                IconView(icon: Icon.forControl(control), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
+                IconView(icon: Icon.forControl(control, hour: hour), color: hovering ? Ink.paper : Ink.graphite, size: 13, lineWidth: 1)
                     .offset(x: 18)
             }
             .frame(width: Popover.iconColumn)
@@ -469,7 +475,11 @@ private struct ChildRow: View {
     }
 
     private var label: String {
-        let v = control.isDiscrete ? String(Int(control.value.rounded()))
+        let index = Int(control.value.rounded())
+        if control.isDiscrete, index >= 0, index < control.options.count, !control.options[index].isEmpty {
+            return "\(control.key) \(control.options[index])"
+        }
+        let v = control.isDiscrete ? String(index)
             : abs(control.value) >= 10 ? String(format: "%.1f", control.value) : String(format: "%.2f", control.value)
         return control.unit.isEmpty ? "\(control.key) \(v)" : "\(control.key) \(v) \(control.unit)"
     }
@@ -502,13 +512,16 @@ private struct FineSlider: View {
             lz.addLine(to: CGPoint(x: x, y: mid + 3))
             lz.addLine(to: CGPoint(x: x - 3, y: mid))
             lz.closeSubpath()
-            ctx.fill(lz, with: .color(hovering ? Ink.paper : Ink.black))
+            // Filled once the user has set it; hollow while it follows its macro.
+            ctx.fill(lz, with: .color(hovering || control.isOverridden ? Ink.paper : Ink.black))
             ctx.stroke(lz, with: .color(Ink.paper), lineWidth: 0.8)
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { g in
             set(control.id, control.value(atFraction: Float(g.location.x / width)))
         })
+        // Double-click hands the parameter back to its macro.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { set(control.id, .nan) })
     }
 }
 
