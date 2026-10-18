@@ -9,6 +9,7 @@
 //! `set_obstacles` (beyond their reserved capacity) are not and belong off the audio thread.
 
 use crate::ambisonics::{CHANNELS, ORDER};
+use crate::bed;
 use crate::binaural::BinauralDecoder;
 use crate::engine::BLOCK;
 use crate::hrtf::{self, HrirSet};
@@ -218,6 +219,7 @@ pub struct Acoustics {
     staged: Vec<bool>,
     reverb: ForestReverb,
     rotator: ShRotator,
+    bed: bed::BedDecoder,
     measured: Option<BinauralDecoder>,
     analytic: BinauralDecoder,
     active: HrtfModel,
@@ -326,6 +328,7 @@ impl Acoustics {
             staged: vec![false; emitters],
             reverb,
             rotator: ShRotator::new(),
+            bed: bed::BedDecoder::new(),
             measured,
             analytic,
             active: HrtfModel::Measured,
@@ -389,6 +392,12 @@ impl Acoustics {
         self.rebuild_geometry();
     }
 
+    /// Moves the listener's ears away from the rest position (head translation about the
+    /// neck, world frame, metres). Real-time safe; affects delays, directions and near field.
+    pub fn set_listener_offset(&mut self, offset: Vec3) {
+        self.ctx.listener = offset;
+    }
+
     /// Applies weather/ground/forest parameters. Cheap when nothing changed; real-time safe.
     pub fn set_environment(&mut self, env: &Environment) {
         let env = env.sanitized();
@@ -402,7 +411,7 @@ impl Acoustics {
         ctx.speed_of_sound = c as f32;
         ctx.nfc.set_speed_of_sound(c);
         ctx.ground = env.ground;
-        ctx.ground_z = ctx.listener.z - env.ear_height;
+        ctx.ground_z = -env.ear_height;
         let n = env.tree_density_per_ha as f64 / 10_000.0;
         for i in 0..NF {
             let f = ctx.design.freqs[i];
@@ -444,7 +453,7 @@ impl Acoustics {
     /// Trunks -> explicit obstacles near the listener + the early-reflection set.
     fn rebuild_geometry(&mut self) {
         let env = self.env.unwrap_or_default();
-        let gz = self.ctx.listener.z - env.ear_height;
+        let gz = -env.ear_height;
         if self.procedural {
             generate_forest(&mut self.trees, env.tree_density_per_ha as f64 / 10_000.0);
         }
@@ -502,6 +511,27 @@ impl Acoustics {
 
     /// Adds reverb, rotates the bus into the head frame (`head`: head -> world) and decodes.
     pub fn render(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], head: &Mat3, len: usize, left: &mut [f32], right: &mut [f32]) {
+        self.complete_world_bus(bus, len);
+        self.rotate_to_head(bus, head, len);
+        self.decode_binaural(bus, len, left, right);
+        self.block = self.block.wrapping_add(1);
+    }
+
+    /// Like `render`, but for an external binaural renderer (Apple's AUSpatialMixer with the
+    /// listener's personalised HRTF): decodes to a 7.1.4 loudspeaker bed (`bed::LAYOUT`).
+    /// `head` = Some: rotated by our head pose (the bed is head-locked); None: world-locked,
+    /// for a renderer that applies AirPods head tracking itself.
+    pub fn render_bed(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], head: Option<&Mat3>, len: usize, out: &mut [[f32; BLOCK]; bed::CHANNELS]) {
+        self.complete_world_bus(bus, len);
+        if let Some(h) = head {
+            self.rotate_to_head(bus, h, len);
+        }
+        self.bed.decode(bus, len, out);
+        self.block = self.block.wrapping_add(1);
+    }
+
+    /// Path filters (batched), near field, encode, reverb: the full world-frame bus.
+    fn complete_world_bus(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], len: usize) {
         // Path filters for all emitters, four paths per SIMD group, then near field + encode.
         for (id, staged) in self.staged.iter().enumerate() {
             if !*staged {
@@ -531,11 +561,17 @@ impl Acoustics {
         }
         self.sends.clear(len);
 
+    }
+
+    fn rotate_to_head(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], head: &Mat3, len: usize) {
         let m = head.m;
         let world_to_head = Mat3 { m: [[m[0][0], m[1][0], m[2][0]], [m[0][1], m[1][1], m[2][1]], [m[0][2], m[1][2], m[2][2]]] };
         let rot = self.rotator.matrix(&world_to_head);
         self.rotator.apply(bus, len, rot);
 
+    }
+
+    fn decode_binaural(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], len: usize, left: &mut [f32], right: &mut [f32]) {
         let want = match (self.env.map_or(HrtfModel::Measured, |e| e.hrtf), self.measured.is_some()) {
             (HrtfModel::Measured, true) => HrtfModel::Measured,
             _ => HrtfModel::Analytic,
@@ -562,7 +598,6 @@ impl Acoustics {
             }
             self.active = want;
         }
-        self.block = self.block.wrapping_add(1);
     }
 }
 
