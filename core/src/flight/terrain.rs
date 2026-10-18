@@ -273,7 +273,7 @@ impl Params {
         let p = (u / l + warp).rem_euclid(1.0) as f32;
         // Windward 0 .. 0.78 rises, the slip face falls in the last 22 %.
         let prof = if p < 0.78 { smoothstep(0.0, 0.78, p) } else { 1.0 - smoothstep(0.78, 1.0, p) };
-        let amp = 0.55 + 0.45 * fbm(s, 0xD02, x / (4.0 * l), y / (4.0 * l), 2).clamp(-1.0, 1.0);
+        let amp = 0.8 + 0.3 * fbm(s, 0xD02, x / (4.0 * l), y / (4.0 * l), 2).clamp(-1.0, 1.0);
         let draa = 0.6 * r.dunes * fbm(s, 0xD03, x / (8.0 * l), y / (8.0 * l), 2);
         r.dunes * amp.max(0.15) * prof.powf(1.3) + draa
     }
@@ -499,6 +499,18 @@ impl Sampler {
 mod tests {
     use super::*;
     use crate::flight::land::BIOMES;
+
+    /// `BIOME=6 cargo test --release print_profile -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn print_profile() {
+        let b = std::env::var("BIOME").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+        let mut s = Sampler::new(1, b, 1.0);
+        let mut out = vec![0.0f32; SAMPLE_FLOATS * 80];
+        s.grid(0.0, 0.0, 5.0, 80, 1, &mut out);
+        let line: Vec<String> = (0..80).map(|i| format!("{:.1}/{:.1}", out[SAMPLE_FLOATS * i], out[SAMPLE_FLOATS * i + 1].max(-9.0))).collect();
+        println!("{}", line.join(" "));
+    }
 
     #[test]
     fn noise_is_bounded_and_smooth() {

@@ -107,12 +107,25 @@ final class Stage {
         var c = camera
         let m = min(max(flight.mix, 0), 1)
         guard m > 0 else { return c }
-        let lift = min(0.5 + 0.012 * flight.altitude, 0.8)
+        let lift = min(0.2 + 0.006 * flight.altitude, 0.42)
         c.elevation += (max(c.elevation, lift) - c.elevation) * m
         c.target.x *= 1 - m
-        c.target.z -= 0.35 * flight.drop * m
+        c.target.z -= 0.55 * flight.drop * m
         // The relief runs on into the haze: see much further.
         c.far += 520 * m
+        // Never inside a hill: rise over the slopes between the camera and the herm.
+        if flight.active {
+            for _ in 0..<16 {
+                let e = c.eye
+                var clear = true
+                for t: Float in [1.0, 0.75, 0.5, 0.3] {
+                    let p = c.target + (e - c.target) * t
+                    if let g = terrain.height(p.x, p.y, water: true), p.z < g + 2.5 { clear = false; break }
+                }
+                if clear || c.elevation > 1.3 { break }
+                c.elevation += 0.06
+            }
+        }
         return c
     }
 

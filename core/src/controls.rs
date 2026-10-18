@@ -695,6 +695,10 @@ pub(crate) fn apply(world: &mut World, st: &ControlState, bases: &Bases) {
                         c.surface = p.surface;
                     }
                 }
+                // Below freezing the precipitation falls as snow (flight biomes may already say so).
+                if get(ENV_TEMPERATURE) < 0.0 {
+                    c.snow = 1.0;
+                }
                 c.gain = own.gain * get(RAIN_GAIN);
                 ModelConfig::Rain(c)
             }

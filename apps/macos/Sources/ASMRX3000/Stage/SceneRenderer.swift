@@ -119,17 +119,25 @@ final class SceneRenderer {
         guard let gA, let gB, let gDepth else { return }
 
         let cam = stage.viewCamera
+        // In flight the sun stands lower (the relief reads in raking light) and stays put in
+        // the world while the course turns under it.
+        var sunDir = Self.sun
+        if stage.flight.active {
+            let a = Float(stage.flight.frame.heading)
+            let w = simd_normalize(SIMD3<Float>(-0.62, 0.55, 0.42))
+            sunDir = SIMD3(cos(-a) * w.x - sin(-a) * w.y, sin(-a) * w.x + cos(-a) * w.y, w.z)
+        }
         let vp = cam.viewProjection(aspect: size.x / size.y)
         let proj = Projector(camera: cam, size: size)
         let time = Float(stage.time.truncatingRemainder(dividingBy: 3600))
         var u = FrameUniforms(
-            viewProj: vp, sunViewProj: Self.sunMatrix(),
+            viewProj: vp, sunViewProj: Self.sunMatrix(sunDir),
             cam: SIMD4(cam.eye, time),
             view: SIMD4(Float(target.width), Float(target.height), scale, cam.fovY / Float(target.height)),
             head: SIMD4(stage.headPose.yaw, 0, 0, stage.audio.isPlaying ? 1 : 0),
             counts: .zero,
             bracket: SIMD4(0, 0, -1, -1), hoverBracket: SIMD4(0, 0, -1, -1),
-            plumb: .zero, sun: SIMD4(Self.sun, 0),
+            plumb: .zero, sun: SIMD4(sunDir, 0),
             env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0),
             gaze: .zero, gazeHead: .zero, haze: .zero, listener: .zero, invViewProj: vp.inverse,
             world: .zero, precip: .zero, motion: .zero
@@ -243,7 +251,8 @@ final class SceneRenderer {
         }
         if flying {
             // The relief, near chunks first (they cover the far ones), then the water on it.
-            let chunks = stage.terrain.chunks.values.sorted { $0.key.level < $1.key.level }
+            // Far chunks fully covered by near ones are not drawn.
+            let chunks = stage.terrain.chunks.values.filter { !stage.terrain.covered($0) }.sorted { $0.key.level < $1.key.level }
             for c in chunks {
                 let m = stage.terrain.model(c)
                 if let g = c.groundMesh { list.append((g, Instance(model: m, info: Self.anchor(c), anim: .zero))) }
@@ -265,7 +274,11 @@ final class SceneRenderer {
             case UInt32(ASMR_OBJECT_TREE):
                 let names = ["broadleaf", "spruce", "broadleaf_b", "spruce_b"]
                 // Streamed trees keep their model by id; the scene's go in order.
-                let name = names[(flying ? Int(o.id % 4) : treeIndex) % names.count]
+                // Streamed trees: conifers (spruce, pine) or broadleaf by species (flags >> 8).
+                let species = Int(o.flags >> 8 & 15) - 1
+                let conifer = species == 2 || species == 6
+                let name = flying && species >= 0 ? (conifer ? ["spruce", "spruce_b"] : ["broadleaf", "broadleaf_b"])[Int(o.id % 2)]
+                    : names[(flying ? Int(o.id % 4) : treeIndex) % names.count]
                 treeIndex += 1
                 let r = simd_length(SIMD2(o.x, o.y))
                 if flying && r > FlightGround.reach { continue }
@@ -456,7 +469,7 @@ final class SceneRenderer {
     }
 
     /// Orthographic view from the sun over the whole disc.
-    static func sunMatrix() -> simd_float4x4 {
+    static func sunMatrix(_ sun: SIMD3<Float> = SceneRenderer.sun) -> simd_float4x4 {
         let e = sun * 40
         let f = simd_normalize(-e)
         let s = simd_normalize(simd_cross(f, SIMD3(0, 0, 1)))

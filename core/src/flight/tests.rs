@@ -422,3 +422,134 @@ fn streaming_survives_turning_around() {
     let mut src = [crate::SourceInfo::default(); 128];
     assert!(e.sources(&mut src) <= EMITTERS);
 }
+
+/// Finds seeds whose start shows the biome's water (snapshots for docs/world):
+/// `BIOME=sea_coast cargo test --release find_scenic_seeds -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn find_scenic_seeds() {
+    let biome = std::env::var("BIOME").unwrap_or_else(|_| "sea_coast".into());
+    for s in 0..30u32 {
+        let mut desc = SceneDesc::default_scene();
+        desc.flight = Some(FlightDesc { start: true, speed: Some(6.0), seed: Some(s), biome: Some(biome.clone()), stops: Some(0.0), ..Default::default() });
+        let e = Engine::with_scene(48_000.0, &desc).unwrap();
+        e.set_param(param::PLAYING, 1.0);
+        run(&e, 1.5);
+        let f = e.flight_frame().unwrap();
+        let mut sampler = terrain::Sampler::new(f.seed, f.biome, f.relief);
+        let mut out = vec![0.0f32; terrain::SAMPLE_FLOATS * 41 * 41];
+        sampler.grid(f.x - 50.0, f.y - 50.0, 2.5, 41, 41, &mut out);
+        let (mut wet, mut lo, mut hi) = (0, f32::MAX, f32::MIN);
+        for k in 0..41 * 41 {
+            let o = &out[k * terrain::SAMPLE_FLOATS..];
+            if o[1] > o[0] {
+                wet += 1;
+            }
+            lo = lo.min(o[0]);
+            hi = hi.max(o[0]);
+        }
+        println!("seed {s:>2}: wet {:>4}/1681  relief {:.1} m  ground {:.1}", wet, hi - lo, f.ground_z);
+    }
+}
+
+/// A land streamed around the origin (all tiles made).
+fn land_at(biome: &str, seed: u64, relief: f32) -> Land {
+    let mut l = Land::with_relief(seed, land::biome_index(biome).unwrap() as u32, relief);
+    l.stream(0.0, 0.0, usize::MAX);
+    l
+}
+
+#[test]
+fn hills_hide_and_muffle_sources() {
+    // Somewhere in the mountains a ridge stands between the listener and a source 150 m
+    // away: it takes the highs (knife edge over the crest) more than the lows.
+    let l = land_at("snowy_mountains", 3, 1.0);
+    let freqs = crate::shaping::grid_freqs(48_000.0);
+    let nf = crate::shaping::NF;
+    let (mut found, mut muffled) = (0, 0);
+    for k in 0..72 {
+        let a = k as f64 * core::f64::consts::TAU / 72.0;
+        let (sx, sy) = (150.0 * a.cos(), 150.0 * a.sin());
+        let lis = [0.0, 0.0, l.ground(0.0, 0.0) as f64 + 1.7];
+        let src = [sx, sy, l.ground(sx, sy) as f64 + 0.5];
+        let p = acoustic::terrain_path(&l, src, lis);
+        let mut db = [0.0f32; crate::shaping::NF];
+        p.loss_db(&freqs, 343.0, &mut db);
+        let (lo, hi) = (db[nf / 4], db[nf - 4]);
+        assert!(hi >= -25.0 - 1e-3 && lo >= -25.0 - 1e-3, "capped at 25 dB: {lo} {hi}");
+        if p.weight > 0.5 && hi < -12.0 {
+            found += 1;
+            if hi < lo - 3.0 {
+                muffled += 1;
+            }
+        }
+    }
+    assert!(found > 3 && muffled > 0, "{found} hidden paths in the mountains, {muffled} muffled");
+    // On flat ground nothing hides a source at ear height.
+    let m = land_at("meadows", 3, 0.0);
+    let p = acoustic::terrain_path(&m, [120.0, 10.0, m.ground(120.0, 10.0) as f64 + 1.5], [0.0, 0.0, m.ground(0.0, 0.0) as f64 + 1.7]);
+    let mut db = [0.0f32; crate::shaping::NF];
+    p.loss_db(&freqs, 343.0, &mut db);
+    assert!(db.iter().all(|v| *v > -1.0), "flat ground hides: {:?}", &db[30..]);
+}
+
+#[test]
+fn valleys_answer_and_plains_are_open() {
+    let enclosure = |biome: &str, seed: u64| {
+        let l = land_at(biome, seed, 1.0);
+        let mut e = acoustic::Echoes::new(48_000.0);
+        let (mut enc, mut echoes) = (0.0f32, 0);
+        for k in 0..9 {
+            let (x, y) = (((k % 3) as f64 - 1.0) * 60.0, ((k / 3) as f64 - 1.0) * 60.0);
+            e.scan(&l, x, y, l.ground(x, y) + 1.7, 0.0, 1.0);
+            enc += e.enclosure / 9.0;
+            echoes += e.found.iter().filter(|r| r.gain > 0.0).count();
+        }
+        (enc, echoes)
+    };
+    let (mountains, echoes) = enclosure("snowy_mountains", 5);
+    let (meadows, _) = enclosure("meadows", 5);
+    eprintln!("enclosure: mountains {mountains:.3} ({echoes} echoes), meadows {meadows:.3}");
+    assert!(mountains > 2.0 * meadows + 0.02, "mountains {mountains} meadows {meadows}");
+    assert!(echoes > 3, "{echoes} echoes in the mountains");
+}
+
+#[test]
+fn flight_stops_at_places_and_flies_on() {
+    let mut desc = SceneDesc::default_scene();
+    desc.flight = Some(FlightDesc { start: true, speed: Some(10.0), seed: Some(29), biome: Some("lake_shore".into()), stops: Some(1.0), ..Default::default() });
+    let e = Engine::with_scene(48_000.0, &desc).unwrap();
+    e.set_param(param::PLAYING, 1.0);
+    let (mut stopped, mut resumed) = (false, false);
+    for _ in 0..150 {
+        run(&e, 1.0);
+        let f = e.flight_frame().unwrap();
+        let v = e.telemetry(telemetry::FLIGHT_SPEED);
+        if f.linger > 0.9 && v < 0.2 {
+            stopped = true;
+        }
+        if stopped && v > 5.0 {
+            resumed = true;
+            break;
+        }
+    }
+    assert!(stopped && resumed, "stopped {stopped} resumed {resumed}");
+}
+
+#[test]
+fn frame_tells_the_ui_where_and_what() {
+    let mut desc = SceneDesc::default_scene();
+    desc.flight = Some(FlightDesc { start: true, speed: Some(8.0), biome: Some("desert".into()), stops: Some(0.0), ..Default::default() });
+    let e = Engine::with_scene(48_000.0, &desc).unwrap();
+    e.set_param(param::PLAYING, 1.0);
+    run(&e, 3.0);
+    let f = e.flight_frame().unwrap();
+    assert_eq!(f.biome as usize, land::biome_index("desert").unwrap());
+    assert!(f.sand_cover > 0.5 && f.snow_cover == 0.0);
+    assert!(f.ear_z > f.ground_z && (f.x * f.x + f.y * f.y).sqrt() > 10.0);
+    // The UI's sampler sees the same ground the engine flies over.
+    let mut s = terrain::Sampler::new(f.seed, f.biome, f.relief);
+    let mut out = [0.0f32; terrain::SAMPLE_FLOATS];
+    s.grid(f.x, f.y, 1.0, 1, 1, &mut out);
+    assert!((out[0].max(out[1]) - f.ground_z).abs() < 0.6, "sampler {} engine {}", out[0], f.ground_z);
+}

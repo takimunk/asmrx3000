@@ -18,7 +18,7 @@ final class FlightTerrain {
         /// Far chunks sit a little lower so the near ones cover them where both exist.
         let sink: Float
     }
-    static let levels = [Level(size: 40, step: 2.5, radius: 115, sink: 0), Level(size: 160, step: 10, radius: 560, sink: 1.2)]
+    static let levels = [Level(size: 40, step: 2.5, radius: 115, sink: 0), Level(size: 160, step: 10, radius: 560, sink: 0.35)]
 
     struct Key: Hashable { var level: Int; var i: Int; var j: Int }
 
@@ -157,8 +157,11 @@ final class FlightTerrain {
                 guard level > -1e8 else { continue }
                 let base = UInt32(wv.count)
                 for (ci, cj) in corners {
-                    var v = MeshVertex(SIMD3(Float(ci) * step, Float(cj) * step, level), SIMD3(flow.x, flow.y, kind), Part.water)
-                    v.pad = level - at(ci, cj, 0)
+                    // Each wet vertex at its own level (shared with the next cell: no steps).
+                    let w = at(ci, cj, 1)
+                    let z = w > at(ci, cj, 0) ? w : level
+                    var v = MeshVertex(SIMD3(Float(ci) * step, Float(cj) * step, z), SIMD3(flow.x, flow.y, kind), Part.water)
+                    v.pad = z - at(ci, cj, 0)
                     wv.append(v)
                 }
                 wi += [base, base + 1, base + 2, base, base + 2, base + 3]
@@ -166,6 +169,18 @@ final class FlightTerrain {
         }
         let waterMesh = wv.isEmpty ? nil : Mesh.make(wv, wi)
         return Chunk(key: key, origin: origin, n: n, step: step, ground: ground, water: water, groundMesh: groundMesh, waterMesh: waterMesh)
+    }
+
+    /// A far chunk whose whole area is drawn by near chunks.
+    func covered(_ c: Chunk) -> Bool {
+        guard c.key.level == 1 else { return false }
+        let k = Int(Self.levels[1].size / Self.levels[0].size)
+        for a in 0..<k {
+            for b in 0..<k where chunks[Key(level: 0, i: c.key.i * k + a, j: c.key.j * k + b)] == nil {
+                return false
+            }
+        }
+        return true
     }
 
     /// Model matrix of a chunk in the travel frame (ears at the origin).

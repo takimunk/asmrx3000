@@ -66,6 +66,9 @@ fn flight_render_does_not_allocate() {
             // Control changes are lock-free stores; a reseed rebuilds the landscape in place.
             engine.set_control(id::FLIGHT_SEED, 9.0);
             engine.set_control(id::FLIGHT_SPEED, 25.0);
+            // ... and a new biome with relief, sea and surf (terrain caches refill in place).
+            engine.set_control(id::FLIGHT_BIOME, 9.0);
+            engine.set_control(id::FLIGHT_STOPS, 1.0);
         }
         engine.render(&mut l, &mut r);
     }

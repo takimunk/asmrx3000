@@ -1569,7 +1569,7 @@ impl Flight {
                 if tr.rank < tree_rank {
                     let r = self.rel(tr.x, tr.y, 0.0);
                     if r.x * r.x + r.y * r.y < radius * radius {
-                        snap.object(ObjectInfo { id: tr.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: tr.ground - self.pose.ear, flags: 0 });
+                        snap.object(ObjectInfo { id: tr.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: tr.ground - self.pose.ear, flags: (tr.species as u32 + 1) << 8 });
                     }
                 }
             }
