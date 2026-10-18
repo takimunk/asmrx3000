@@ -46,6 +46,9 @@ pub struct SceneDesc {
     #[serde(default)]
     pub director: DirectorDesc,
     pub entities: Vec<EntityDesc>,
+    /// Flight mode settings (docs/flight-mode.md); `"start": true` begins in the air.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flight: Option<crate::flight::FlightDesc>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -436,6 +439,10 @@ pub enum ObjectKind {
     Bird = 2,
     /// A generic physical source (`EntityDesc::Source`).
     Source = 3,
+    /// Flight mode: a lake (shape = shore outline).
+    Lake = 4,
+    /// Flight mode: a boulder or a ridge (shape = ridge line); z = its top.
+    Rock = 5,
 }
 
 pub mod object_flags {

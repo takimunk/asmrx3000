@@ -31,6 +31,8 @@ pub mod group {
     pub const ENVIRONMENT: u32 = 6;
     pub const INSECTS: u32 = 7;
     pub const FIRE: u32 = 8;
+    /// Flight mode (flight/): speed, altitude, path, landscape.
+    pub const FLIGHT: u32 = 9;
 }
 
 /// Mirrors `ASMR_CONTROL_FLAG_*`.
@@ -111,6 +113,13 @@ pub mod id {
     pub const FIRE_HEAT: u32 = 900;
     pub const FIRE_MOISTURE: u32 = 901;
     pub const FIRE_RESIN: u32 = 902;
+    pub const FLIGHT_SPEED: u32 = 1000;
+    pub const FLIGHT_ALTITUDE: u32 = 1001;
+    pub const FLIGHT_CURVINESS: u32 = 1002;
+    pub const FLIGHT_BIOME: u32 = 1003;
+    pub const FLIGHT_DENSITY: u32 = 1004;
+    pub const FLIGHT_SEED: u32 = 1005;
+    pub const FLIGHT_AIRFLOW: u32 = 1006;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,7 +156,7 @@ use flags::{DISCRETE as D, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 36;
+const N: usize = 43;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -186,6 +195,13 @@ static DEFS: [Def; N] = [
     def(FIRE_HEAT, g::FIRE, NO_PARENT, M | L, 1.0, 1000.0, "fire.heat", "kW", Store::Local),
     def(FIRE_MOISTURE, g::FIRE, FIRE_HEAT, 0, 0.02, 0.6, "fire.moisture", "", Store::Local),
     def(FIRE_RESIN, g::FIRE, FIRE_HEAT, 0, 0.0, 1.0, "fire.resin", "", Store::Local),
+    def(FLIGHT_SPEED, g::FLIGHT, NO_PARENT, M, 0.0, 25.0, "flight.speed", "m/s", Store::Local),
+    def(FLIGHT_ALTITUDE, g::FLIGHT, FLIGHT_SPEED, L, 1.2, 40.0, "flight.altitude", "m", Store::Local),
+    def(FLIGHT_CURVINESS, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 1.0, "flight.curviness", "", Store::Local),
+    def(FLIGHT_BIOME, g::FLIGHT, FLIGHT_SPEED, D, 0.0, (crate::flight::land::BIOMES.len() - 1) as f32, "flight.biome", "", Store::Local),
+    def(FLIGHT_DENSITY, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 2.0, "flight.density", "", Store::Local),
+    def(FLIGHT_SEED, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 999.0, "flight.seed", "", Store::Local),
+    def(FLIGHT_AIRFLOW, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 3.0, "flight.airflow", "", Store::Local),
 ];
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -202,6 +218,7 @@ pub fn option_name(id: u32, i: u32) -> Option<&'static str> {
         WIND_CHARACTER => Wind::PRESETS,
         RAIN_SURFACE => Rain::PRESETS,
         ENV_SEASON => return SEASONS.get(i).copied(),
+        FLIGHT_BIOME => return crate::flight::land::BIOMES.get(i).map(|b| b.name),
         _ => return None,
     };
     if i == 0 {
@@ -266,6 +283,13 @@ impl Bases {
 /// Discharge ratio for the WATER macro: 0.6 = as built, quadratic so the slider is even.
 pub fn discharge_ratio(flow: f32) -> f32 {
     (flow.max(0.0) / 0.6).powi(2)
+}
+
+/// Flight altitude (ears above the ground) that suits a speed: walking height at a stroll,
+/// between the trunks under the crowns at a run, just above the canopy (~20 m) in fast
+/// flight, where nearby trunks would pass too fast to avoid.
+pub fn flight_altitude(speed: f32) -> f32 {
+    1.7 + 18.3 * smoothstep(4.0, 22.0, speed)
 }
 
 /// Diurnal cycle shape, 1 at 15:00, −1 at 03:00.
@@ -345,6 +369,11 @@ impl ControlBank {
             FIRE_HEAT => b.fire.heat_kw,
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
+            FLIGHT_SPEED => 6.0,
+            FLIGHT_ALTITUDE => flight_altitude(6.0),
+            FLIGHT_CURVINESS => 0.35,
+            FLIGHT_BIOME | FLIGHT_SEED => 0.0,
+            FLIGHT_DENSITY | FLIGHT_AIRFLOW => 1.0,
             _ => 0.0,
         }
     }
@@ -392,6 +421,7 @@ impl ControlBank {
             ENV_HUMIDITY => (b.humidity - 0.15 * (diurnal(get(ENV_TIME)) - diurnal(b.hour))).clamp(0.0, 1.0),
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
+            FLIGHT_ALTITUDE => flight_altitude(get(FLIGHT_SPEED)),
             _ => return None,
         })
     }
@@ -548,7 +578,7 @@ pub fn options(id: u32) -> Vec<&'static str> {
 }
 
 pub fn group_name(g: u32) -> &'static str {
-    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire"].get(g as usize).copied().unwrap_or("other")
+    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight"].get(g as usize).copied().unwrap_or("other")
 }
 
 /// Number of controls.

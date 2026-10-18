@@ -37,6 +37,9 @@ final class SceneRenderer {
     private var terrain: Mesh?
     private var terrainRiver: [SIMD4<Float>] = []
     private let pole: Mesh?
+    /// Flight mode: the scrolling ground (rebuilt every frame) and a boulder.
+    private var flightGround: Mesh?
+    private let boulder = FlightGround.makeBoulder()
     private var data = [SIMD4<Float>](repeating: .zero, count: 48)
     private var lastBird: [UInt32: SIMD3<Float>] = [:]
     private var heading: [UInt32: Float] = [:]
@@ -92,7 +95,9 @@ final class SceneRenderer {
     func encode(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float) {
         ensureTargets(width: target.width, height: target.height)
         let river = stage.riverPoints()
-        if terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
+        if stage.flight.active {
+            flightGround = FlightGround.build(stage.flight)
+        } else if terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
             terrain = TerrainMesh.build(river: river)
             terrainRiver = river
         }
@@ -206,7 +211,16 @@ final class SceneRenderer {
         for (i, p) in river.prefix(8).enumerated() { data[i] = p }
         for i in 0..<64 { data[16 + i / 4][i % 4] = stage.wind[i] }
 
-        if let terrain {
+        let flight = stage.flight
+        let flying = flight.active
+        // In flight the ground sits `drop` below the herm, which flies at the altitude.
+        func ground(_ x: Float, _ y: Float) -> Float {
+            flying ? FlightGround.height(x, y, odometer: flight.odometer) - flight.drop : Terrain.height(x, y)
+        }
+        if flying, let flightGround {
+            let m = Self.transform(SIMD3(0, 0, -flight.drop), yaw: 0, scale: 1)
+            list.append((flightGround, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
+        } else if let terrain {
             list.append((terrain, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, flags(.river), 0, 0), anim: .zero)))
         }
 
@@ -218,17 +232,29 @@ final class SceneRenderer {
             switch o.kind {
             case UInt32(ASMR_OBJECT_TREE):
                 let names = ["broadleaf", "spruce", "broadleaf_b", "spruce_b"]
-                let name = names[treeIndex % names.count]
+                // Streamed trees keep their model by id; the scene's go in order.
+                let name = names[(flying ? Int(o.id % 4) : treeIndex) % names.count]
                 treeIndex += 1
+                let r = simd_length(SIMD2(o.x, o.y))
+                if flying && r > Terrain.radius - 0.3 { continue }
                 guard let mesh = lib[name] else { continue }
-                let g = Terrain.height(o.x, o.y)
+                let g = ground(o.x, o.y)
                 let crown: Float = name.hasPrefix("spruce") ? 3.6 : 4.2
-                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown
+                // Streamed trees rise out of the disc's rim and sink back into it behind.
+                let rim: Float = flying ? min(max((Terrain.radius - 0.3 - r) / 1.6, 0), 1) : 1
+                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown * (0.25 + 0.75 * rim)
                 let wind = localWind(o.y)
                 let m = Self.transform(SIMD3(o.x, o.y, g), yaw: Float(o.id) * 1.3, scale: s) * Self.slender
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id), flags(.object(o.id)), wind * 0.55, 6.6),
                                             anim: SIMD4(0, Float(o.id), wind, 1))))
+            case UInt32(ASMR_OBJECT_ROCK) where flying:
+                let g = ground(o.x, o.y)
+                guard let boulder, simd_length(SIMD2(o.x, o.y)) < Terrain.radius - 0.8 else { continue }
+                let radius = min(max((o.z + flight.altitude) / 1.4, 0.4), 2.0)
+                let m = Self.transform(SIMD3(o.x, o.y, g - 0.15), yaw: Float(o.id % 7), scale: radius)
+                list.append((boulder, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
             case UInt32(ASMR_OBJECT_BIRD):
+                if flying && simd_length(SIMD2(o.x, o.y)) > Terrain.radius + 1 { continue }
                 // The bird's voice is the bird source closest to it.
                 let level = stage.sources.filter { $0.kind == .bird }
                     .min { simd_distance($0.world, p) < simd_distance($1.world, p) }?.level ?? 0
@@ -246,9 +272,9 @@ final class SceneRenderer {
                 let wing: Float = moving ? sin(time * 14 + Float(o.id)) * 0.85 : 0
                 let m = Self.transform(p, yaw: h, scale: Self.birdScale)
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id) + 1000, flags(.object(o.id)), 0, 0), anim: SIMD4(wing, 0, 0, 0))))
-                if !moving, let pole {
+                if !moving, !flying, let pole {
                     // A dead snag to perch on, with one twig.
-                    let g = Terrain.height(o.x, o.y)
+                    let g = ground(o.x, o.y)
                     let top = o.z - 0.1 * Self.birdScale
                     let snag = Self.transform(SIMD3(o.x, o.y, g - 0.2), yaw: 0, scale: 1) * Self.scaleMatrix(SIMD3(0.07, 0.07, top - g + 0.2))
                     let twig = Self.transform(SIMD3(o.x - 0.05, o.y, top - 0.05), yaw: h + 0.4, scale: 1)
@@ -268,7 +294,7 @@ final class SceneRenderer {
                 break
             }
         }
-        for (x, y, s, name) in Self.grove {
+        for (x, y, s, name) in Self.grove where !flying {
             guard let mesh = lib[name] else { continue }
             let wind = localWind(y)
             let m = Self.transform(SIMD3(x, y, Terrain.height(x, y)), yaw: x * 0.7 + y, scale: s) * Self.slender
@@ -279,7 +305,7 @@ final class SceneRenderer {
             let m = Self.transform(SIMD3(0, 0, 0), yaw: stage.headPose.yaw, scale: Self.hermScale)
             list.append((herm, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
         }
-        if let ruin = lib["ruin"] {
+        if !flying, let ruin = lib["ruin"] {
             let r = Self.ruin
             let m = Self.transform(SIMD3(r.x, r.y, Terrain.height(r.x, r.y) - 0.05), yaw: 0.4, scale: 1)
             list.append((ruin, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
