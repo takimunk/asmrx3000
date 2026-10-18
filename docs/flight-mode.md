@@ -4,8 +4,8 @@ The listener travels forward through an endless, procedurally generated landscap
 landscape is rigid and the listener moves through it, so the spatial engine produces
 everything that makes motion feel real: Doppler shift, parallax, sounds approaching and
 receding, occlusion that changes as trunks pass, and a ground effect that changes with
-altitude and terrain. With AirPods head tracking, the soundscape stays put in the world
-while you turn your head, and streams past you at the flight speed.
+altitude and terrain. With AirPods, the flight goes where you look: turn your head and the
+course turns that way, while the soundscape stays put in the world around your head.
 
 Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI hand-over,
 `airflow.rs` wind noise of motion, `tests.rs`), plus `core/tests/flight_alloc.rs` and
@@ -16,9 +16,11 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 
 * **App**: the flight button in the transport row (the `flight` pictogram, next to play)
   toggles the mode, with a 1.5 s cross-fade. The **FLIGHT** group in the tracks has the speed
-  macro and its children. The diorama shows the streamed landscape around the herm: trees
-  rise from the rim and pass the herm, brooks and lakes cross the disc, the ground relief
-  scrolls with the distance flown, and the ground sinks below the herm as it climbs.
+  macro and its children. The view shows the streamed landscape around the herm in the
+  travel frame (it always looks along the course): trees grow in at the edge of the haze and
+  pass the herm, brooks and lakes cross the ground, the ground relief is anchored to the
+  world (it slides and turns under the herm as the course does), and the ground sinks
+  below the herm as it climbs.
 * **C ABI** (`asmr.h`): `ASMR_PARAM_FLIGHT` (44; 0/1), controls `ASMR_CONTROL_FLIGHT_*` in
   `ASMR_GROUP_FLIGHT`, telemetry `ASMR_TELEMETRY_FLIGHT*`, object kinds `ASMR_OBJECT_LAKE`
   and `ASMR_OBJECT_ROCK`, and `asmr_get_object_path` for river, lake and ridge shapes.
@@ -29,8 +31,9 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
   ```
   `"start": false` only presets the controls.
 * **Offline**: `cargo run --release --manifest-path core/Cargo.toml --example flight -- [seconds] [out_dir] [speeds] [biome] [seed]`
-  renders one binaural WAV per speed plus an accelerate-and-slow-down tour, and prints CPU,
-  RMS and what is around every 10 s.
+  renders one binaural WAV per speed, an accelerate-and-slow-down tour, and a `steer` take
+  at 10 m/s steered by a simulated head (left, right, then turning around), and prints CPU,
+  RMS, heading and what is around every 10 s.
 
 ### Controls (group FLIGHT)
 
@@ -38,14 +41,16 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 |---|---|---|---|---|
 | 1000 | `flight.speed` (macro) | 0..25 m/s | 6 | walk 1.5, run 5, glide 12, fast flight 25; the actual speed ramps at 2.5 m/s² |
 | 1001 | `flight.altitude` | 1.2..40 m (log) | follows speed | ears above the ground. Follows the speed: 1.7 m walking, under the crowns at a run, about 20 m (above the canopy) in fast flight. Gentle swells of up to ±12 % above walking height |
-| 1002 | `flight.curviness` | 0..1 | 0.35 | path curvature; 1 = turn radius 250 m. Applies to the path being laid down ~200 m ahead |
+| 1002 | `flight.curviness` | 0..1 | 0.35 | how much the course wanders when not steered by head; 1 = turn radius 250 m |
 | 1003 | `flight.biome` | preset | mixed | mixed, broadleaf, taiga, river_valley, meadows, highlands |
 | 1004 | `flight.density` | 0..2 | 1 | trees and stands; takes effect immediately (thins or fills the generated forest) |
 | 1005 | `flight.seed` | 0..999 | 0 | another landscape |
 | 1006 | `flight.airflow` | 0..3 | 1 | wind noise of motion at the ears (1 = physical, subtle) |
+| 1007 | `flight.steer_by_head` | preset | yaw | off, yaw (fly where you look), yaw_pitch (also climb and dive with the head); live only while AirPods poses arrive |
+| 1008 | `flight.turn_rate` | 5..90 °/s | 30 | fastest turn when steering by head, reached with the head ~43° off course |
 
 A new biome or seed fades every voice out (0.8 s), regenerates the landscape around the
-listener and fades the new one in. The path, and so the direction you are flying, continues.
+listener and fades the new one in. Your position and heading carry on.
 
 Weather and time of day (rain, wind, storm, temperature, season, hour) and the scene's
 macros (wind speed, foliage, water flow, birds, insects, fire) apply to everything generated,
@@ -53,60 +58,82 @@ as in the scene.
 
 ## The landscape (`land.rs`)
 
-Everything is generated in the **path frame** (s = distance along the flight path, u =
-lateral offset, + left) and mapped once, at generation, into a flat world frame through the
-path's centre line. The path is integrated from a smooth curvature κ(s), the sum of three
-sines (530, 310 and 170 m), scaled by curviness at the time the path is laid down. Changing
-curviness changes the turn rate, never the heading, so the path never kinks.
+The landscape is a **pure function of (seed, biome, place)** over the plane. Hashes, not a
+running RNG, decide every choice, so the trajectory and the order and timing of generation
+never change what stands where. A test flies to the same point straight and by a 2 km loop
+from the other side, and compares it tree by tree.
 
-Content is a **pure function of (seed, biome, chunk or bin index)**. Hashes, not a running
-RNG, decide every choice, so the order and timing of generation never change what exists.
-The tests stream the same landscape in uneven steps and compare it tree by tree.
+It is streamed **in 2D around the listener**, whichever way it flies:
 
-* **Chunks** of 32 m along s exist from 70 m behind to 210 m ahead of the listener (the
-  propagators carry ~235 m of delay). Each holds:
-  * **trees** within |u| < 60 m on a jittered 2.5 m grid, accepted with the local forest
-    cover. Cover is two octaves of value noise at the biome's stand scale (140..220 m),
-    thresholded to the biome's forest share. Species come from the biome's weights, tilted
-    by local groves and by water (willow and alder along banks). Each tree has a crown height
-    and radius, a trunk radius and a rank. Trees are generated at twice the biome density,
-    and the `density` control keeps those with `rank < density / 2`. A 3.5 m corridor along
-    the path stays free of trunks.
-  * **aggregate cells**: seven lateral bands (±140 m) with crown area tabulated at eight
-    density levels. The inner bands are summed from the trees; the outer ones are
-    integrated from the cover field.
-  * **birds** in the trees (species by tree: conifers chaffinch, robin, sometimes a tawny owl;
-    oaks wood pigeon and song thrush; willow and alder nightingales; cuckoos at edges),
-    boulders, and cricket or grasshopper meadows in the open.
-* **Features**, in bins along s:
-  * **rivers and brooks** cross the path every `river_every` m (170..480 by biome), at up
-    to ±37° with meanders. They come as brook over pebbles, rocky brook or slow river, with
-    water sites every 10 m along the bed and riffle/pool variation.
-  * **lakes**: beside the path, or across it (then you fly over water), with lapping sites
-    along the shore.
-  * **ridges**: walls 4..12 m high and 60..160 m long beside the path, sometimes with a
-    **waterfall**.
-  * **campfires**: in the most open spot nearby.
+* **Tiles** (40 m squares) exist within 240 m of the listener (the propagators carry
+  ~235 m of delay) and are retired beyond 280 m. Each tile holds:
+  * an **aggregate cell**: its crown area, integrated from the cover field and tabulated at
+    eight density levels, with the dominant species;
+  * **boulders** in rocky country, and a cricket or grasshopper **meadow** in the open.
+* Within 90 m (dropped beyond 120 m), a tile also holds its **trees** and the **birds** in them:
+  * Trees stand on a jittered 2.5 m grid, accepted with the local forest cover. Cover is
+    two octaves of value noise at the biome's stand scale (140..220 m), thresholded to the
+    biome's forest share.
+  * Species come from the biome's weights, tilted by local groves and by water (willow and
+    alder along banks).
+  * Each tree has a crown height and radius, a trunk radius and a rank. Trees are generated
+    at twice the biome density, and the `density` control keeps those with
+    `rank < density / 2`.
+  * Birds by tree: conifers chaffinch, robin, sometimes a tawny owl; oaks wood pigeon and song
+    thrush; willow and alder nightingales; cuckoos at edges.
+* **Macro cells** (360 m) exist within 800 m and hold the big features:
+  * **brooks and rivers**: on average one per `river_every` m of travel (170..480 by biome),
+    430 m long, any direction, meandering. They come as brook over pebbles, rocky brook or
+    slow river, with water sites every 15 m and riffle/pool variation.
+  * **lakes** (rotated ellipses) with lapping sites along the shore.
+  * **ridges**: walls 4..12 m high and 60..160 m long, sometimes with a **waterfall**.
+  * **campfires**: in the most open spot of a few.
 
-  Features carve the forest: no trees in water, on ridges or around a camp.
+  Every feature that can reach a tile exists before the tile is made. Features carve the
+  forest: no trees in water, on ridges or around a camp.
 * The six **biomes** differ in forest share, stand density and scale, species, and how often
   water, rock, falls and camps appear (`land::BIOMES`).
 
-Storage is fixed-capacity rings (6144 trees, 16 chunks, 128 features, 256 sites, 256 birds),
-allocated when flight mode is built. Streaming generates at most one chunk per audio block
-(mean 0.1 µs per block, worst 150 µs for a whole chunk) and never allocates.
+Storage is toroidal: 16 × 16 tile slots with 320 trees and 16 birds each, and 8 × 8 macro
+slots with 8 features and 96 sites each, indexed by coordinates modulo the ring. It is
+allocated once when flight mode is built, so turning around, circling or flying anywhere
+keeps the amount of content bounded and never allocates.
 
-## Motion
+Streaming makes at most one tile and one tree set per audio block: mean ≈1 µs, worst
+≈60 µs per block at 25 m/s. After a reseed it makes six per block while the voices fade in.
 
-The listener moves along the path at the flight speed, rate-limited to 2.5 m/s². Altitude is
-smoothed over 2.5 s and swells gently above walking height. Every emitter is placed
-listener-relative each block, and the propagation gets its exact relative velocity:
+## Motion and steering
+
+The listener moves at the flight speed, rate-limited to 2.5 m/s², along its **heading**,
+which integrates a turn rate ω:
+
+* **Steering by head** (`flight.steer_by_head` = yaw, the default; live while AirPods poses
+  arrive through `asmr_set_head_pose`). The input is the head yaw relative to the course,
+  taken from the same predicted, smoothed head pose the audio is rendered with, so motion and
+  sound agree.
+  * The yaw is smoothed further (0.35 s), so jitter and quick glances do not wobble the flight.
+  * Within ±8° of straight ahead the course holds.
+  * Beyond that the turn rate grows linearly and reaches `flight.turn_rate` (30 °/s default)
+    with the head ~43° off course.
+  * ω is slew-limited to 0.8 rad/s², so turns build up and ease off like a glider's.
+
+  It is rate control: a sustained look keeps turning you; look ahead again to hold the new
+  course. With `yaw_pitch`, looking up climbs and looking down dives (up to 0.45·v m/s at
+  ~43°), on top of the altitude control. The offset relaxes back over 6 s when pitch steering
+  is off.
+* **Otherwise** (off, or no head tracking): the course wanders by `flight.curviness` along a
+  smooth curvature, three slow sines over the distance flown (530, 310, 170 m; turn radius
+  250 m at curviness 1). The head only looks around.
+
+Altitude is smoothed over 2.5 s and swells gently above walking height. Every emitter is
+placed listener-relative (travel frame, +x = where you fly) each block, and the propagation
+gets its exact relative velocity:
 
   v_rel = (−v + ω·y, −ω·x, −climb) + R(−heading)·v_own
 
-where ω = κ(s)·v is the turn rate. So Doppler, parallax and approach/recede come from the
-propagation itself (retarded-time delay lines), not from an effect. Turning rotates the
-whole field around the listener. Head tracking rotates the head within that frame.
+So Doppler, parallax, approach/recede, and the whole field swinging round in a turn come from
+the propagation itself (retarded-time delay lines), not from an effect. Head tracking rotates
+the head within the travel frame, and the predicted pose's neck parallax applies here too.
 
 The acoustic environment follows the ground under the listener:
 * **ear height** = altitude, so the ground reflection (image source) changes as you climb.
@@ -184,13 +211,15 @@ decoder. `flight.airflow` scales it (0 = off).
 
 * `Engine::set_param(FLIGHT, 1)` builds the flight pack once, on the calling thread
   (~100 ms: 50 generators including the neural voices, a second `Acoustics` with its own
-  propagators, reverb and HRTF decoders, and the first 280 m of landscape). It hands the pack
+  propagators, reverb and HRTF decoders, and the landscape within 240 m). It hands the pack
   over through an `AtomicPtr`; the audio thread takes it at the next block. The pack lives
   until the engine is dropped, so leaving and re-entering flight continues the journey. A
   scene with a `flight` block builds it in `Engine::with_scene`.
 * The audio thread cross-fades scene and flight (equal power, 1.5 s). While fully in flight,
   the scene's emitters are not rendered; the director keeps stepping, so the weather is
   shared.
+* With `Engine::render_bed` (7.1.4 for an external binaural renderer), the flight is
+  decoded into the bed too.
 * Objects for the UI go through a seqlock bridge (`bridge.rs`, fixed arrays of atomics):
   * up to 256 objects: features and birds first, then the nearest trees that fit (the radius
     comes from a distance histogram);
@@ -198,8 +227,8 @@ decoder. `flight.airflow` scales it (0 = off).
 
   Ids (≥ 0x40000000) are stable while an object exists. `asmr_get_objects` switches to the
   streamed objects at cross-fade 0.5.
-* `core/tests/flight_alloc.rs` runs 40 s of flight (20 m/s, highlands, rain, birds, a reseed
-  and a speed change half way) under a counting global allocator: **zero allocations or
+* `core/tests/flight_alloc.rs` runs 40 s of flight (20 m/s, highlands, rain, birds, steering
+  by head through two U-turns, a reseed and a speed change half way) under a counting global allocator: **zero allocations or
   frees** on the render thread.
 
 ## Measurements
@@ -209,30 +238,33 @@ Apple Silicon, release build, 48 kHz, 512-frame callbacks, single thread, 60 s e
 
 | take | CPU % of one core | RMS dBFS | peak |
 |---|---|---|---|
-| 1.5 m/s | 5.4 | -27.3 | 0.53 |
-| 6 m/s | 6.8 | -27.2 | 0.62 |
-| 12 m/s | 7.4 | -30.5 | 0.35 |
-| 25 m/s | 6.5 | -29.3 | 0.48 |
-| tour (walk → 25 m/s → 6 m/s) | 6.6 | -29.8 | 0.45 |
-| river_valley, 10 m/s (before the merge with main) | 6.2 | -29.5 | 0.49 |
+| 1.5 m/s | 7.1 | -26.9 | 0.47 |
+| 6 m/s | 8.0 | -25.9 | 0.66 |
+| 12 m/s | 8.9 | -27.0 | 0.72 |
+| 25 m/s | 7.9 | -27.9 | 0.55 |
+| tour (walk → 25 m/s → 6 m/s) | 8.4 | -28.8 | 0.42 |
+| steer (10 m/s, head left / right / over the shoulder) | 9.9 | -26.2 | 0.53 |
 
 For comparison, the scene alone (forest by the river, 30 s, `--example render`):
 RMS −31.7 dBFS, peak −12.6 dBFS, DSP load 4.1 %. Flight is a few dB louder (it is a whole
 forest, not eight trees in a clearing) and costs more because ~40 voices are awake instead
-of ~25. The speed-dependent part is the propagators refitting their spectra as their paths
+of ~25. Since the 2D world, there is content on every side (more birds, meadows and boulders
+within reach), which costs about 1.5 % more than the earlier path-only landscape. Profile:
+the propagation and its reverb and HRTF decoding and the foliage and water generators
+dominate; streaming, level of detail and publishing are about 8 % of the flight's time. The speed-dependent part is the propagators refitting their spectra as their paths
 change.
 
 Demo takes are not in git: `--example flight` writes the WAVs to `build/flight/`
 (`afconvert -f m4af -d aac -b 256000` makes small AAC copies for listening). The snapshot
-`docs/flight/snapshot-flight.jpg` shows the app in flight at 6 m/s, just after a brook crossing
-(`ASMRX3000 --snapshot out.png --flight 6 --select none --expand flight.speed`); with
-`--flight 8 --seed 2` it flies over a lake.
+`docs/flight/snapshot-flight.jpg` shows the app at 10 m/s steered by a head held 45° to
+the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --expand flight.speed`;
+`--steer` feeds an AirPods-like head pose, `--seed n` picks another landscape).
 
 ## Tests
 
 `cargo test --manifest-path core/Cargo.toml flight`:
-* `landscape_is_deterministic`: same seed, same trees and features, independent of streaming
-  steps; another seed differs; the window stays bounded.
+* `landscape_is_a_function_of_place`: the same trees and features at a point reached straight
+  or by a loop from the other side; another seed differs; nothing far away survives.
 * `landscapes_have_their_features`: every biome has forest, rivers, lakes or ridges, and
   sites within capacity over 5 km.
 * `flight_renders_and_stays_bounded`: 25 m/s for 20 s; finite, audible; speed and altitude
@@ -245,17 +277,27 @@ Demo takes are not in git: `--example flight` writes the WAVs to `build/flight/`
 * `new_seed_new_landscape`: a reseed replaces every object.
 * `birds_take_off_as_you_pass`: at least 3 flushed birds in 60 s at 12 m/s.
 * `airflow_level_follows_speed`: level law, normalisation, windward ear louder.
+* `heading_follows_the_head`: a glance inside the dead zone keeps the course; a sustained
+  40° look turns left near the full rate; looking ahead again holds the new course; right
+  turns; a faster turn-rate setting turns faster.
+* `steering_off_keeps_the_course`: with steering off the head only looks around; with
+  `yaw_pitch` looking up climbs.
+* `streaming_survives_turning_around`: a full U-turn at 20 m/s by head; objects and voices
+  stay bounded and there is landscape ahead.
+* `flight_reaches_the_bed_output`: the flight sounds in the 7.1.4 bed path.
 * `core/tests/flight_alloc.rs`: no allocation in the render path.
-* `chunk_generation_cost` (ignored; `-- --ignored --nocapture`): per-block streaming cost.
+* `chunk_generation_cost` (tiles; ignored; `-- --ignored --nocapture`): per-block streaming cost.
 
 ## Limits and next steps
 
 * The ground is flat for the acoustics (one plane at −altitude). Ridges and boulders
   diffract but do not echo. Hills would need a terrain-aware ground model in the propagation.
-* Curviness bends the path laid down at the horizon, so a change is heard after ~200 m of
-  flight. Steering by head or keys would need the generator to follow a live heading.
-* The diorama shows the 13 m disc around the herm: trees, birds, boulders, brooks and lakes.
-  Ridges, waterfalls, camps and meadows are reported but not drawn. The UI session owns the
-  look.
+* There is no trunk avoidance: at walking height a course steered straight into a trunk
+  passes through it (the trunk stops being an obstacle within 1 m).
+* Rivers are drawn as x(y) (crossing the course); a river running along the course after a
+  turn is heard but not drawn. Ridges, waterfalls, camps and meadows are reported but not
+  drawn. The UI session owns the look.
+* Steering by head needs AirPods poses (`asmr_set_head_pose`); without them the course
+  wanders by curviness. Keyboard steering would be a small addition (a turn-rate input).
 * The first switch-on costs ~100 ms on the calling thread (the app calls it on the main
   thread when the button is pressed).

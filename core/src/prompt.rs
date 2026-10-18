@@ -513,6 +513,8 @@ fn describe(key: &str) -> &'static str {
         "flight.biome" => "Flight mode landscape: mixed, broadleaf (oak, birch, aspen), taiga (spruce and pine, lakes, rock), river_valley (many brooks, willows, alders), meadows (open parkland, crickets, camps), highlands (ridges, waterfalls). A change fades out and regenerates.",
         "flight.density" => "Flight mode: forest density multiplier, 0 open .. 1 as generated .. 2 dense; applies at once.",
         "flight.seed" => "Flight mode: which landscape, 0..999 (another number = another landscape; regenerates).",
+        "flight.steer_by_head" => "Flight mode: fly where the head looks (AirPods head tracking). off = keep the course (head only looks around), yaw = turning the head turns the flight, yaw_pitch = also climb when looking up and descend when looking down.",
+        "flight.turn_rate" => "Flight mode, steering by head: fastest turn, degrees per second (10 lazy glider, 30 default, 60+ agile). Reached when the head is turned ~45° from the course.",
         "flight.airflow" => "Flight mode: wind noise of motion at the ears, 0 off, 1 physical (subtle below ~10 m/s), 3 strong.",
         _ => "",
     }

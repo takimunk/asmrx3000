@@ -61,6 +61,9 @@ struct Telemetry {
     var altitude: Float = 1.7
     var odometer: Float = 0
     var speed: Float = 0
+    var heading: Float = 0
+    var worldX: Float = 0
+    var worldY: Float = 0
 }
 
 /// Hosts the Rust engine inside AVAudioEngine. The Rust side does all DSP; this class only
@@ -237,7 +240,10 @@ final class AudioEngine: ObservableObject {
             flight: telemetry(ASMR_TELEMETRY_FLIGHT),
             altitude: telemetry(ASMR_TELEMETRY_FLIGHT_ALTITUDE),
             odometer: telemetry(ASMR_TELEMETRY_FLIGHT_ODOMETER),
-            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED)
+            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED),
+            heading: telemetry(ASMR_TELEMETRY_FLIGHT_HEADING),
+            worldX: telemetry(ASMR_TELEMETRY_FLIGHT_X),
+            worldY: telemetry(ASMR_TELEMETRY_FLIGHT_Y)
         )
     }
 

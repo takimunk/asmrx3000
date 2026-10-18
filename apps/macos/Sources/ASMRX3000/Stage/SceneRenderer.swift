@@ -231,7 +231,7 @@ final class SceneRenderer {
         let flying = flight.active
         // In flight the ground sits `drop` below the herm, which flies at the altitude.
         func ground(_ x: Float, _ y: Float) -> Float {
-            flying ? FlightGround.height(x, y, odometer: flight.odometer) - flight.drop : Terrain.height(x, y)
+            flying ? FlightGround.height(x, y, frame: flight) - flight.drop : Terrain.height(x, y)
         }
         if flying, let flightGround {
             let m = Self.transform(SIMD3(0, 0, -flight.drop), yaw: 0, scale: 1)

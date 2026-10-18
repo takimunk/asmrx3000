@@ -288,7 +288,7 @@ final class Stage {
                 }
                 riverSum = p
             case UInt32(ASMR_OBJECT_TREE):
-                let g = flight.active ? FlightGround.height(p.x, p.y, odometer: flight.odometer) - flight.drop : Terrain.height(p.x, p.y)
+                let g = flight.active ? FlightGround.height(p.x, p.y, frame: flight) - flight.drop : Terrain.height(p.x, p.y)
                 things.append(Thing(key: .object(o.id), kind: .tree, ids: [o.id], anchor: SIMD3(p.x, p.y, g), movable: movable,
                                     boxMin: SIMD3(p.x - 2.0, p.y - 2.0, g), boxMax: SIMD3(p.x + 2.0, p.y + 2.0, g + Self.treeHeight)))
             case UInt32(ASMR_OBJECT_BIRD):

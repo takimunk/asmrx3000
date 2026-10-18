@@ -9,8 +9,14 @@ struct FlightView {
     var mix: Float = 0
     /// Ears above the ground, m: the diorama sinks by `drop` so the herm flies at that height.
     var altitude: Float = 1.7
-    /// Distance flown, m: scrolls the ground relief.
+    /// Distance flown, m.
     var odometer: Float = 0
+    /// The listener's place and heading in the landscape (wrapping at 4096 m): the ground
+    /// relief is anchored to the world, so it slides and turns under the herm as the course
+    /// does. The view itself stays in the travel frame (+x = where you fly).
+    var heading: Float = 0
+    var worldX: Float = 0
+    var worldY: Float = 0
     /// Nearest river crossing the disc, as the shader's river points (x, y, z, level).
     var river: [SIMD4<Float>] = []
     /// Lake shores within reach (listener-relative outlines).
@@ -27,6 +33,9 @@ extension Stage {
         flight.mix = telemetry.flight
         flight.altitude = telemetry.altitude
         flight.odometer = telemetry.odometer
+        flight.heading = telemetry.heading
+        flight.worldX = telemetry.worldX
+        flight.worldY = telemetry.worldY
         flight.river.removeAll(keepingCapacity: true)
         flight.lakes.removeAll(keepingCapacity: true)
         guard flight.active else { return }
@@ -44,8 +53,13 @@ extension Stage {
             }
             // The river as x(y) across the disc (rivers cross the flight path), in the
             // diorama's frame (bed at the usual river height).
-            let near = pts.filter { abs($0.y) < reach + 8 }.sorted { $0.y < $1.y }
+            let near = pts.filter { simd_length(SIMD2($0.x, $0.y)) < reach + 30 }.sorted { $0.y < $1.y }
             guard near.count >= 2 else { continue }
+            // The shader draws a river as x(y), i.e. one that crosses the course; one running
+            // along it (after a turn) is heard but not drawn.
+            let spanX = (near.map(\.x).max() ?? 0) - (near.map(\.x).min() ?? 0)
+            let spanY = near.last!.y - near.first!.y
+            guard spanY > 0.8 * spanX else { continue }
             let d = near.map { abs($0.x) }.min() ?? .infinity
             if d < reach, bestRiver == nil || d < bestRiver!.0 {
                 bestRiver = (d, near.map { SIMD4($0.x, $0.y, -1.2, 0.5) })
@@ -67,9 +81,11 @@ enum FlightGround {
     static let reach: Float = 70
 
     /// Relief at a listener-relative point (the world slides by under the herm).
-    static func height(_ x: Float, _ y: Float, odometer: Float) -> Float {
-        let wx = x + odometer.truncatingRemainder(dividingBy: 4096)
-        return Terrain.height(wx, y) + 0.07 * sin(wx * 2.3 + 0.7) * sin(y * 1.9)
+    static func height(_ x: Float, _ y: Float, frame f: FlightView) -> Float {
+        let (s, c) = (sin(f.heading), cos(f.heading))
+        let wx = f.worldX + c * x - s * y
+        let wy = f.worldY + s * x + c * y
+        return Terrain.height(wx, wy) + 0.07 * sin(wx * 2.3 + 0.7) * sin(wy * 1.9)
     }
 
     static func inside(_ p: SIMD2<Float>, _ poly: [SIMD2<Float>]) -> Bool {
@@ -84,9 +100,8 @@ enum FlightGround {
     }
 
     static func build(_ f: FlightView) -> Mesh? {
-        let odo = f.odometer
         func surface(_ x: Float, _ y: Float) -> (Float, Float) {
-            let base = height(x, y, odometer: odo)
+            let base = height(x, y, frame: f)
             for lake in f.lakes where inside(SIMD2(x, y), lake) {
                 return (-1.95, Part.water)
             }

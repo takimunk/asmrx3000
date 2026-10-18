@@ -1,4 +1,4 @@
-use super::land::{self, Land, CHUNK};
+use super::land::{self, Land};
 use super::*;
 use crate::controls::id;
 use crate::engine::{param, telemetry, Engine};
@@ -26,34 +26,54 @@ fn run(e: &Engine, seconds: f32) -> f64 {
     (energy / (2.0 * (blocks * 512) as f64)).sqrt()
 }
 
+/// Trees around (x, y) as (x, y, species, rank), sorted.
+fn trees_near(l: &Land, x: f64, y: f64, r: f64) -> Vec<(i64, i64, u8, u32)> {
+    let mut v: Vec<_> = l
+        .tiles_near(x, y, r)
+        .flat_map(|t| l.tile_trees(t).iter())
+        .filter(|t| (t.x - x).hypot(t.y - y) < r)
+        .map(|t| ((t.x * 1000.0) as i64, (t.y * 1000.0) as i64, t.species, t.rank.to_bits()))
+        .collect();
+    v.sort();
+    v
+}
+
 #[test]
-fn landscape_is_deterministic() {
-    let make = |seed| {
+fn landscape_is_a_function_of_place() {
+    // Arrive at (600, 0) straight along x, and by a wide loop from the other side: the same
+    // trees and features stand there. Another seed, another forest.
+    let fly = |seed: u64, path: &[(f64, f64)]| {
         let mut l = Land::new(seed, 0);
-        l.stream(120.0, 0.35, usize::MAX);
-        // Stream in odd steps: the content must not depend on the timing.
-        let mut s = 120.0;
-        while s < 900.0 {
-            s += 7.3;
-            l.stream(s, 0.35, 1);
+        l.stream(path[0].0, path[0].1, usize::MAX);
+        for w in path.windows(2) {
+            let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) / 0.4).ceil() as usize;
+            for k in 1..=n {
+                let t = k as f64 / n as f64;
+                l.stream(w[0].0 + (w[1].0 - w[0].0) * t, w[0].1 + (w[1].1 - w[0].1) * t, 1);
+            }
+        }
+        for _ in 0..400 {
+            l.stream(path.last().unwrap().0, path.last().unwrap().1, 1);
         }
         l
     };
-    let (a, b, c) = (make(7), make(7), make(8));
-    assert_eq!(a.tree_tail - a.tree_head, b.tree_tail - b.tree_head);
-    for abs in a.tree_head..a.tree_tail {
-        let (x, y) = (a.tree(abs), b.tree(abs));
-        assert_eq!((x.x, x.y, x.species, x.rank), (y.x, y.y, y.species, y.rank));
+    let straight = fly(7, &[(0.0, 0.0), (600.0, 0.0)]);
+    let looped = fly(7, &[(0.0, 0.0), (0.0, 500.0), (1100.0, 500.0), (1100.0, 0.0), (600.0, 0.0)]);
+    let a = trees_near(&straight, 600.0, 0.0, 60.0);
+    assert!(a.len() > 50, "{} trees", a.len());
+    assert_eq!(a, trees_near(&looped, 600.0, 0.0, 60.0));
+    let feats = |l: &Land| {
+        let mut v: Vec<_> = l.features.iter().filter(|f| f.alive && (f.x - 600.0).hypot(f.y) < 200.0).map(|f| (f.kind as u8, (f.x * 100.0) as i64)).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(feats(&straight), feats(&looped));
+    assert_ne!(a, trees_near(&fly(8, &[(0.0, 0.0), (600.0, 0.0)]), 600.0, 0.0, 60.0));
+    // Bounded: nothing far away survives.
+    for t in straight.tiles.iter().filter(|t| t.alive) {
+        let (cx, cy) = land::tile_centre(t.i, t.j);
+        assert!((cx - 600.0).hypot(cy) <= land::KEEP + 40.0 + 1e-6);
     }
-    let fa: Vec<_> = a.features.iter().filter(|f| f.alive).map(|f| (f.kind, f.x)).collect();
-    let fb: Vec<_> = b.features.iter().filter(|f| f.alive).map(|f| (f.kind, f.x)).collect();
-    assert_eq!(fa, fb);
-    let first = |l: &Land| l.tree(l.tree_head).x;
-    assert_ne!(first(&a), first(&c), "another seed, another forest");
-    // Streaming keeps a bounded window around the listener.
-    assert!(a.chunk_tail - a.chunk_head <= land::MAX_CHUNKS as i64);
-    assert!(((a.chunk_head + 1) as f64) * CHUNK >= 900.0 - land::BEHIND - CHUNK);
-    assert!((a.chunk_tail as f64) * CHUNK >= 900.0 + land::AHEAD);
 }
 
 #[test]
@@ -61,12 +81,12 @@ fn landscapes_have_their_features() {
     // Over 5 km every biome brings trees, birds and water; the wild ones rock and falls.
     for (bi, b) in land::BIOMES.iter().enumerate() {
         let mut l = Land::new(42, bi as u32);
-        let (mut trees, mut rivers, mut lakes, mut ridges, mut sites) = (0u64, 0, 0, 0, 0);
+        let (mut rivers, mut lakes, mut ridges, mut sites, mut trees) = (0, 0, 0, 0, 0usize);
         let mut seen = std::collections::HashSet::new();
-        let mut s = 120.0;
-        while s < 5000.0 {
-            l.stream(s, 0.5, usize::MAX);
-            for f in l.features.iter().filter(|f| f.alive) {
+        let mut x = 0.0;
+        while x < 5000.0 {
+            l.stream(x, 0.0, usize::MAX);
+            for f in l.features.iter().filter(|f| f.alive && f.y.abs() < 150.0) {
                 if seen.insert(f.id) {
                     match f.kind {
                         land::FeatureKind::River => rivers += 1,
@@ -76,11 +96,11 @@ fn landscapes_have_their_features() {
                     }
                 }
             }
-            sites = sites.max(l.sites.iter().filter(|x| x.alive).count());
-            s += 50.0;
+            sites = sites.max(l.sites.iter().filter(|s| s.alive).count());
+            trees = trees.max(trees_near(&l, x, 0.0, 80.0).len());
+            x += 50.0;
         }
-        trees += l.tree_tail;
-        assert!(trees > 1000, "{}: {trees} trees", b.name);
+        assert!(trees > 100, "{}: {trees} trees", b.name);
         assert!(rivers >= 5, "{}: {rivers} rivers", b.name);
         assert!(lakes + ridges >= 2, "{}: {lakes} lakes {ridges} ridges", b.name);
         assert!(sites > 5 && sites < land::MAX_SITES, "{}: {sites} sites", b.name);
@@ -259,15 +279,13 @@ fn chunk_generation_cost() {
     // cargo test --release chunk_generation_cost -- --ignored --nocapture
     for (bi, b) in land::BIOMES.iter().enumerate() {
         let mut l = Land::new(9, bi as u32);
-        l.stream(120.0, 0.35, usize::MAX);
-        let mut worst = 0.0f64;
-        let mut total = 0.0f64;
-        let mut s = 120.0;
-        let mut n = 0;
-        while s < 4000.0 {
-            s += 0.0333; // 25 m/s, one 64-sample block
+        l.stream(0.0, 0.0, usize::MAX);
+        let (mut worst, mut total, mut n) = (0.0f64, 0.0f64, 0);
+        let mut x = 0.0;
+        while x < 4000.0 {
+            x += 0.0333; // 25 m/s, one 64-sample block
             let t = std::time::Instant::now();
-            l.stream(s, 0.35, 1);
+            l.stream(x, 0.3 * x, 1);
             let dt = t.elapsed().as_secs_f64();
             worst = worst.max(dt);
             total += dt;
@@ -291,4 +309,91 @@ fn flight_reaches_the_bed_output() {
         }
     }
     assert!(energy > 1e-3, "silent bed");
+}
+
+/// Feeds the engine a head pose (as AirPods would, every block) for `seconds`.
+fn look(e: &Engine, yaw_deg: f32, pitch_deg: f32, seconds: f32) {
+    let q = crate::headpose::Quat::from_yaw_pitch_roll(yaw_deg.to_radians(), pitch_deg.to_radians(), 0.0);
+    let (mut l, mut r) = (vec![0.0f32; 480], vec![0.0f32; 480]);
+    for _ in 0..(seconds * 100.0) as usize {
+        e.set_head_pose([q.w, q.x, q.y, q.z], [0.0; 3], 0.01);
+        e.render(&mut l, &mut r);
+    }
+}
+
+fn heading(e: &Engine) -> f32 {
+    e.telemetry(telemetry::FLIGHT_HEADING)
+}
+
+fn turned(a: f32, b: f32) -> f32 {
+    (b - a + core::f32::consts::PI).rem_euclid(core::f32::consts::TAU) - core::f32::consts::PI
+}
+
+#[test]
+fn heading_follows_the_head() {
+    let e = flying_engine(10.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    look(&e, 0.0, 0.0, 1.0);
+    let h0 = heading(&e);
+    // A glance inside the dead zone keeps the course.
+    look(&e, 5.0, 0.0, 3.0);
+    assert!(turned(h0, heading(&e)).abs() < 0.02, "drifted {}", turned(h0, heading(&e)));
+    // A sustained look 40° left turns left, close to the full turn rate (30°/s).
+    let h1 = heading(&e);
+    look(&e, 40.0, 0.0, 4.0);
+    let left = turned(h1, heading(&e));
+    assert!(left > 1.0 && left < 2.1, "turned {left} rad in 4 s");
+    let rate = e.telemetry(telemetry::FLIGHT_TURN);
+    assert!(rate > 0.3, "turn rate {rate}");
+    // Looking ahead again: the turn eases off within a second and the course holds.
+    look(&e, 0.0, 0.0, 1.5);
+    let h2 = heading(&e);
+    look(&e, 0.0, 0.0, 2.0);
+    assert!(turned(h2, heading(&e)).abs() < 0.02);
+    // And to the right.
+    look(&e, -50.0, 0.0, 3.0);
+    assert!(turned(h2, heading(&e)) < -0.8);
+    // A faster turn-rate setting turns faster.
+    e.set_control(id::FLIGHT_TURN_RATE, 60.0);
+    look(&e, 0.0, 0.0, 2.0);
+    let h3 = heading(&e);
+    look(&e, 60.0, 0.0, 3.0);
+    assert!(turned(h3, heading(&e)) > 1.8);
+}
+
+#[test]
+fn steering_off_keeps_the_course() {
+    let e = flying_engine(10.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    e.set_control(id::FLIGHT_STEER, 0.0);
+    look(&e, 0.0, 0.0, 1.0);
+    let h0 = heading(&e);
+    look(&e, 60.0, 20.0, 4.0);
+    assert!(turned(h0, heading(&e)).abs() < 0.01);
+    // Pitch climbs only with yaw_pitch.
+    let alt = e.telemetry(telemetry::FLIGHT_ALTITUDE);
+    e.set_control(id::FLIGHT_STEER, 2.0);
+    look(&e, 0.0, 30.0, 4.0);
+    assert!(e.telemetry(telemetry::FLIGHT_ALTITUDE) > alt + 5.0, "no climb");
+}
+
+#[test]
+fn streaming_survives_turning_around() {
+    let e = flying_engine(20.0, 4);
+    let mut objs = [ObjectInfo::default(); 512];
+    look(&e, 0.0, 0.0, 3.0);
+    // Look back over the shoulder until the course has turned around.
+    let h0 = heading(&e);
+    let mut k = 0;
+    while turned(h0, heading(&e)).abs() < 3.0 && k < 40 {
+        look(&e, 70.0, 0.0, 0.5);
+        k += 1;
+    }
+    assert!(k < 40, "never turned around");
+    look(&e, 0.0, 0.0, 8.0);
+    let n = e.objects(&mut objs);
+    assert!(n > 50 && n <= bridge::OBJECTS, "{n} objects after turning around");
+    assert!(objs[..n].iter().any(|o| o.kind == ObjectKind::Tree as u32 && o.x > 20.0), "nothing ahead");
+    let mut src = [crate::SourceInfo::default(); 128];
+    assert!(e.sources(&mut src) <= EMITTERS);
 }

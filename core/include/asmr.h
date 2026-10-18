@@ -85,7 +85,10 @@ enum {
     ASMR_TELEMETRY_FLIGHT_SPEED = 15,    /* current speed, m/s (ramps to flight.speed at 2.5 m/s^2) */
     ASMR_TELEMETRY_FLIGHT_ALTITUDE = 16, /* ears above the ground, m (follows flight.altitude, gentle swells) */
     ASMR_TELEMETRY_FLIGHT_ODOMETER = 17, /* distance flown along the path, m, wraps at 10 km (scroll the ground with it) */
-    ASMR_TELEMETRY_FLIGHT_TURN = 18,     /* turn rate of the path, rad/s, + = turning left */
+    ASMR_TELEMETRY_FLIGHT_TURN = 18,     /* turn rate of the course, rad/s, + = turning left */
+    ASMR_TELEMETRY_FLIGHT_HEADING = 19,  /* heading of the course in the landscape, rad 0..2pi (counter-clockwise) */
+    ASMR_TELEMETRY_FLIGHT_X = 20,        /* position in the landscape, m, wrapping at 4096 m: anchor ground textures to it */
+    ASMR_TELEMETRY_FLIGHT_Y = 21,        /* (the reported objects stay in the travel frame: +x = where you fly) */
 };
 
 enum {
@@ -126,8 +129,7 @@ enum {
 /* Position: trees = trunk base, rivers = polyline centroid, birds = the bird. Same frame as above.
    Flight mode: everything is listener-relative and streams past (ground at z = -altitude); ids
    (>= 0x40000000) are stable while an object exists; trees are the nearest ones that fit in
-   256 objects, after the rivers, lakes, rocks, sources and birds; a river's position is where it
-   crosses the flight path. */
+   256 objects, after the rivers, lakes, rocks, sources and birds; a river's position is its middle. */
 typedef struct AsmrObjectInfo {
     uint32_t id;    /* stable for the lifetime of the scene (flight: while the object exists) */
     uint32_t kind;  /* ASMR_OBJECT_* */
@@ -206,11 +208,17 @@ enum {
     /* Flight mode (ASMR_PARAM_FLIGHT). Applied while flying and kept for the next flight. */
     ASMR_CONTROL_FLIGHT_SPEED = 1000,     /* macro, m/s 0..25 [6]: walk 1.5, run 5, glide 12, fast flight 25 */
     ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
-    ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* 0 straight .. 1 (turn radius 250 m); bends the path laid down ~200 m ahead [0.35] */
+    ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* wandering of the course when not steered by head: 0 straight .. 1 (turn radius 250 m) [0.35] */
     ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands [mixed]; option names via asmr_get_control_option */
     ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
     ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
     ASMR_CONTROL_FLIGHT_AIRFLOW = 1006,   /* wind noise of motion at the ears x 0..3 [1 = physical, subtle below ~10 m/s] */
+    ASMR_CONTROL_FLIGHT_STEER = 1007,     /* "flight.steer_by_head", preset: off, yaw, yaw_pitch [yaw]. Fly where the head looks:
+                                             the course turns towards the (predicted) head yaw beyond an 8 deg dead zone, smoothed
+                                             over 0.35 s and slew-limited; yaw_pitch also climbs / dives with the head pitch.
+                                             Live only while asmr_set_head_pose samples arrive; otherwise (and with off) the
+                                             course wanders by flight.curviness and turning the head only looks around. */
+    ASMR_CONTROL_FLIGHT_TURN_RATE = 1008, /* "flight.turn_rate", deg/s 5..90 [30]: fastest turn, reached with the head ~43 deg off course */
 };
 
 typedef struct AsmrControlInfo {

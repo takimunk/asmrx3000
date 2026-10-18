@@ -39,10 +39,22 @@ use crate::windfield::WindField;
 
 use airflow::Airflow;
 use bridge::{FlightBridge, Snapshot};
-use land::{BirdState, FeatureKind, Land, SiteKind, BANDS, CHUNK, MAX_CHUNKS};
+use land::{BirdState, FeatureKind, Land, SiteKind, TILES};
 
-/// The listener starts this far along the path (so there is landscape behind, too).
-const START_S: f64 = 120.0;
+/// Turning radius of the wandering path at curviness 1 (steering by head off), m.
+const MIN_RADIUS: f64 = 250.0;
+/// Head steering: gaze within this yaw / pitch of straight ahead keeps the course, rad (8°).
+const DEAD_ZONE: f32 = 0.14;
+/// Head steering: the gaze beyond the dead zone at which the turn rate is at its maximum,
+/// rad (35°): a glance turns gently, a sustained look over the shoulder turns hard.
+const FULL_TURN: f32 = 0.61;
+/// Smoothing of the gaze before it steers, s: head jitter and quick glances do not wobble
+/// the flight.
+const GAZE_TAU: f32 = 0.35;
+/// Turn-rate slew limit, rad/s²: turns build up and ease off like a glider's.
+const TURN_ACCEL: f32 = 0.8;
+/// Head pitch steering: climb rate at full pitch, m/s per m/s of speed (climbs at ~25°).
+const CLIMB_PER_SPEED: f32 = 0.45;
 /// Level-of-detail / geometry update period, blocks (~5 ms at 48 kHz).
 const LOD_EVERY: u64 = 4;
 /// Cross-fade time of a slot changing hands, s.
@@ -100,8 +112,8 @@ const BIRD_SLOTS: [Species; 10] = [
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Target {
     None,
-    Tree { abs: u64, id: u32 },
-    Cell { k: i64, band: u8 },
+    Tree { tile: u16, k: u16, id: u32 },
+    Cell { i: i32, j: i32 },
     Bird { idx: u16, id: u32 },
     Site { idx: u16, id: u32 },
     Rain(u8),
@@ -167,8 +179,15 @@ pub struct Inputs<'a> {
     pub rain: f32,
     pub ambient: Ambient,
     pub head: Mat3,
-    /// Head yaw relative to the direction of travel, rad (+ = left).
+    /// Head yaw relative to the direction of travel, rad (+ = left), from the predicted
+    /// head pose the audio is rendered with.
     pub head_yaw: f32,
+    /// Head pitch, rad (+ = looking up), same pose.
+    pub head_pitch: f32,
+    /// Head-pose samples are arriving (AirPods): steering by head is live only then.
+    pub head_tracked: bool,
+    /// Ear-centre offset of the predicted pose (neck parallax), as for the scene.
+    pub listener_offset: Vec3,
     pub acoustic: Acoustic,
     pub wind: &'a WindField,
     /// WIND slider 0..1.
@@ -178,10 +197,10 @@ pub struct Inputs<'a> {
     pub neural: bool,
 }
 
-/// Listener pose on the path.
+/// Listener pose in the world.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pose {
-    /// Distance travelled along the path, m.
+    /// Distance travelled, m.
     pub s: f64,
     pub x: f64,
     pub y: f64,
@@ -222,13 +241,22 @@ pub struct Flight {
     right: [f32; BLOCK],
     trunks: Box<[Trunk]>,
     obstacles: Box<[Obstacle]>,
-    /// Crown area voiced by near-tree slots, per (chunk ring slot, band).
-    voiced: [f32; MAX_CHUNKS * BANDS],
+    /// Crown area voiced by near-tree slots, per tile slot.
+    voiced: Box<[f32]>,
+    /// Smoothed gaze (yaw, pitch) relative to the direction of travel, rad.
+    gaze: (f32, f32),
+    /// Altitude added by looking up / down (steer by head with pitch), m.
+    climb_offset: f32,
     env_key: (u32, f32, f32),
     refit_s: f64,
     ctl: Option<ControlState>,
     dirty: bool,
     birds_level: f32,
+    /// Features near the listener (refreshed with the level of detail).
+    near: [usize; 32],
+    n_near: usize,
+    /// Block until which streaming runs with a larger budget (after a reseed).
+    filled_until: u64,
 }
 
 /// Crown sound of `area` m². `exposure`: wind in the crown relative to the open canopy
@@ -274,7 +302,7 @@ impl Flight {
     pub fn new(sample_rate: f32, seed: u64) -> Self {
         let sr = sample_rate;
         let mut land = Land::new(seed, 0);
-        land.stream(START_S, 0.35, usize::MAX);
+        land.stream(0.0, 0.0, usize::MAX);
         let mut rng = Rng::new(seed ^ 0xF1_1647);
         let mut entities = Vec::with_capacity(EMITTERS);
         let mut emitters = Vec::with_capacity(EMITTERS);
@@ -326,7 +354,7 @@ impl Flight {
         debug_assert_eq!(emitters.len(), EMITTERS);
         let mut acoustics = Acoustics::new(sr, EMITTERS);
         acoustics.set_trees(Some(&[]));
-        let pose = Pose { s: START_S, height: controls::flight_altitude(6.0), ..Default::default() };
+        let pose = Pose { height: controls::flight_altitude(6.0), ..Default::default() };
         let mut f = Self {
             sample_rate: sr,
             land,
@@ -350,12 +378,17 @@ impl Flight {
             right: [0.0; BLOCK],
             trunks: vec![Trunk { x: 0.0, y: 0.0, radius: 0.0, height: 0.0 }; 128].into_boxed_slice(),
             obstacles: vec![Obstacle::Sphere { center: Vec3::default(), radius: 0.0 }; 64].into_boxed_slice(),
-            voiced: [0.0; MAX_CHUNKS * BANDS],
+            voiced: vec![0.0; TILES].into_boxed_slice(),
+            gaze: (0.0, 0.0),
+            climb_offset: 0.0,
             env_key: (u32::MAX, -1.0, -1.0),
             refit_s: f64::NEG_INFINITY,
             ctl: None,
             dirty: true,
             birds_level: 0.6,
+            filled_until: 0,
+            near: [0; 32],
+            n_near: 0,
         };
         f.locate();
         f
@@ -394,11 +427,7 @@ impl Flight {
     }
 
     fn locate(&mut self) {
-        let p = self.land.path.at(self.pose.s);
-        self.pose.x = p.x;
-        self.pose.y = p.y;
-        self.pose.heading = p.heading;
-        (self.pose.sin, self.pose.cos) = p.heading.sin_cos();
+        (self.pose.sin, self.pose.cos) = self.pose.heading.sin_cos();
     }
 
     /// Listener-relative position of a world point `z` metres above the ground.
@@ -407,12 +436,6 @@ impl Flight {
         let (s, c) = (self.pose.sin, self.pose.cos);
         let (dx, dy) = (x - self.pose.x, y - self.pose.y);
         Vec3::new((c * dx + s * dy) as f32, (-s * dx + c * dy) as f32, z - self.pose.height)
-    }
-
-    /// Approximate path-frame (s, u) of a world point near the listener.
-    fn land_frame(&self, x: f64, y: f64) -> (f64, f32) {
-        let r = self.rel(x, y, 0.0);
-        (self.pose.s + r.x as f64, r.y)
     }
 
     /// Velocity in the listener frame of a point at `rel` moving with `own` (world frame).
@@ -451,7 +474,8 @@ impl Flight {
 
         self.birds_level = inp.birds;
         self.controls(inp, dt);
-        self.advance(dt);
+        self.acoustics.set_listener_offset(inp.listener_offset);
+        self.advance(dt, inp);
         self.step_birds(dt, inp);
         if self.blocks % LOD_EVERY == 1 || self.dirty {
             self.lod(inp);
@@ -597,25 +621,59 @@ impl Flight {
                     }
                 }
                 let seed = self.seed ^ (seed as u64).wrapping_mul(0x9E37_79B9);
-                self.land.reset(seed, biome, self.pose.s);
-                self.land.stream(self.pose.s, self.curviness, usize::MAX);
+                self.land.reset(seed, biome);
+                // Refilled over the next blocks (6 tiles each), not all at once.
+                self.land.stream(self.pose.x, self.pose.y, 6);
+                self.filled_until = self.blocks + 200;
                 self.dirty = true;
             }
         }
     }
 
-    /// Moves the listener along the path.
-    fn advance(&mut self, dt: f32) {
-        self.pose.s += (self.pose.speed * dt) as f64;
-        if self.regen == 0.0 {
-            self.land.stream(self.pose.s, self.curviness, 1);
+    /// Steers and moves the listener. With steering by head, the course turns towards where
+    /// the head looks (yaw; pitch climbs and dives with `yaw_pitch`); otherwise it wanders
+    /// along a gentle curve. Both go through the same turn-rate slew limit.
+    fn advance(&mut self, dt: f32, inp: &Inputs) {
+        let st = inp.st;
+        // Without head tracking the head never turns: keep the wandering course instead.
+        let mode = if inp.head_tracked { st.get(id::FLIGHT_STEER).round() as u32 } else { 0 };
+        let max_turn = st.get(id::FLIGHT_TURN_RATE).to_radians();
+        let g = 1.0 - (-dt / GAZE_TAU).exp();
+        let (yaw, pitch) = if mode > 0 { (inp.head_yaw, inp.head_pitch) } else { (0.0, 0.0) };
+        self.gaze.0 += (wrap(yaw) - self.gaze.0) * g;
+        self.gaze.1 += (pitch - self.gaze.1) * g;
+        let beyond = |a: f32| a.signum() * (a.abs() - DEAD_ZONE).max(0.0);
+        let target = if mode > 0 {
+            (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn
+        } else {
+            let k = curvature(self.land.seed, self.pose.s) * self.curviness as f64;
+            (k * self.pose.speed as f64) as f32
+        };
+        self.pose.turn += (target - self.pose.turn).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
+        if mode >= 2 {
+            let climb = (beyond(self.gaze.1) / FULL_TURN).clamp(-1.0, 1.0) * CLIMB_PER_SPEED * self.pose.speed;
+            self.climb_offset = (self.climb_offset + climb * dt).clamp(1.2 - self.altitude, 40.0 - self.altitude);
+        } else {
+            self.climb_offset *= (-dt / 6.0).exp();
         }
+
+        let mid = self.pose.heading + 0.5 * (self.pose.turn * dt) as f64;
+        let step = (self.pose.speed * dt) as f64;
+        self.pose.x += step * mid.cos();
+        self.pose.y += step * mid.sin();
+        self.pose.heading = (self.pose.heading + (self.pose.turn * dt) as f64).rem_euclid(core::f64::consts::TAU);
+        self.pose.s += step;
         self.locate();
-        self.pose.turn = (self.land.path.curvature(self.pose.s) * self.pose.speed as f64) as f32;
+        if self.regen == 0.0 {
+            // Quicker right after a reseed, while the landscape is still filling in.
+            let budget = if self.blocks < self.filled_until { 6 } else { 1 };
+            self.land.stream(self.pose.x, self.pose.y, budget);
+        }
         // Gentle swells of the flight level above walking height (none when walking).
-        let swell = (self.altitude - 2.5).clamp(0.0, 12.0) * 0.12;
-        let n = land::noise2(self.land.seed, 0xA17, self.pose.s / 160.0, 0.5) - 0.5;
-        let h = (self.altitude + 2.0 * swell * n).max(1.0);
+        let base = (self.altitude + self.climb_offset).clamp(1.2, 40.0);
+        let swell = (base - 2.5).clamp(0.0, 12.0) * 0.12;
+        let n = land::noise2(self.land.seed, 0xA17, self.pose.x / 160.0, self.pose.y / 160.0) - 0.5;
+        let h = (base + 2.0 * swell * n).max(1.0);
         self.pose.climb = if dt > 0.0 { (h - self.pose.height) / dt } else { 0.0 };
         self.pose.height = h;
         self.world.ground_z = -h;
@@ -703,21 +761,15 @@ impl Flight {
     fn place(&self, slot: &Slot) -> Option<(Vec3, Vec3, bool)> {
         match slot.target {
             Target::None => Some((Vec3::default(), Vec3::default(), false)),
-            Target::Tree { abs, id } => {
-                if abs < self.land.tree_head || abs >= self.land.tree_tail {
-                    return None;
-                }
-                let t = self.land.tree(abs);
+            Target::Tree { tile, k, id } => {
+                let t = self.land.tile_trees(tile as usize).get(k as usize)?;
                 (t.id == id).then(|| {
                     let r = self.rel(t.x, t.y, t.crown_z);
                     (r, self.rel_vel(r, [0.0; 3]), false)
                 })
             }
-            Target::Cell { k, band } => {
-                if k < self.land.chunk_head || k >= self.land.chunk_tail {
-                    return None;
-                }
-                let c = &self.land.chunk(k).cells[band as usize];
+            Target::Cell { i, j } => {
+                let c = &self.land.tiles[self.land.tile(i, j)?].cell;
                 let r = self.rel(c.x, c.y, c.canopy_z);
                 Some((r, self.rel_vel(r, [0.0; 3]), false))
             }
@@ -744,26 +796,24 @@ impl Flight {
 
     /// Chooses which streamed things the pools voice.
     fn lod(&mut self, inp: &Inputs) {
+        let mut near = [0usize; 32];
+        self.n_near = self.land.local_features(self.pose.x, self.pose.y, 25.0, &mut near);
+        self.near = near;
         let density = self.density;
         let tree_rank = 0.5 * density;
-        let s = self.pose.s;
+        let (px, py) = (self.pose.x, self.pose.y);
         let regen = self.regen > 0.0;
 
         // Nearest trees.
         let mut near = Best::<24>::new();
-        let k0 = ((s - 45.0) / CHUNK).floor() as i64;
-        let k1 = ((s + 45.0) / CHUNK).floor() as i64;
-        for k in k0.max(self.land.chunk_head)..=k1.min(self.land.chunk_tail - 1) {
-            let (a, b) = self.land.chunk(k).trees;
-            for abs in a.max(self.land.tree_head)..b {
-                let t = self.land.tree(abs);
-                if t.rank >= tree_rank {
+        for t in self.land.tiles_near(px, py, 40.0) {
+            for (k, tr) in self.land.tile_trees(t).iter().enumerate() {
+                if tr.rank >= tree_rank {
                     continue;
                 }
-                let r = self.rel(t.x, t.y, t.crown_z);
-                let d = r.length();
+                let d = self.rel(tr.x, tr.y, tr.crown_z).length();
                 if d < 40.0 {
-                    near.push(1.0 / d.max(0.5), Target::Tree { abs, id: t.id });
+                    near.push(1.0 / d.max(0.5), Target::Tree { tile: t as u16, k: k as u16, id: tr.id });
                 }
             }
         }
@@ -771,44 +821,37 @@ impl Flight {
             self.assign(Pool::Near, &near);
         }
 
-        // Crown area now voiced by near trees, per cell.
-        self.voiced = [0.0; MAX_CHUNKS * BANDS];
+        // Crown area now voiced by near trees, per tile.
+        self.voiced.fill(0.0);
         for i in Self::range(Pool::Near) {
-            if let Target::Tree { abs, .. } = self.slots[i].target {
-                let t = *self.land.tree(abs);
-                let k = ((self.land.chunk_head..self.land.chunk_tail).find(|&k| {
-                    let c = self.land.chunk(k);
-                    abs >= c.trees.0 && abs < c.trees.1
-                }))
-                .unwrap_or(self.land.chunk_head);
-                let cell = k.rem_euclid(MAX_CHUNKS as i64) as usize * BANDS + t.band as usize;
-                self.voiced[cell] += t.crown_area() * self.slots[i].fade;
+            if let Target::Tree { tile, k, .. } = self.slots[i].target {
+                if let Some(tr) = self.land.tile_trees(tile as usize).get(k as usize) {
+                    self.voiced[tile as usize] += tr.crown_area() * self.slots[i].fade;
+                }
             }
         }
 
-        // Aggregate cells.
+        // Aggregate cells: every live tile is a stand.
         let mut cells = Best::<16>::new();
-        for k in self.land.chunk_head..self.land.chunk_tail {
-            let ch = self.land.chunk(k);
-            for (band, c) in ch.cells.iter().enumerate() {
-                let area = c.area_at(density);
-                if area < 15.0 {
-                    continue;
-                }
-                let d = self.rel(c.x, c.y, c.canopy_z).length();
-                if d < MAX_RANGE {
-                    cells.push(area.sqrt() / d.max(5.0), Target::Cell { k, band: band as u8 });
-                }
+        for tile in self.land.tiles.iter().filter(|t| t.alive) {
+            let c = &tile.cell;
+            let area = c.area_at(density);
+            if area < 15.0 {
+                continue;
+            }
+            let d = self.rel(c.x, c.y, c.canopy_z).length();
+            if d < MAX_RANGE {
+                cells.push(area.sqrt() / d.max(5.0), Target::Cell { i: tile.i, j: tile.j });
             }
         }
         if !regen {
             self.assign(Pool::Cell, &cells);
         }
         for i in Self::range(Pool::Cell) {
-            if let Target::Cell { k, band } = self.slots[i].target {
-                if k >= self.land.chunk_head && k < self.land.chunk_tail {
-                    let area = self.land.chunk(k).cells[band as usize].area_at(density);
-                    let left = (area - self.voiced[k.rem_euclid(MAX_CHUNKS as i64) as usize * BANDS + band as usize]).max(0.0);
+            if let Target::Cell { i: ti, j: tj } = self.slots[i].target {
+                if let Some(t) = self.land.tile(ti, tj) {
+                    let area = self.land.tiles[t].cell.area_at(density);
+                    let left = (area - self.voiced[t]).max(0.0);
                     self.slots[i].gain = (left / self.slots[i].ref_area.max(1.0)).sqrt().min(1.5);
                 }
             }
@@ -856,7 +899,7 @@ impl Flight {
         }
 
         // Rain patches follow the listener; their surface follows the ground below.
-        let ground = self.land.ground_at(s, 0.0);
+        let ground = self.land.ground_near(px, py, &self.near[..self.n_near]);
         for i in Self::range(Pool::Rain) {
             let cfg = rain(ground);
             if self.world.emitters[i].base != Some(cfg) {
@@ -915,14 +958,13 @@ impl Flight {
         s.gain = 1.0;
         s.extent = 0.0;
         let cfg = match t {
-            Target::Tree { abs, .. } => {
-                let tr = *self.land.tree(abs);
+            Target::Tree { tile, k, .. } => {
+                let tr = self.land.tile_trees(tile as usize)[k as usize];
                 s.extent = tr.crown_r;
-                let p = self.land_frame(tr.x, tr.y);
-                Some(foliage(tr.species(), tr.crown_area(), exposure(self.land.base_cover(p.0, p.1))))
+                Some(foliage(tr.species(), tr.crown_area(), exposure(self.land.base_cover(tr.x, tr.y))))
             }
-            Target::Cell { k, band } => {
-                let c = self.land.chunk(k).cells[band as usize];
+            Target::Cell { i, j } => {
+                let c = self.land.tile(i, j).map(|t| self.land.tiles[t].cell).unwrap_or_default();
                 let area = c.area_at(self.density).max(1.0);
                 s.ref_area = area;
                 s.extent = 0.6 * (area / core::f32::consts::PI).sqrt();
@@ -958,21 +1000,20 @@ impl Flight {
     fn geometry(&mut self) {
         let s = self.pose.s;
         let tree_rank = 0.5 * self.density;
+        let (px, py) = (self.pose.x, self.pose.y);
         let mut n = 0;
-        let k0 = ((s - 35.0) / CHUNK).floor() as i64;
-        let k1 = ((s + 35.0) / CHUNK).floor() as i64;
         let mut radius = 30.0f32;
         'scan: for pass in 0..2 {
             n = 0;
-            for k in k0.max(self.land.chunk_head)..=k1.min(self.land.chunk_tail - 1) {
-                let (a, b) = self.land.chunk(k).trees;
-                for abs in a.max(self.land.tree_head)..b {
-                    let t = *self.land.tree(abs);
-                    if t.rank >= tree_rank {
+            for t in self.land.tiles_near(px, py, radius as f64) {
+                for tr in self.land.tile_trees(t) {
+                    if tr.rank >= tree_rank {
                         continue;
                     }
-                    let r = self.rel(t.x, t.y, 0.0);
-                    if r.x * r.x + r.y * r.y < radius * radius {
+                    let r = self.rel(tr.x, tr.y, 0.0);
+                    let d2 = r.x * r.x + r.y * r.y;
+                    // A trunk you fly through is not an obstacle (it would wrap the ears).
+                    if d2 < radius * radius && d2 > 1.0 {
                         if n == self.trunks.len() {
                             if pass == 0 {
                                 radius = 20.0;
@@ -980,7 +1021,7 @@ impl Flight {
                             }
                             break 'scan;
                         }
-                        self.trunks[n] = Trunk { x: r.x, y: r.y, radius: t.trunk_r, height: t.top() };
+                        self.trunks[n] = Trunk { x: r.x, y: r.y, radius: tr.trunk_r, height: tr.top() };
                         n += 1;
                     }
                 }
@@ -1032,9 +1073,12 @@ impl Flight {
     /// Ground, stand density and ear height for the propagation (quantised, so the forest
     /// tail and ground model are rebuilt only when they really change).
     fn environment(&mut self, inp: &Inputs) {
-        let ground = self.land.ground_at(self.pose.s, 0.0);
+        let (px, py) = (self.pose.x, self.pose.y);
+        let near = &self.near[..self.n_near];
+        let ground = self.land.ground_near(px, py, near);
         let b = self.land.biome_def();
-        let local = b.density_ha * self.density * self.land.cover(self.pose.s, 0.0).max(self.land.cover(self.pose.s, 15.0));
+        let ahead = (px + 15.0 * self.pose.cos, py + 15.0 * self.pose.sin);
+        let local = b.density_ha * self.density * self.land.cover_near(px, py, near).max(self.land.cover_near(ahead.0, ahead.1, near));
         let q = (local / 50.0).round() * 50.0;
         let ear = self.pose.height;
         let (g0, d0, e0) = self.env_key;
@@ -1114,17 +1158,13 @@ impl Flight {
         const BIN: f32 = 5.0;
         const BINS: usize = 20;
         let mut hist = [0usize; BINS];
-        let s = self.pose.s;
         let tree_rank = 0.5 * self.density;
-        let k0 = ((s - BIN as f64 * BINS as f64) / CHUNK).floor() as i64;
-        let k1 = ((s + BIN as f64 * BINS as f64) / CHUNK).floor() as i64;
-        let ks = k0.max(self.land.chunk_head)..=k1.min(self.land.chunk_tail - 1);
-        for k in ks.clone() {
-            let (a, b) = self.land.chunk(k).trees;
-            for abs in a.max(self.land.tree_head)..b {
-                let t = self.land.tree(abs);
-                if t.rank < tree_rank {
-                    let r = self.rel(t.x, t.y, 0.0);
+        let (px, py) = (self.pose.x, self.pose.y);
+        let reach = (BIN * BINS as f32) as f64;
+        for t in self.land.tiles_near(px, py, reach) {
+            for tr in self.land.tile_trees(t) {
+                if tr.rank < tree_rank {
+                    let r = self.rel(tr.x, tr.y, 0.0);
                     let d = (r.x * r.x + r.y * r.y).sqrt();
                     if d < BIN * BINS as f32 {
                         hist[(d / BIN) as usize] += 1;
@@ -1139,19 +1179,31 @@ impl Flight {
             bins += 1;
         }
         let radius = bins as f32 * BIN;
-        for k in ks {
-            let (a, b) = self.land.chunk(k).trees;
-            for abs in a.max(self.land.tree_head)..b {
-                let t = self.land.tree(abs);
-                if t.rank < tree_rank {
-                    let r = self.rel(t.x, t.y, 0.0);
+        for t in self.land.tiles_near(px, py, radius as f64) {
+            for tr in self.land.tile_trees(t) {
+                if tr.rank < tree_rank {
+                    let r = self.rel(tr.x, tr.y, 0.0);
                     if r.x * r.x + r.y * r.y < radius * radius {
-                        snap.object(ObjectInfo { id: t.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: ground, flags: 0 });
+                        snap.object(ObjectInfo { id: tr.id, kind: ObjectKind::Tree as u32, x: r.x, y: r.y, z: ground, flags: 0 });
                     }
                 }
             }
         }
     }
+}
+
+/// Curvature (1/m) of the wandering course at distance s, for curviness 1: three slow sines
+/// (530, 310, 170 m), deterministic per seed.
+fn curvature(seed: u64, s: f64) -> f64 {
+    let mut r = land::Stream::new(land::hash(seed, 0, 0, 0x9A7));
+    let p = [r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64];
+    let tau = core::f64::consts::TAU;
+    (0.55 * (tau * s / 530.0 + p[0]).sin() + 0.30 * (tau * s / 310.0 + p[1]).sin() + 0.15 * (tau * s / 170.0 + p[2]).sin()) / MIN_RADIUS
+}
+
+/// Angle wrapped to [-π, π).
+fn wrap(a: f32) -> f32 {
+    (a + core::f32::consts::PI).rem_euclid(core::f32::consts::TAU) - core::f32::consts::PI
 }
 
 fn model_of(kind: SourceKind) -> ModelKind {
