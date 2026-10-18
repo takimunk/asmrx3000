@@ -1,125 +1,150 @@
-"""Generates the ASMRX menu bar wordmark: a strict bitmap face, sheared into an italic.
+"""Generates the menu bar mark: "ASMR" over "X_", like a command line waiting for input.
 
-Each letter is a 5 x 9 grid of square "pixels", 2 pt each, so the word fills the menu bar
-(18 pt tall). The italic is a stair-step shear: every second row from the baseline moves 1 pt to
-the right, so every edge stays on whole points and the mark is crisp at 1x and 2x alike.
+A square, 18 pt tall, the size of an ordinary menu bar icon. Strict bitmap letters on a 1 pt
+grid (4 x 7, M and X 5 x 7), set in two lines and sheared into an italic as one block by
+stair-steps: every SHEAR_EVERY rows from the bottom move 1 pt to the right, so every edge stays
+on whole points and the mark is crisp at 1x and 2x alike. The underscore is the cursor: it
+blinks while the popover is open.
+
 Writes:
   assets/icon/menubar.svg                          (source of truth, with an animated preview)
   apps/macos/Sources/ASMRX3000/MenuBarGlyphs.swift (the same rectangles, one group per letter)
 
   python3 tools/icon/make_menubar.py
+  python3 tools/icon/make_menubar.py --variants docs/ux/icon   # PNG proofs of the variants
 """
 
+import struct
+import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-PIXEL = 2.0          # points per bitmap pixel
-ROWS = 9
-GAP = 1              # pixels between letters
-PAD_X, PAD_Y = 2.0, 2.0
-SHEAR_EVERY = 2      # rows per 1 pt of italic shift
-
 GLYPHS = {
-    "A": [".###.",
-          "#...#",
-          "#...#",
-          "#...#",
-          "#####",
-          "#...#",
-          "#...#",
-          "#...#",
-          "#...#"],
-    "S": [".####",
-          "#....",
-          "#....",
-          "#....",
-          ".###.",
-          "....#",
-          "....#",
-          "....#",
-          "####."],
+    "A": [".##.",
+          "#..#",
+          "#..#",
+          "####",
+          "#..#",
+          "#..#",
+          "#..#"],
+    "S": [".###",
+          "#...",
+          "#...",
+          ".##.",
+          "...#",
+          "...#",
+          "###."],
     "M": ["#...#",
           "##.##",
           "#.#.#",
           "#...#",
           "#...#",
           "#...#",
-          "#...#",
-          "#...#",
           "#...#"],
-    "R": ["####.",
-          "#...#",
-          "#...#",
-          "#...#",
-          "####.",
-          "#.#..",
-          "#..#.",
-          "#...#",
-          "#...#"],
+    "R": ["###.",
+          "#..#",
+          "#..#",
+          "###.",
+          "#.#.",
+          "#..#",
+          "#..#"],
     "X": ["#...#",
           "#...#",
           ".#.#.",
-          ".#.#.",
           "..#..",
-          ".#.#.",
           ".#.#.",
           "#...#",
           "#...#"],
+    "_": ["....",
+          "....",
+          "....",
+          "....",
+          "....",
+          "....",
+          "####"],
+    "__": ["........",
+           "........",
+           "........",
+           "........",
+           "........",
+           "........",
+           "########"],
 }
-WORD = "ASMRX"
 
-MAX_SHIFT = (ROWS - 1) // SHEAR_EVERY            # points
-WIDTH = PAD_X * 2 + MAX_SHIFT + PIXEL * (sum(len(GLYPHS[c][0]) for c in WORD) + GAP * (len(WORD) - 1))
-HEIGHT = 22.0
+# name: (lines, rows per 1 pt of italic, line gap in pt)
+VARIANTS = {
+    "a-italic": (["ASMR", ["X", "_"]], 4, 2),
+    "b-long-cursor": (["ASMR", ["X", "__"]], 4, 2),
+    "c-upright": (["ASMR", ["X", "_"]], 0, 2),
+}
+CHOSEN = "a-italic"
+
+ROWS = 7
+GAP = 1               # pt between letters
+HEIGHT = 18.0
+PAD_X = 1.0
 
 
-def letter_rects():
-    """[(letter, [(x, y, w, h)])] in points, y up from the bottom, horizontal runs merged."""
+def layout(name):
+    """(width, [(letter, [(x, y, w, h)])]) in points, y up from the bottom, runs merged."""
+    lines, shear_every, line_gap = VARIANTS[name]
+    pad_y = (HEIGHT - 2 * ROWS - line_gap) / 2
+    max_shift = (2 * ROWS + line_gap - 1) // shear_every if shear_every else 0
     out = []
-    col = 0
-    for ch in WORD:
-        rows = GLYPHS[ch]
-        rects = []
-        for i, row in enumerate(rows):
-            r = ROWS - 1 - i                      # row index from the baseline
-            shift = r // SHEAR_EVERY              # whole points
-            y = PAD_Y + r * PIXEL
-            x = 0
-            while x < len(row):
-                if row[x] != "#":
-                    x += 1
-                    continue
-                start = x
-                while x < len(row) and row[x] == "#":
-                    x += 1
-                rects.append((PAD_X + shift + (col + start) * PIXEL, y, (x - start) * PIXEL, PIXEL))
-        out.append((ch, rects))
-        col += len(rows[0]) + GAP
-    return out
+    width = 0.0
+    for li, line in enumerate(lines):
+        letters = list(line) if isinstance(line, str) else line
+        base = pad_y + (ROWS + line_gap if li == 0 else 0)     # first line on top
+        col = 0
+        for ch in letters:
+            rows = GLYPHS[ch]
+            rects = []
+            for i, row in enumerate(rows):
+                r = ROWS - 1 - i
+                y = base + r
+                shift = int((y - pad_y) // shear_every) if shear_every else 0
+                x = 0
+                while x < len(row):
+                    if row[x] != "#":
+                        x += 1
+                        continue
+                    start = x
+                    while x < len(row) and row[x] == "#":
+                        x += 1
+                    rects.append((PAD_X + shift + col + start, y, x - start, 1))
+            out.append((ch, rects))
+            col += len(rows[0]) + GAP
+        width = max(width, PAD_X * 2 + max_shift + col - GAP)
+    return width, out
 
 
-def svg(letters):
+def svg(width, letters):
     def f(v):
         return f"{v:g}"
 
+    n = len(letters)
     lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {f(WIDTH)} {f(HEIGHT)}" '
-        f'width="{f(WIDTH * 8)}" height="{f(HEIGHT * 8)}" shape-rendering="crispEdges">',
-        "  <!-- ASMRX menu bar wordmark. Generated by tools/icon/make_menubar.py; do not edit by hand.",
-        f"       5x9 bitmap letters, {f(PIXEL)} pt pixels, stair-step italic ({SHEAR_EVERY} rows per pt).",
-        "       Preview of the open-popover state: a blue crest passes through the letters. -->",
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {f(width)} {f(HEIGHT)}" '
+        f'width="{f(width * 12)}" height="{f(HEIGHT * 12)}" shape-rendering="crispEdges">',
+        "  <!-- ASMR X_ menu bar mark. Generated by tools/icon/make_menubar.py; do not edit by hand.",
+        "       Bitmap letters on a 1 pt grid in two lines, stair-step italic.",
+        "       Preview of the open-popover state: a blue crest passes through the letters,",
+        "       the cursor blinks. -->",
         "  <style>",
-        "    .l { fill: #1a1a1a; animation: crest 1.8s linear infinite; }",
+        "    .l { fill: #1a1a1a; animation: crest 2.4s linear infinite; }",
         "    @keyframes crest { 0%, 100% { fill: #5b7cff; filter: none; }"
-        " 12% { fill: #9fc0ff; filter: drop-shadow(0 0 1.2px #4f7bff); } 30% { fill: #5b7cff; filter: none; } }",
+        " 10% { fill: #9fc0ff; filter: drop-shadow(0 0 0.8px #4f7bff); } 25% { fill: #5b7cff; filter: none; } }",
+        "    .cursor { animation: crest 2.4s linear infinite, blink 1.1s steps(1) infinite; }",
+        "    @keyframes blink { 50% { opacity: 0; } }",
     ]
-    for i in range(len(letters)):
-        lines.append(f"    #l{i} {{ animation-delay: {i * 0.18:.2f}s; }}")
+    for i in range(n):
+        lines.append(f"    #l{i} {{ animation-delay: {i * 0.16:.2f}s; }}")
     lines.append("  </style>")
-    # y down in SVG.
     for i, (ch, rects) in enumerate(letters):
-        lines.append(f'  <g id="l{i}" class="l" data-letter="{ch}">')
+        cls = "l cursor" if ch.startswith("_") else "l"
+        lines.append(f'  <g id="l{i}" class="{cls}" data-letter="{ch}">')
         for x, y, w, h in rects:
             lines.append(f'    <rect x="{f(x)}" y="{f(HEIGHT - y - h)}" width="{f(w)}" height="{f(h)}"/>')
         lines.append("  </g>")
@@ -127,15 +152,16 @@ def svg(letters):
     return "\n".join(lines) + "\n"
 
 
-def swift(letters):
+def swift(width, letters):
     lines = [
         "// Generated by tools/icon/make_menubar.py from the same geometry as assets/icon/menubar.svg.",
         "// Do not edit by hand.",
         "import CoreGraphics",
         "",
         "enum MenuBarGlyphs {",
-        f"    static let size = CGSize(width: {WIDTH:g}, height: {HEIGHT:g})",
-        "    /// One group of pixel runs per letter of ASMRX, in points, y up, origin bottom-left.",
+        f"    static let size = CGSize(width: {width:g}, height: {HEIGHT:g})",
+        "    /// One group of pixel runs per letter (A, S, M, R, X, then the cursor), in points, y up,",
+        "    /// origin bottom-left.",
         "    static let letters: [[CGRect]] = [",
     ]
     for ch, rects in letters:
@@ -144,6 +170,9 @@ def swift(letters):
         lines.append(f"        [{body}],")
     lines += [
         "    ]",
+        "",
+        "    /// Index of the cursor in `letters`.",
+        f"    static let cursor = {len(letters) - 1}",
         "",
         "    static let letterPaths: [CGPath] = letters.map { rects in",
         "        let p = CGMutablePath()",
@@ -161,11 +190,58 @@ def swift(letters):
     return "\n".join(lines) + "\n"
 
 
+# ---- PNG proofs (no dependencies) -------------------------------------------------------------
+
+def png(path, w, h, pixels):
+    raw = b"".join(b"\x00" + bytes(pixels[y * w * 3:(y + 1) * w * 3]) for y in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    data += chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+    Path(path).write_bytes(data)
+
+
+def proof(path, scale=10):
+    """Each variant on a light and a dark menu bar, enlarged, with a 1:1 and 2:1 copy beside it."""
+    bars = [((236, 236, 238), (20, 20, 20)), ((40, 40, 43), (245, 245, 245))]
+    tiles = []
+    for name in VARIANTS:
+        width, letters = layout(name)
+        tiles.append((name, width, letters))
+    cell_w = int(max(t[1] for t in tiles) * (scale + 3) + 3 * 18 + 24)
+    cell_h = int(HEIGHT * scale + 16)
+    W, H = cell_w * len(tiles), cell_h * len(bars)
+    px = bytearray(W * H * 3)
+
+    def fill(x0, y0, w, h, c):
+        for y in range(max(y0, 0), min(y0 + h, H)):
+            for x in range(max(x0, 0), min(x0 + w, W)):
+                i = (y * W + x) * 3
+                px[i:i + 3] = bytes(c)
+
+    for bi, (bg, fg) in enumerate(bars):
+        fill(0, bi * cell_h, W, cell_h, bg)
+        for ti, (name, width, letters) in enumerate(tiles):
+            ox, oy = ti * cell_w + 8, bi * cell_h + 8
+            for k in (scale, 1, 2):
+                for _, rects in letters:
+                    for x, y, w, h in rects:
+                        fill(int(ox + x * k), int(oy + (HEIGHT - y - h) * k), int(w * k), int(h * k), fg)
+                ox += int(width * k) + 18
+    png(path, W, H, px)
+
+
 def main():
-    letters = letter_rects()
-    (ROOT / "assets/icon/menubar.svg").write_text(svg(letters))
-    (ROOT / "apps/macos/Sources/ASMRX3000/MenuBarGlyphs.swift").write_text(swift(letters))
-    print(f"menubar wordmark: {WIDTH:g} x {HEIGHT:g} pt, {sum(len(r) for _, r in letters)} runs")
+    if "--variants" in sys.argv:
+        out = Path(sys.argv[sys.argv.index("--variants") + 1])
+        out.mkdir(parents=True, exist_ok=True)
+        proof(out / "menubar-variants.png")
+        print("variants:", ", ".join(f"{n} {layout(n)[0]:g} x {HEIGHT:g} pt" for n in VARIANTS), "→", out)
+        return
+    width, letters = layout(CHOSEN)
+    (ROOT / "assets/icon/menubar.svg").write_text(svg(width, letters))
+    (ROOT / "apps/macos/Sources/ASMRX3000/MenuBarGlyphs.swift").write_text(swift(width, letters))
+    print(f"menubar mark ({CHOSEN}): {width:g} x {HEIGHT:g} pt, {sum(len(r) for _, r in letters)} runs")
 
 
 if __name__ == "__main__":

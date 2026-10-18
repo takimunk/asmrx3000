@@ -73,6 +73,7 @@ enum SVGPath {
 enum Icon: Hashable {
     case water, wind, birds, flight, volume
     case play, pause, recenter, headphones, quit
+    case power, chevron, back, more
     case tree, bird, river
     // Child parameters and the newer groups.
     case flow, depth, character, speed, gust, rain, dot
@@ -222,6 +223,15 @@ enum Icon: Hashable {
             ]
         case .quit:
             return [Stroke(d: "M7 7 L17 17 M17 7 L7 17")]
+        case .power:
+            return [Stroke(d: "M8 6.8 C5.6 8.2 4.5 10.4 4.5 12.8 C4.5 17 7.9 20 12 20 C16.1 20 19.5 17 19.5 12.8 C19.5 10.4 18.4 8.2 16 6.8"),
+                    Stroke(d: "M12 3.5 V11.5")]
+        case .chevron:
+            return [Stroke(d: "M9.5 6 L15.5 12 L9.5 18")]
+        case .back:
+            return [Stroke(d: "M14.5 6 L8.5 12 L14.5 18")]
+        case .more:
+            return [Stroke(d: Icon.circle(6, 12, 0.9)), Stroke(d: Icon.circle(12, 12, 0.9)), Stroke(d: Icon.circle(18, 12, 0.9))]
         case .flow:
             return [Stroke(d: "M3 13 C6.5 10 9.5 16 13 13 C15 11.3 17 11.6 20 13 M17 10 L20.5 13 L17 16")]
         case .depth:
@@ -334,7 +344,7 @@ extension Icon {
         case .cricket: return 2 * .pi / 8
         case .bubbles: return 2 * .pi / 4
         case .tone: return 2 * .pi / 3
-        case .play, .pause, .headphones, .quit, .flow, .depth, .character, .speed, .gust, .dot,
+        case .play, .pause, .headphones, .quit, .power, .chevron, .back, .more, .flow, .depth, .character, .speed, .gust, .dot,
              .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain: return nil
         }
     }
@@ -369,7 +379,7 @@ struct IconView: View {
                     }
                 }
             } else {
-                IconLayer(icon: icon, color: NSColor(color), animating: animating, struck: struck, lineWidth: lineWidth)
+                IconLayer(icon: icon, color: NSColor(color), animating: animating && !Motion.reduced, struck: struck, lineWidth: lineWidth)
             }
         }
         .frame(width: size, height: size)
@@ -507,16 +517,49 @@ final class IconLayerView: NSView {
     }
 }
 
-/// The palette: silver-white cut into black, and two greys between.
+/// The palette: greys on a dark panel. The violet belongs to the listener alone.
 enum Ink {
+    /// The popover's ground (the strips' shaders use the same value, PANEL).
+    static let panel = Color(white: 0.078)
+    /// Fields and hovered controls.
+    static let raised = Color(white: 0.13)
+    static let pressed = Color(white: 0.19)
+    static let hairline = Color(white: 0.21)
+    /// Primary text and active icons.
+    static let paper = Color(white: 0.93)
+    /// Secondary text, resting icons.
+    static let graphite = Color(white: 0.62)
+    /// Hints, disabled.
+    static let ash = Color(white: 0.42)
     static let black = Color(white: 0)
-    static let paper = Color(white: 0.94)
-    static let graphite = Color(white: 0.55)
-    static let ash = Color(white: 0.2)
+    static let violet = Color(red: 0.53, green: 0.33, blue: 1.0)
 
-    /// Coppice Mono: the app's own literary serif on a terminal grid (tools/font/coppice.py), bundled via
-    /// ATSApplicationFontsPath. One upright style only: `italic` is kept so call sites read the same, but it
-    /// resolves to the same face so styles never mix.
-    static func text(_ size: CGFloat = 12) -> Font { .custom("CoppiceMono-Regular", size: size) }
-    static func italic(_ size: CGFloat = 12) -> Font { text(size) }
+    /// Coppice Mono (tools/font/coppice.py), bundled via ATSApplicationFontsPath. One face, four sizes:
+    static func text(_ size: CGFloat = Size.body) -> Font { .custom("CoppiceMono-Regular", size: size) }
+    static func italic(_ size: CGFloat = Size.body) -> Font { text(size) }
+
+    enum Size {
+        /// Hints and the spectrogram's scale.
+        static let caption: CGFloat = 11
+        /// Labels and values.
+        static let body: CGFloat = 12
+        /// The drawer's title and the selection.
+        static let title: CGFloat = 13
+        /// What the user writes.
+        static let prompt: CGFloat = 14
+    }
+}
+
+/// Spacing on a 4 pt grid.
+enum Grid {
+    static let x1: CGFloat = 4
+    static let x2: CGFloat = 8
+    static let x3: CGFloat = 12
+    static let x4: CGFloat = 16
+    static let x6: CGFloat = 24
+}
+
+/// System "Reduce motion": decorative animation stops (icons, the menu bar wave, the cursor).
+enum Motion {
+    static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 }

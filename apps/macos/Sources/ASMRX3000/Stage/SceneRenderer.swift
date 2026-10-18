@@ -14,9 +14,11 @@ private struct FrameUniforms {
     var plumb: SIMD4<Float>
     var sun: SIMD4<Float>
     var env: SIMD4<Float>
-    var gaze: SIMD4<Float>      // dot screen x, y px, px per metre, live (1) or resting (0)
-    var gazeHead: SIMD4<Float>  // head screen x, y px, dot distance from the eye, visible
+    var gaze: SIMD4<Float>      // listener point screen x, y px, px per metre, live (1) or resting (0)
+    var gazeHead: SIMD4<Float>  // head forward direction xyz, visible
     var haze: SIMD4<Float>      // horizon y px
+    var listener: SIMD4<Float>  // head position xyz, distance from the eye
+    var invViewProj: simd_float4x4
 }
 
 private struct Instance {
@@ -128,17 +130,19 @@ final class SceneRenderer {
             bracket: SIMD4(0, 0, -1, -1), hoverBracket: SIMD4(0, 0, -1, -1),
             plumb: .zero, sun: SIMD4(Self.sun, 0),
             env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0),
-            gaze: .zero, gazeHead: .zero, haze: .zero
+            gaze: .zero, gazeHead: .zero, haze: .zero, listener: .zero, invViewProj: vp.inverse
         )
         // The horizon: where level ground meets the sky, straight ahead of the camera.
         let look = cam.target - cam.eye
         let level = simd_normalize(SIMD3(look.x, look.y, 0))
         u.haze.x = (proj.project(cam.eye + level * 5000).map { $0.point.y } ?? -1000) * scale
-        let gazeAt = stage.gazePoint
-        if let d = proj.project(gazeAt), let h = proj.project(SIMD3(0, 0, 0)) {
+        // The listener is a point of light at the head; the beam goes where the head looks.
+        let headAt = SIMD3<Float>(0, 0, 0)
+        if let h = proj.project(headAt) {
             let focal = size.y * 0.5 / tan(cam.fovY / 2)
-            u.gaze = SIMD4(d.point.x * scale, d.point.y * scale, focal / d.w * scale, stage.headPose.live ? 1 : 0)
-            u.gazeHead = SIMD4(h.point.x * scale, h.point.y * scale, simd_distance(cam.eye, gazeAt), 1)
+            u.gaze = SIMD4(h.point.x * scale, h.point.y * scale, focal / h.w * scale, stage.headPose.live ? 1 : 0)
+            u.gazeHead = SIMD4(simd_normalize(stage.gazePoint), 1)
+            u.listener = SIMD4(headAt, simd_distance(cam.eye, headAt))
         }
         let instances = buildInstances(time: time, river: river, proj: proj, scale: scale, u: &u)
         if let t = stage.thing(stage.selection) {
@@ -321,11 +325,6 @@ final class SceneRenderer {
             guard let mesh = lib[name], abs(x - Stage.riverAt(y, river).x) > 4 else { continue }
             let m = Self.transform(SIMD3(x, y, Terrain.farHeight(x, y) - 0.1), yaw: x + y * 0.3, scale: s) * Self.slender
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, 0, 6.6), anim: SIMD4(0, x, localWind(y), 1))))
-        }
-        if let herm = lib["herm"] {
-            // The listener: the bust turns with the head.
-            let m = Self.transform(SIMD3(0, 0, 0), yaw: stage.headPose.yaw, scale: Self.hermScale)
-            list.append((herm, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
         }
         if !flying, let ruin = lib["ruin"] {
             let r = Self.ruin

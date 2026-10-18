@@ -3,20 +3,26 @@
 import CoreGraphics
 
 enum MenuBarGlyphs {
-    static let size = CGSize(width: 66, height: 22)
-    /// One group of pixel runs per letter of ASMRX, in points, y up, origin bottom-left.
+    static let size = CGSize(width: 25, height: 18)
+    /// One group of pixel runs per letter (A, S, M, R, X, then the cursor), in points, y up,
+    /// origin bottom-left.
     static let letters: [[CGRect]] = [
         // A
-        [CGRect(x: 8, y: 18, width: 6, height: 2), CGRect(x: 5, y: 16, width: 2, height: 2), CGRect(x: 13, y: 16, width: 2, height: 2), CGRect(x: 5, y: 14, width: 2, height: 2), CGRect(x: 13, y: 14, width: 2, height: 2), CGRect(x: 4, y: 12, width: 2, height: 2), CGRect(x: 12, y: 12, width: 2, height: 2), CGRect(x: 4, y: 10, width: 10, height: 2), CGRect(x: 3, y: 8, width: 2, height: 2), CGRect(x: 11, y: 8, width: 2, height: 2), CGRect(x: 3, y: 6, width: 2, height: 2), CGRect(x: 11, y: 6, width: 2, height: 2), CGRect(x: 2, y: 4, width: 2, height: 2), CGRect(x: 10, y: 4, width: 2, height: 2), CGRect(x: 2, y: 2, width: 2, height: 2), CGRect(x: 10, y: 2, width: 2, height: 2)],
+        [CGRect(x: 5, y: 16, width: 2, height: 1), CGRect(x: 4, y: 15, width: 1, height: 1), CGRect(x: 7, y: 15, width: 1, height: 1), CGRect(x: 4, y: 14, width: 1, height: 1), CGRect(x: 7, y: 14, width: 1, height: 1), CGRect(x: 4, y: 13, width: 4, height: 1), CGRect(x: 3, y: 12, width: 1, height: 1), CGRect(x: 6, y: 12, width: 1, height: 1), CGRect(x: 3, y: 11, width: 1, height: 1), CGRect(x: 6, y: 11, width: 1, height: 1), CGRect(x: 3, y: 10, width: 1, height: 1), CGRect(x: 6, y: 10, width: 1, height: 1)],
         // S
-        [CGRect(x: 20, y: 18, width: 8, height: 2), CGRect(x: 17, y: 16, width: 2, height: 2), CGRect(x: 17, y: 14, width: 2, height: 2), CGRect(x: 16, y: 12, width: 2, height: 2), CGRect(x: 18, y: 10, width: 6, height: 2), CGRect(x: 23, y: 8, width: 2, height: 2), CGRect(x: 23, y: 6, width: 2, height: 2), CGRect(x: 22, y: 4, width: 2, height: 2), CGRect(x: 14, y: 2, width: 8, height: 2)],
+        [CGRect(x: 10, y: 16, width: 3, height: 1), CGRect(x: 9, y: 15, width: 1, height: 1), CGRect(x: 9, y: 14, width: 1, height: 1), CGRect(x: 10, y: 13, width: 2, height: 1), CGRect(x: 11, y: 12, width: 1, height: 1), CGRect(x: 11, y: 11, width: 1, height: 1), CGRect(x: 8, y: 10, width: 3, height: 1)],
         // M
-        [CGRect(x: 30, y: 18, width: 2, height: 2), CGRect(x: 38, y: 18, width: 2, height: 2), CGRect(x: 29, y: 16, width: 4, height: 2), CGRect(x: 35, y: 16, width: 4, height: 2), CGRect(x: 29, y: 14, width: 2, height: 2), CGRect(x: 33, y: 14, width: 2, height: 2), CGRect(x: 37, y: 14, width: 2, height: 2), CGRect(x: 28, y: 12, width: 2, height: 2), CGRect(x: 36, y: 12, width: 2, height: 2), CGRect(x: 28, y: 10, width: 2, height: 2), CGRect(x: 36, y: 10, width: 2, height: 2), CGRect(x: 27, y: 8, width: 2, height: 2), CGRect(x: 35, y: 8, width: 2, height: 2), CGRect(x: 27, y: 6, width: 2, height: 2), CGRect(x: 35, y: 6, width: 2, height: 2), CGRect(x: 26, y: 4, width: 2, height: 2), CGRect(x: 34, y: 4, width: 2, height: 2), CGRect(x: 26, y: 2, width: 2, height: 2), CGRect(x: 34, y: 2, width: 2, height: 2)],
+        [CGRect(x: 14, y: 16, width: 1, height: 1), CGRect(x: 18, y: 16, width: 1, height: 1), CGRect(x: 14, y: 15, width: 2, height: 1), CGRect(x: 17, y: 15, width: 2, height: 1), CGRect(x: 14, y: 14, width: 1, height: 1), CGRect(x: 16, y: 14, width: 1, height: 1), CGRect(x: 18, y: 14, width: 1, height: 1), CGRect(x: 14, y: 13, width: 1, height: 1), CGRect(x: 18, y: 13, width: 1, height: 1), CGRect(x: 13, y: 12, width: 1, height: 1), CGRect(x: 17, y: 12, width: 1, height: 1), CGRect(x: 13, y: 11, width: 1, height: 1), CGRect(x: 17, y: 11, width: 1, height: 1), CGRect(x: 13, y: 10, width: 1, height: 1), CGRect(x: 17, y: 10, width: 1, height: 1)],
         // R
-        [CGRect(x: 42, y: 18, width: 8, height: 2), CGRect(x: 41, y: 16, width: 2, height: 2), CGRect(x: 49, y: 16, width: 2, height: 2), CGRect(x: 41, y: 14, width: 2, height: 2), CGRect(x: 49, y: 14, width: 2, height: 2), CGRect(x: 40, y: 12, width: 2, height: 2), CGRect(x: 48, y: 12, width: 2, height: 2), CGRect(x: 40, y: 10, width: 8, height: 2), CGRect(x: 39, y: 8, width: 2, height: 2), CGRect(x: 43, y: 8, width: 2, height: 2), CGRect(x: 39, y: 6, width: 2, height: 2), CGRect(x: 45, y: 6, width: 2, height: 2), CGRect(x: 38, y: 4, width: 2, height: 2), CGRect(x: 46, y: 4, width: 2, height: 2), CGRect(x: 38, y: 2, width: 2, height: 2), CGRect(x: 46, y: 2, width: 2, height: 2)],
+        [CGRect(x: 20, y: 16, width: 3, height: 1), CGRect(x: 20, y: 15, width: 1, height: 1), CGRect(x: 23, y: 15, width: 1, height: 1), CGRect(x: 20, y: 14, width: 1, height: 1), CGRect(x: 23, y: 14, width: 1, height: 1), CGRect(x: 20, y: 13, width: 3, height: 1), CGRect(x: 19, y: 12, width: 1, height: 1), CGRect(x: 21, y: 12, width: 1, height: 1), CGRect(x: 19, y: 11, width: 1, height: 1), CGRect(x: 22, y: 11, width: 1, height: 1), CGRect(x: 19, y: 10, width: 1, height: 1), CGRect(x: 22, y: 10, width: 1, height: 1)],
         // X
-        [CGRect(x: 54, y: 18, width: 2, height: 2), CGRect(x: 62, y: 18, width: 2, height: 2), CGRect(x: 53, y: 16, width: 2, height: 2), CGRect(x: 61, y: 16, width: 2, height: 2), CGRect(x: 55, y: 14, width: 2, height: 2), CGRect(x: 59, y: 14, width: 2, height: 2), CGRect(x: 54, y: 12, width: 2, height: 2), CGRect(x: 58, y: 12, width: 2, height: 2), CGRect(x: 56, y: 10, width: 2, height: 2), CGRect(x: 53, y: 8, width: 2, height: 2), CGRect(x: 57, y: 8, width: 2, height: 2), CGRect(x: 53, y: 6, width: 2, height: 2), CGRect(x: 57, y: 6, width: 2, height: 2), CGRect(x: 50, y: 4, width: 2, height: 2), CGRect(x: 58, y: 4, width: 2, height: 2), CGRect(x: 50, y: 2, width: 2, height: 2), CGRect(x: 58, y: 2, width: 2, height: 2)],
+        [CGRect(x: 2, y: 7, width: 1, height: 1), CGRect(x: 6, y: 7, width: 1, height: 1), CGRect(x: 2, y: 6, width: 1, height: 1), CGRect(x: 6, y: 6, width: 1, height: 1), CGRect(x: 3, y: 5, width: 1, height: 1), CGRect(x: 5, y: 5, width: 1, height: 1), CGRect(x: 3, y: 4, width: 1, height: 1), CGRect(x: 2, y: 3, width: 1, height: 1), CGRect(x: 4, y: 3, width: 1, height: 1), CGRect(x: 1, y: 2, width: 1, height: 1), CGRect(x: 5, y: 2, width: 1, height: 1), CGRect(x: 1, y: 1, width: 1, height: 1), CGRect(x: 5, y: 1, width: 1, height: 1)],
+        // _
+        [CGRect(x: 7, y: 1, width: 4, height: 1)],
     ]
+
+    /// Index of the cursor in `letters`.
+    static let cursor = 5
 
     static let letterPaths: [CGPath] = letters.map { rects in
         let p = CGMutablePath()

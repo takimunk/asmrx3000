@@ -42,8 +42,6 @@ final class ControlsModel: ObservableObject {
 
 /// Small orientation labels over the scene; published only when their text or place changes.
 final class SceneLabels: ObservableObject {
-    /// Where "ahead" sits on the ground in front of the listener, in scene points.
-    @Published var ahead: CGPoint?
     /// Time of day, e.g. "21:30".
     @Published var time = ""
     /// Where the head is turned, e.g. "35° left, 15° up", or nil while head tracking is off.
@@ -80,6 +78,10 @@ final class Stage {
     var sceneSize: SIMD2<Float> = .zero
     let controls = ControlsModel()
     private var controlBuffer: [Control] = []
+
+    /// Keyboard focus hand-over between the scene (arrows move things) and the prompt.
+    var focusPrompt: (() -> Void)?
+    var focusScene: (() -> Void)?
 
     var camera = OrbitCamera()
     /// Views drawn in the scene view's frame (see StageView).
@@ -237,10 +239,6 @@ final class Stage {
 
     func updateLabels() {
         guard sceneSize.x > 0 else { return }
-        let proj = Projector(camera: viewCamera, size: sceneSize)
-        let a = SIMD3<Float>(2.4, 0, Terrain.height(2.4, 0))
-        let point = proj.project(a).map { CGPoint(x: CGFloat($0.point.x.rounded()), y: CGFloat($0.point.y.rounded())) }
-        if labels.ahead != point { labels.ahead = point }
 
         let h = hour
         let minutes = Int((h * 60).rounded()) % (24 * 60)
