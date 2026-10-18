@@ -1,0 +1,168 @@
+import CAsmr
+import simd
+
+/// What the scene needs to draw flight mode (ASMR_PARAM_FLIGHT): the streamed landscape is
+/// reported listener-relative, so the diorama stays centred on the herm while the ground,
+/// trees and water pass under it.
+struct FlightView {
+    /// Cross-fade 0 (scene) .. 1 (flying); objects switch at 0.5.
+    var mix: Float = 0
+    /// Ears above the ground, m: the diorama sinks by `drop` so the herm flies at that height.
+    var altitude: Float = 1.7
+    /// Distance flown, m: scrolls the ground relief.
+    var odometer: Float = 0
+    /// Nearest river crossing the disc, as the shader's river points (x, y, z, level).
+    var river: [SIMD4<Float>] = []
+    /// Lake shores within reach (listener-relative outlines).
+    var lakes: [[SIMD2<Float>]] = []
+
+    var active: Bool { mix > 0.5 }
+    /// How far the ground sits below the diorama's usual ground.
+    var drop: Float { active ? max(altitude - 1.7, 0) : 0 }
+}
+
+extension Stage {
+    /// Reads the flight telemetry and the shapes of rivers and lakes near the disc.
+    func readFlight() {
+        flight.mix = telemetry.flight
+        flight.altitude = telemetry.altitude
+        flight.odometer = telemetry.odometer
+        flight.river.removeAll(keepingCapacity: true)
+        flight.lakes.removeAll(keepingCapacity: true)
+        guard flight.active else { return }
+        var pts: [SIMD3<Float>] = []
+        var bestRiver: (Float, [SIMD4<Float>])?
+        let reach = Terrain.radius + 6
+        for o in objects where o.kind == UInt32(ASMR_OBJECT_RIVER) || o.kind == UInt32(ASMR_OBJECT_LAKE) {
+            audio.readObjectPath(o.id, into: &pts)
+            guard pts.count >= 2 else { continue }
+            if o.kind == UInt32(ASMR_OBJECT_LAKE) {
+                if pts.contains(where: { simd_length(SIMD2($0.x, $0.y)) < reach + 40 }) {
+                    flight.lakes.append(pts.map { SIMD2($0.x, $0.y) })
+                }
+                continue
+            }
+            // The river as x(y) across the disc (rivers cross the flight path), in the
+            // diorama's frame (bed at the usual river height).
+            let near = pts.filter { abs($0.y) < reach + 8 }.sorted { $0.y < $1.y }
+            guard near.count >= 2 else { continue }
+            let d = near.map { abs($0.x) }.min() ?? .infinity
+            if d < reach, bestRiver == nil || d < bestRiver!.0 {
+                bestRiver = (d, near.map { SIMD4($0.x, $0.y, -1.2, 0.5) })
+            }
+        }
+        if let r = bestRiver?.1 {
+            flight.river = r.count > 8 ? (0..<8).map { r[$0 * (r.count - 1) / 7] } : r
+        }
+    }
+}
+
+/// The ground disc in flight: the relief scrolls with the distance flown, rivers and lakes
+/// cut through it. Coarser than the scene's terrain because it is rebuilt every frame.
+enum FlightGround {
+    static let rings = 44
+    static let segments = 132
+
+    /// Relief at a listener-relative point (the world slides by under the herm).
+    static func height(_ x: Float, _ y: Float, odometer: Float) -> Float {
+        let wx = x + odometer.truncatingRemainder(dividingBy: 4096)
+        return Terrain.height(wx, y) + 0.07 * sin(wx * 2.3 + 0.7) * sin(y * 1.9)
+    }
+
+    static func inside(_ p: SIMD2<Float>, _ poly: [SIMD2<Float>]) -> Bool {
+        var c = false
+        var j = poly.count - 1
+        for i in 0..<poly.count {
+            let a = poly[i], b = poly[j]
+            if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x { c.toggle() }
+            j = i
+        }
+        return c
+    }
+
+    static func build(_ f: FlightView) -> Mesh? {
+        let odo = f.odometer
+        func surface(_ x: Float, _ y: Float) -> (Float, Float) {
+            let base = height(x, y, odometer: odo)
+            for lake in f.lakes where inside(SIMD2(x, y), lake) {
+                return (-1.95, Part.water)
+            }
+            guard !f.river.isEmpty else { return (base, Part.ground) }
+            let rv = Stage.riverAt(y, f.river)
+            let dist = abs(x - rv.x)
+            let wl = Terrain.waterLevel(rv.y)
+            let t = min(max((dist - 0.5) / 2.0, 0), 1)
+            let bank = t * t * (3 - 2 * t)
+            let bed = wl - 0.42 + 0.12 * dist
+            let ground = bed + (base - bed) * bank
+            if dist < 2.2 && ground < wl - 0.02 { return (wl, Part.water) }
+            return (max(ground, wl + 0.05), Part.ground)
+        }
+        func normal(_ x: Float, _ y: Float) -> SIMD3<Float> {
+            let e: Float = 0.12
+            let dx = surface(x + e, y).0 - surface(x - e, y).0
+            let dy = surface(x, y + e).0 - surface(x, y - e).0
+            return simd_normalize(SIMD3(-dx, -dy, 2 * e))
+        }
+        var verts: [MeshVertex] = []
+        var idx: [UInt32] = []
+        verts.reserveCapacity(rings * segments + 2 * segments + 1)
+        let (cz, cp) = surface(0, 0)
+        verts.append(MeshVertex(SIMD3(0, 0, cz), normal(0, 0), cp))
+        for r in 1...rings {
+            let radius = Terrain.radius * Float(r) / Float(rings)
+            for s in 0..<segments {
+                let a = 2 * Float.pi * Float(s) / Float(segments)
+                let x = radius * cos(a), y = radius * sin(a)
+                let (z, part) = surface(x, y)
+                verts.append(MeshVertex(SIMD3(x, y, z), normal(x, y), part))
+            }
+        }
+        func ring(_ r: Int, _ s: Int) -> UInt32 { UInt32(1 + (r - 1) * segments + (s % segments)) }
+        for s in 0..<segments { idx += [0, ring(1, s), ring(1, s + 1)] }
+        for r in 1..<rings {
+            for s in 0..<segments {
+                let a = ring(r, s), b = ring(r, s + 1), c = ring(r + 1, s), d = ring(r + 1, s + 1)
+                idx += [a, c, b, b, c, d]
+            }
+        }
+        let wallTop = UInt32(verts.count)
+        for s in 0..<segments {
+            let rim = verts[Int(ring(rings, s))]
+            let n = simd_normalize(SIMD3(rim.position.x, rim.position.y, 0))
+            verts.append(MeshVertex(rim.position, n, Part.section))
+            verts.append(MeshVertex(SIMD3(rim.position.x, rim.position.y, TerrainMesh.bottom), n, Part.section))
+        }
+        for s in 0..<segments {
+            let a = wallTop + UInt32(2 * s), b = wallTop + UInt32(2 * ((s + 1) % segments))
+            idx += [a, b, a + 1, b, b + 1, a + 1]
+        }
+        return Mesh.make(verts, idx)
+    }
+
+    /// A unit boulder (radius 1, resting on z = 0), stone.
+    static func makeBoulder() -> Mesh? {
+        var v: [MeshVertex] = []
+        var idx: [UInt32] = []
+        let rings = 6, segs = 9
+        func bump(_ a: Float, _ b: Float) -> Float { 1 + 0.16 * sin(a * 3.1 + 0.4) * cos(b * 2.3) + 0.08 * sin(a * 7 + b * 5) }
+        for i in 0...rings {
+            let b = Float.pi * (Float(i) / Float(rings) - 0.5)
+            for j in 0..<segs {
+                let a = 2 * Float.pi * Float(j) / Float(segs)
+                let r = bump(a, b)
+                let n = SIMD3(cos(b) * cos(a), cos(b) * sin(a), sin(b))
+                // Flattened, half sunk in the ground.
+                v.append(MeshVertex(SIMD3(n.x * r, n.y * r, 0.35 + n.z * r * 0.7), n, Part.stone))
+            }
+        }
+        for i in 0..<rings {
+            for j in 0..<segs {
+                let a = UInt32(i * segs + j), b = UInt32(i * segs + (j + 1) % segs)
+                let c = a + UInt32(segs), d = b + UInt32(segs)
+                idx += [a, b, c, b, d, c]
+            }
+        }
+        return Mesh.make(v, idx)
+    }
+}
