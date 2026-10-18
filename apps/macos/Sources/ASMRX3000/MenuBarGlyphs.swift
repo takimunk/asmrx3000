@@ -3,8 +3,8 @@
 import CoreGraphics
 
 enum MenuBarGlyphs {
-    static let size = CGSize(width: 25, height: 18)
-    /// One group of pixel runs per letter (A, S, M, R, X, then the cursor), in points, y up,
+    static let size = CGSize(width: 26, height: 18)
+    /// One group of pixel runs per letter (A, S, M, R, then X, 3, 0, 0, 0), in points, y up,
     /// origin bottom-left.
     static let letters: [[CGRect]] = [
         // A
@@ -17,12 +17,18 @@ enum MenuBarGlyphs {
         [CGRect(x: 20, y: 16, width: 3, height: 1), CGRect(x: 20, y: 15, width: 1, height: 1), CGRect(x: 23, y: 15, width: 1, height: 1), CGRect(x: 20, y: 14, width: 1, height: 1), CGRect(x: 23, y: 14, width: 1, height: 1), CGRect(x: 20, y: 13, width: 3, height: 1), CGRect(x: 19, y: 12, width: 1, height: 1), CGRect(x: 21, y: 12, width: 1, height: 1), CGRect(x: 19, y: 11, width: 1, height: 1), CGRect(x: 22, y: 11, width: 1, height: 1), CGRect(x: 19, y: 10, width: 1, height: 1), CGRect(x: 22, y: 10, width: 1, height: 1)],
         // X
         [CGRect(x: 2, y: 7, width: 1, height: 1), CGRect(x: 6, y: 7, width: 1, height: 1), CGRect(x: 2, y: 6, width: 1, height: 1), CGRect(x: 6, y: 6, width: 1, height: 1), CGRect(x: 3, y: 5, width: 1, height: 1), CGRect(x: 5, y: 5, width: 1, height: 1), CGRect(x: 3, y: 4, width: 1, height: 1), CGRect(x: 2, y: 3, width: 1, height: 1), CGRect(x: 4, y: 3, width: 1, height: 1), CGRect(x: 1, y: 2, width: 1, height: 1), CGRect(x: 5, y: 2, width: 1, height: 1), CGRect(x: 1, y: 1, width: 1, height: 1), CGRect(x: 5, y: 1, width: 1, height: 1)],
-        // _
-        [CGRect(x: 7, y: 1, width: 4, height: 1)],
+        // 3
+        [CGRect(x: 8, y: 7, width: 3, height: 1), CGRect(x: 10, y: 6, width: 1, height: 1), CGRect(x: 10, y: 5, width: 1, height: 1), CGRect(x: 8, y: 4, width: 2, height: 1), CGRect(x: 9, y: 3, width: 1, height: 1), CGRect(x: 9, y: 2, width: 1, height: 1), CGRect(x: 7, y: 1, width: 3, height: 1)],
+        // 0
+        [CGRect(x: 13, y: 7, width: 1, height: 1), CGRect(x: 12, y: 6, width: 1, height: 1), CGRect(x: 14, y: 6, width: 1, height: 1), CGRect(x: 12, y: 5, width: 1, height: 1), CGRect(x: 14, y: 5, width: 1, height: 1), CGRect(x: 11, y: 4, width: 1, height: 1), CGRect(x: 13, y: 4, width: 1, height: 1), CGRect(x: 11, y: 3, width: 1, height: 1), CGRect(x: 13, y: 3, width: 1, height: 1), CGRect(x: 11, y: 2, width: 1, height: 1), CGRect(x: 13, y: 2, width: 1, height: 1), CGRect(x: 12, y: 1, width: 1, height: 1)],
+        // 0
+        [CGRect(x: 17, y: 7, width: 1, height: 1), CGRect(x: 16, y: 6, width: 1, height: 1), CGRect(x: 18, y: 6, width: 1, height: 1), CGRect(x: 16, y: 5, width: 1, height: 1), CGRect(x: 18, y: 5, width: 1, height: 1), CGRect(x: 15, y: 4, width: 1, height: 1), CGRect(x: 17, y: 4, width: 1, height: 1), CGRect(x: 15, y: 3, width: 1, height: 1), CGRect(x: 17, y: 3, width: 1, height: 1), CGRect(x: 15, y: 2, width: 1, height: 1), CGRect(x: 17, y: 2, width: 1, height: 1), CGRect(x: 16, y: 1, width: 1, height: 1)],
+        // 0
+        [CGRect(x: 21, y: 7, width: 1, height: 1), CGRect(x: 20, y: 6, width: 1, height: 1), CGRect(x: 22, y: 6, width: 1, height: 1), CGRect(x: 20, y: 5, width: 1, height: 1), CGRect(x: 22, y: 5, width: 1, height: 1), CGRect(x: 19, y: 4, width: 1, height: 1), CGRect(x: 21, y: 4, width: 1, height: 1), CGRect(x: 19, y: 3, width: 1, height: 1), CGRect(x: 21, y: 3, width: 1, height: 1), CGRect(x: 19, y: 2, width: 1, height: 1), CGRect(x: 21, y: 2, width: 1, height: 1), CGRect(x: 20, y: 1, width: 1, height: 1)],
     ]
 
-    /// Index of the cursor in `letters`.
-    static let cursor = 5
+    /// Index of the blinking cursor in `letters`, if the mark has one.
+    static let cursor: Int? = nil
 
     static let letterPaths: [CGPath] = letters.map { rects in
         let p = CGMutablePath()

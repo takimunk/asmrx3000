@@ -72,7 +72,7 @@ enum SVGPath {
 /// a time `t` (seconds) and a level so it can animate with its sound.
 enum Icon: Hashable {
     case water, wind, birds, flight, volume
-    case play, pause, recenter, headphones, quit
+    case play, pause, recenter, headphones, head, quit
     case power, chevron, back, more
     case tree, bird, river
     // Child parameters and the newer groups.
@@ -83,7 +83,7 @@ enum Icon: Hashable {
     /// scene's time of day, so the environment shows a sun or a moon.
     static func forControl(_ c: Control, hour: Float? = nil) -> Icon {
         let daylight = hour.map { $0 >= 6 && $0 < 19 } ?? true
-        if c.isMacro {
+        if c.isMacro || c.isLevel {
             switch Int(c.group) {
             case ASMR_GROUP_WATER: return .water
             case ASMR_GROUP_WIND: return .wind
@@ -235,6 +235,15 @@ enum Icon: Hashable {
                 Stroke(d: "M5 15 V12 C5 3.5 19 3.5 19 12 V15"),
                 Stroke(d: "M3.5 14 H7 V20 H3.5 Z M17 14 H20.5 V20 H17 Z"),
             ]
+        case .head:
+            // A head seen from the front with an AirPod in each ear, and the arc of a turn above.
+            let turn = sin(t * 2) * 0.8
+            return [
+                Stroke(d: "M12 6.5 C15 6.5 16.6 8.8 16.6 11.6 C16.6 14.8 14.6 17 12 17 C9.4 17 7.4 14.8 7.4 11.6 C7.4 8.8 9 6.5 12 6.5 Z"),
+                Stroke(d: "M6.6 10.6 C5.4 10.6 5 11.4 5 12 C5 12.7 5.5 13.2 6.2 13.2 V16.4 M17.4 10.6 C18.6 10.6 19 11.4 19 12 C19 12.7 18.5 13.2 17.8 13.2 V16.4"),
+                Stroke(d: "M\(f(7.5 + turn)) 3.6 Q12 1.4 \(f(16.5 + turn)) 3.6 M\(f(14.6 + turn)) 2.4 L\(f(16.5 + turn)) 3.6 L\(f(15 + turn)) 5.2", opacity: 0.75),
+                Stroke(d: "M8.5 21.5 C8.5 19.6 10 18.6 12 18.6 C14 18.6 15.5 19.6 15.5 21.5", opacity: 0.6),
+            ]
         case .quit:
             return [Stroke(d: "M7 7 L17 17 M17 7 L7 17")]
         case .power:
@@ -349,6 +358,7 @@ extension Icon {
         case .flight: return 2 * .pi / 1.6
         case .volume: return 2 * .pi / 6
         case .recenter: return 2 * .pi / 3
+        case .head: return .pi
         case .tree: return 2 * .pi / 1.5
         case .wind: return 4.0 / 3.0
         case .rain: return 0.8
@@ -428,6 +438,7 @@ final class IconLayerView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.isGeometryFlipped = true
+        strike.isHidden = true
     }
 
     @available(*, unavailable)
@@ -438,6 +449,17 @@ final class IconLayerView: NSView {
     override func layout() {
         super.layout()
         if bounds.size != builtSize, let icon { build(icon) }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if newSize != builtSize { needsLayout = true }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        (strokes + [strike]).forEach { $0.contentsScale = scale }
     }
 
     func configure(icon: Icon, color: NSColor, animating: Bool, struck: Bool, lineWidth: CGFloat) {
@@ -461,14 +483,24 @@ final class IconLayerView: NSView {
         return SVGPath.parse(d).cgPath.copy(using: &t) ?? CGMutablePath()
     }
 
+    /// Builds the stroke layers already coloured: SwiftUI often configures the view before it has
+    /// a size, so the layers are made later, in layout(), and must not wait for the next
+    /// configure (a hover) to get their colour. They used to: the pictograms were invisible
+    /// until hovered.
     private func build(_ icon: Icon) {
         builtSize = bounds.size
         strokes.forEach { $0.removeFromSuperlayer() }
         strokes = []
         guard bounds.width > 0 else { return }
         let k = bounds.width / 24
+        let scale = window?.backingScaleFactor ?? 2
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         for s in icon.strokes(t: 0, level: 0.6) {
             let l = CAShapeLayer()
+            l.contentsScale = scale
+            l.strokeColor = color.cgColor
             l.fillColor = nil
             l.lineWidth = lineWidth
             l.lineCap = .round
@@ -483,8 +515,12 @@ final class IconLayerView: NSView {
         strike.lineWidth = lineWidth
         strike.lineCap = .round
         strike.fillColor = nil
+        strike.strokeColor = color.cgColor
+        strike.contentsScale = scale
         layer?.addSublayer(strike)
+        let wasRunning = running
         running = false
+        if wasRunning { setRunning(true) }
     }
 
     private func setRunning(_ on: Bool) {
