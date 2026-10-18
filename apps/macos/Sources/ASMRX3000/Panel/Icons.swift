@@ -428,6 +428,7 @@ final class IconLayerView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.isGeometryFlipped = true
+        strike.isHidden = true
     }
 
     @available(*, unavailable)
@@ -438,6 +439,17 @@ final class IconLayerView: NSView {
     override func layout() {
         super.layout()
         if bounds.size != builtSize, let icon { build(icon) }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if newSize != builtSize { needsLayout = true }
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        (strokes + [strike]).forEach { $0.contentsScale = scale }
     }
 
     func configure(icon: Icon, color: NSColor, animating: Bool, struck: Bool, lineWidth: CGFloat) {
@@ -461,14 +473,24 @@ final class IconLayerView: NSView {
         return SVGPath.parse(d).cgPath.copy(using: &t) ?? CGMutablePath()
     }
 
+    /// Builds the stroke layers already coloured: SwiftUI often configures the view before it has
+    /// a size, so the layers are made later, in layout(), and must not wait for the next
+    /// configure (a hover) to get their colour. They used to: the pictograms were invisible
+    /// until hovered.
     private func build(_ icon: Icon) {
         builtSize = bounds.size
         strokes.forEach { $0.removeFromSuperlayer() }
         strokes = []
         guard bounds.width > 0 else { return }
         let k = bounds.width / 24
+        let scale = window?.backingScaleFactor ?? 2
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         for s in icon.strokes(t: 0, level: 0.6) {
             let l = CAShapeLayer()
+            l.contentsScale = scale
+            l.strokeColor = color.cgColor
             l.fillColor = nil
             l.lineWidth = lineWidth
             l.lineCap = .round
@@ -483,8 +505,12 @@ final class IconLayerView: NSView {
         strike.lineWidth = lineWidth
         strike.lineCap = .round
         strike.fillColor = nil
+        strike.strokeColor = color.cgColor
+        strike.contentsScale = scale
         layer?.addSublayer(strike)
+        let wasRunning = running
         running = false
+        if wasRunning { setRunning(true) }
     }
 
     private func setRunning(_ on: Bool) {
