@@ -65,16 +65,3 @@ pub fn soft_clip(x: f32) -> f32 {
         y.copysign(x)
     }
 }
-
-/// Dot product with 8 independent accumulators so LLVM can vectorise it (NEON / SSE).
-/// Both slices must have the same length, a multiple of 8.
-#[inline(always)]
-pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    let mut acc = [0.0f32; 8];
-    for (ca, cb) in a.chunks_exact(8).zip(b.chunks_exact(8)) {
-        for k in 0..8 {
-            acc[k] += ca[k] * cb[k];
-        }
-    }
-    (acc[0] + acc[4]) + (acc[1] + acc[5]) + (acc[2] + acc[6]) + (acc[3] + acc[7])
-}

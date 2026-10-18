@@ -4,6 +4,8 @@
 //!
 //! Modes:
 //! * `turn`  slowly sweeps the head yaw +-90 deg so you can check that the scene stays put.
+//! * `orbit` makes the near bird circle the listener (Doppler, near field, occlusion by trunks);
+//!   combine as `turn+orbit`.
 //! * `flyby` runs the built-in spatial demo scene (fly-bys, a flock changing trees, an
 //!   approach/recede, circling) and prints the director's timeline plus a per-second
 //!   left/right level trace.
@@ -30,7 +32,7 @@ fn main() -> std::io::Result<()> {
     let seconds: f32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20.0);
     let path = args.get(2).cloned().unwrap_or_else(|| "render.wav".into());
     let mode = args.get(3).map(String::as_str).unwrap_or("");
-    let turn = mode == "turn";
+    let turn = mode.contains("turn");
     let flyby = mode == "flyby";
     let weather = mode == "weather";
     let levels = weather || mode == "levels";
@@ -55,6 +57,10 @@ fn main() -> std::io::Result<()> {
     engine.set_param(param::PLAYING, 1.0);
     engine.set_param(param::VOLUME, 0.8);
     println!("scene: {} ({} entities, {:.1} h)", desc.name, desc.entities.len(), engine.param(param::TIME_OF_DAY));
+    if mode.contains("orbit") {
+        engine.set_param(param::ORBIT, 1.0);
+        engine.set_param(param::BIRDS, 1.0);
+    }
 
     let block = 512usize;
     let blocks = (seconds * sr) as usize / block;

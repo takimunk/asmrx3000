@@ -4,3 +4,5 @@
 /build/
 *.wav
 .DS_Store
+
+/hrtf-src/

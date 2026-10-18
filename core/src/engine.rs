@@ -11,13 +11,14 @@ use std::time::Instant;
 
 use core::f32::consts::TAU;
 
-use crate::ambisonics::{self, CHANNELS};
-use crate::binaural::BinauralDecoder;
+use crate::acoustics::{Acoustics, Emitter, Environment as Acoustic, HrtfModel};
+use crate::ambisonics::CHANNELS;
 use crate::controls::{self, ControlBank, ControlInfo, ControlState};
 use crate::director::{Director, Environment};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
 use crate::math::{Mat3, Vec3};
+use crate::physics::ground::GroundType;
 use crate::rng::Rng;
 use crate::scene::{ObjectBridge, ObjectInfo, SceneDesc, World};
 use crate::windfield::WindField;
@@ -63,7 +64,15 @@ pub mod param {
     pub const HUMIDITY: u32 = 18;
     /// Thunderstorm activity 0..1 (lightning rate and closeness).
     pub const STORM: u32 = 19;
-    pub const COUNT: usize = 20;
+    // Acoustic environment (asmr.h). TEMPERATURE and HUMIDITY above are shared with the weather.
+    pub const PRESSURE: u32 = 34;
+    pub const GROUND: u32 = 35;
+    pub const TREE_DENSITY: u32 = 36;
+    pub const FOLIAGE: u32 = 37;
+    pub const REVERB: u32 = 38;
+    pub const EAR_HEIGHT: u32 = 39;
+    pub const HRTF: u32 = 40;
+    pub const COUNT: usize = 41;
 }
 
 pub mod telemetry {
@@ -145,57 +154,11 @@ struct Shared {
     controls: ControlBank,
 }
 
-/// Per-emitter propagation state (one per scene emitter, same index).
-#[derive(Clone, Copy)]
-struct Path {
-    sh: [f32; CHANNELS],
-}
-
-impl Path {
-    const fn new() -> Self {
-        Self { sh: [0.0; CHANNELS] }
-    }
-}
-
-/// Propagation of one emitter's block to the Ambisonic bus: `rel` is the emitter position in
-/// the head frame, `signal` its dry mono block, `gain` its kind gain.
-/// M0: direction + spherical spreading. Delay/Doppler, air absorption and ground effect
-/// (propagation.rs) replace this function and `Path`.
-fn propagate(path: &mut Path, rel: Vec3, gain: f32, signal: &[f32], bus: &mut [[f32; BLOCK]; CHANNELS]) {
-    let len = signal.len();
-    let dist = rel.length().max(0.3);
-    let dir = rel * (1.0 / dist);
-    let gain = gain / dist.max(0.7);
-
-    let mut target = [0.0f32; CHANNELS];
-    ambisonics::encode(dir, &mut target);
-    if signal.iter().all(|v| *v == 0.0) {
-        for ch in 0..CHANNELS {
-            path.sh[ch] = target[ch] * gain;
-        }
-        return;
-    }
-    let inv_len = 1.0 / len as f32;
-    for ch in 0..CHANNELS {
-        let a = path.sh[ch];
-        let b = target[ch] * gain;
-        let step = (b - a) * inv_len;
-        let mut g = a;
-        let out = &mut bus[ch];
-        for i in 0..len {
-            g += step;
-            out[i] += signal[i] * g;
-        }
-        path.sh[ch] = b;
-    }
-}
-
 struct Dsp {
     sample_rate: f32,
     world: World,
     director: Director,
-    paths: Vec<Path>,
-    decoder: BinauralDecoder,
+    acoustics: Acoustics,
     wind: WindField,
     rng: Rng,
     bus: [[f32; BLOCK]; CHANNELS],
@@ -239,7 +202,6 @@ impl Engine {
         let rng = Rng::new(0xA5A5_3000 ^ desc.seed);
         let world = World::build(desc, sr)?;
         let director = Director::new(desc, &world);
-        let paths = vec![Path::new(); world.emitters.len()];
 
         let shared = Shared {
             params: atomics(param::COUNT),
@@ -263,13 +225,25 @@ impl Engine {
         shared.params[param::HUMIDITY as usize].store(env.humidity);
         shared.params[param::STORM as usize].store(env.storm);
         shared.telemetry[telemetry::SAMPLE_RATE as usize].store(sr);
+        let env = Acoustic::default();
+        for (id, v) in [
+            (param::PRESSURE, env.pressure_kpa),
+            (param::GROUND, env.ground as u32 as f32),
+            (param::TREE_DENSITY, env.tree_density_per_ha),
+            (param::FOLIAGE, env.foliage),
+            (param::REVERB, env.reverb),
+            (param::EAR_HEIGHT, env.ear_height),
+            (param::HRTF, env.hrtf as u32 as f32),
+        ] {
+            shared.params[id as usize].store(v);
+        }
 
+        let acoustics = Acoustics::new(sr, world.emitters.len());
         let dsp = Dsp {
             sample_rate: sr,
             world,
             director,
-            paths,
-            decoder: BinauralDecoder::new(sr),
+            acoustics,
             wind: WindField::new(sr),
             rng,
             bus: [[0.0; BLOCK]; CHANNELS],
@@ -492,13 +466,24 @@ impl Dsp {
         };
         self.director.step(dt, &env, &mut self.world);
         self.world.update_emitters();
+        self.acoustics.set_environment(&Acoustic {
+            temperature_c: env.temperature_c,
+            humidity_pct: env.humidity * 100.0,
+            pressure_kpa: p(param::PRESSURE),
+            ground: GroundType::from_index(p(param::GROUND).max(0.0) as u32),
+            tree_density_per_ha: p(param::TREE_DENSITY),
+            foliage: p(param::FOLIAGE),
+            reverb: p(param::REVERB),
+            ear_height: p(param::EAR_HEIGHT),
+            hrtf: if p(param::HRTF) > 0.5 { HrtfModel::Analytic } else { HrtfModel::Measured },
+        });
 
         for ch in self.bus.iter_mut() {
             ch[..len].fill(0.0);
         }
         let inv_len = 1.0 / len as f32;
 
-        for (em, path) in self.world.emitters.iter_mut().zip(self.paths.iter_mut()) {
+        for (idx, em) in self.world.emitters.iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
             controls.water = water * em.flow;
@@ -517,11 +502,17 @@ impl Dsp {
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
 
+            // Propagation: delay/Doppler, spreading, air, ground, directivity, occlusion,
+            // forest scattering, near field and reverb sends (propagation.rs).
             em.rel = head.apply_transposed(em.position);
-            propagate(path, em.rel, kind_gain, tmp, &mut self.bus);
+            let mut emitter = Emitter::at(em.position, kind_gain);
+            if em.kind == SourceKind::Water {
+                emitter.ground = Some(GroundType::Water);
+            }
+            self.acoustics.propagate(idx, &emitter, tmp, &mut self.bus);
         }
 
-        self.decoder.process(&self.bus, len, &mut self.left[..len], &mut self.right[..len]);
+        self.acoustics.render(&mut self.bus, &head, len, &mut self.left[..len], &mut self.right[..len]);
 
         let target_fade = if playing { 1.0 } else { 0.0 };
         let fade_coef = 1.0 - (-1.0 / (0.06 * sr)).exp();
