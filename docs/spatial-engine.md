@@ -243,3 +243,154 @@ How it gets there:
 - Distant HF is lower than in a free field: air absorption, forest scattering and foliage.
 - Overall +4 dB; peaks reach −2.5 dBFS at volume 0.8, so the soft clipper (knee −3 dBFS) can
   touch occasionally. Shells may want ~−3 dB of default volume.
+
+## 6. AirPods: head tracking and spatial impression
+
+### 6.1 Audit of the M0/M1 shell (before this change)
+
+| Item | Finding |
+|---|---|
+| Sensor | `CMHeadphoneMotionManager` delivering to the **main** queue: the pose waited behind UI work (the ASCII console redraws at 30–60 fps). |
+| Update rate | Apple doesn't specify one. Measured by others: **~25 Hz** for AirPods ("fixed by the OS"). CoreMotion's general 100 Hz device-motion limit doesn't apply to headphones. |
+| Representation | Euler angles `attitude.yaw/pitch/roll`, each multiplied by a sign "guess" and sent as three separate params. Euler round-trips are fine near upright but couple axes at large pitch. |
+| Axes | Apple documents the headphone axes only in a picture. Under the reading x → right ear, y → forward, z → up, `CMAttitude`'s Euler angles mean what their names say (pitch + = look up, roll + = right ear down, yaw + = turn left). Under the other plausible reading (x → left, y → back) **pitch and roll flip, yaw does not**. Open-source trackers disagree (AirTracker ships with pitch inverted). Can't be settled without a device: see the listening check 6.5-1. |
+| Recentre | Yaw only: correct, gravity must stay absolute. |
+| Drift | Not handled. AirPods have no magnetometer, so yaw drifts a few degrees per minute. |
+| Latency | Not compensated. The engine rendered the last pose as is, in 25 Hz steps (40 ms staircase). |
+| Rendering | Per-block SH rotation from Euler params, no smoothing: audible stepping on fast turns. |
+
+**Latency chain** (head moves → sound at the ear), typical, macOS + AirPods Pro over AAC:
+
+| Stage | Delay |
+|---|---|
+| IMU fusion in the buds + Bluetooth uplink + CoreMotion | ~15–40 ms (sample age, measurable from `CMLogItem.timestamp`) |
+| Sampling at 25 Hz (mean wait) | ~20 ms |
+| Main-queue dispatch (removed) | 0–16 ms |
+| Next render block, then IO buffer (512 frames at 48 kHz) | ~11–22 ms |
+| CoreAudio device latency + safety offset | a few ms |
+| AAC encode, Bluetooth A2DP, decode and buffer in the buds | ~100–150 ms (macOS under-reports it in `presentationLatency`) |
+| **Total** | **~150–250 ms**. Psychoacoustic thresholds for head-tracked audio are ~30–80 ms (Brungart, Simpson & Kordik 2005; Lindau 2009), so the lag matters a lot. |
+
+### 6.2 What Apple offers third parties (macOS 14 … 26)
+
+| API | Availability | What it gives / limits |
+|---|---|---|
+| `CMHeadphoneMotionManager` | macOS 14+ | Attitude (quaternion), rotation rate, gravity, user acceleration, connection status (macOS 14). Requires `NSMotionUsageDescription`. **The only head-pose source; no lower-latency API exists.** |
+| `AUSpatialMixer` (AudioToolbox) | macOS 12.3+ head tracking, 13+ personalised HRTF, 14+ status query | `kAudioUnitProperty_SpatialMixerEnableHeadTracking`, `…PersonalizedHRTFMode` (off/on/**auto** = follow the system setting), `…AnyInputIsUsingPersonalizedHRTF` (read back). Inputs can be point sources or an **ambience bed** (e.g. 7.1.4). **The only way to use the listener's personalised HRTF**: Apple never exposes the HRTF data itself. |
+| Entitlement `com.apple.developer.spatial-audio.profile-access` | macOS 15+ | Applies the personalised profile to AVAudioEngine / AUSpatialMixer / PHASE output. A capability, so it needs a properly signed build (our ad-hoc `codesign -` build can't carry it). Without it the mixer may fall back to the generic HRTF; we read back `…AnyInputIsUsingPersonalizedHRTF` and show it. |
+| `AVAudioEnvironmentNode.isListenerHeadTrackingEnabled` | macOS 15+, entitlement `com.apple.developer.coremotion.head-pose` | Apple's head tracking applied inside its own 3D mixer. Spatialises mono inputs only. |
+| `AVGameBypassSystemSpatialAudio` | iOS/tvOS 18 only | Opt out of automatic game spatialisation. No macOS equivalent. |
+| `HeadTrackedSpatialAudio`, `intendedSpatialExperience` | visionOS 26 only | not on macOS |
+| PHASE | macOS 12+ | Geometry-aware engine with the same personalised-HRTF entitlement. We don't use it: our acoustics are our own. |
+| System "Spatialize Stereo" (Control Center: Off / Fixed / Head Tracked) | user setting | **No public API to read or disable it.** It virtualises plain stereo from apps such as Music and video players. Cog's developers report that macOS doesn't spatialise an AUHAL client's own output; AVAudioEngine output is an AUHAL client. Verify with check 6.5-4 that toggling it changes nothing for us. |
+| Output format with AirPods | — | 48 kHz stereo (AAC A2DP) normally. **If any app opens the AirPods microphone, the route drops to HFP** (16/24 kHz, narrowband), and the engine is rebuilt for the new rate. |
+
+### 6.3 What changed
+
+1. **Pose path** (`HeadTracker.swift`): full attitude quaternion + gyroscope rate on a dedicated
+   user-interactive queue, passed straight to the engine (`asmr_set_head_pose`, lock-free seqlock).
+   Additional details:
+   - The device→head axis mapping is one explicit rotation, switchable between the two readings
+     (`UserDefaults headAxes = rightForwardUp | leftBackUp`).
+   - Recentring is about the vertical only.
+   - Slow drift correction: 0.5°/s, only while the head is still and within ±20° of forward
+     (`headDriftCorrection`).
+   - The sample age comes from the sensor timestamp.
+2. **Prediction** (`core/src/headpose.rs`): the pose is extrapolated to the moment each 64-sample
+   block is *heard*. The horizon is h = sensor age + time since arrival (audio clock) + output
+   latency + smoothing lag. The model is constant angular velocity plus half the estimated
+   angular acceleration, with the angle linear up to 25° and saturating at 45°.
+   `AudioEngine` measures the output latency: device presentation latency + IO buffer + decoder
+   block + mixer latency, at least 160 ms on Bluetooth because macOS under-reports AAC; override
+   with `headLatencyMs`. `ASMR_PARAM_HEAD_PREDICTION` scales the horizon for A/B.
+3. **Smoothing:** 12 ms slerp per block towards the predicted pose, then per-sample interpolation
+   of the SH rotation matrix. No 40 ms staircase, and the prediction error at each new sample is
+   absorbed in ~12 ms.
+4. **Head translation / motion parallax:** the head turns about the neck pivot (head centre 3 cm
+   in front of and 9 cm above it). The ears translate by a few cm, so close sources (the stream at
+   your feet, a bird at 1 m) shift against far ones, as in reality. This cue is absent from
+   rotation-only trackers, Apple's included. It feeds the propagation directly: delays,
+   directions, near-field filters.
+5. **Apple renderer option** (`AudioEngine.renderer = .apple | .appleTracked`):
+   - The core decodes its bus to a 7.1.4 bed (AllRAD-style, `core/src/bed.rs`,
+     `asmr_render_bed`), and AUSpatialMixer renders it with `PersonalizedHRTFMode = auto`.
+   - `.apple` keeps our predicted head rotation and feeds a head-locked bed.
+   - `.appleTracked` lets Apple track the head and feeds a world-locked bed.
+   - The UI can show `personalizedHRTF` (read back from the mixer) and `outputDescription`.
+   - Default stays `.core`: MagLS at order 3 with SADIE II is sharper than a 12-channel bed. The
+     personalised option is for listeners whose ears the KU100 doesn't fit.
+6. **Externalisation cues already in the engine**, and how they now interact with head motion:
+   - early trunk reflections, ground reflection and the diffuse tail are encoded in the world
+     frame and rotate with the head (SH rotation), so they stay put while you turn;
+   - near-field ILD below 1.2 m;
+   - air absorption and DRR as distance cues;
+   - interaural coherence of the diffuse field matched by the MagLS covariance constraint.
+
+### 6.4 Measurements
+
+Tracking error = angle between the rendered pose and the true head pose at the moment the sound
+is heard (simulated 25 Hz sensor, 30 ms sample age, gyro noise 0.03 rad/s;
+`cargo test --release prediction_error_table -- --nocapture`):
+
+| Motion | Latency | No prediction (rms / max) | Prediction (rms / max) |
+|---|---|---|---|
+| natural sway (±50° + ±15° yaw, ±10° nod) | 100 ms | 11.5° / 22.6° | 1.9° / 4.2° |
+| | 160 ms | 15.6° / 30.2° | 3.6° / 7.7° |
+| | 250 ms | 21.4° / 41.0° | 6.9° / 14.3° |
+| 90° turn in 300 ms, then hold | 160 ms | 24.1° / 86.7° | 18.8° / 81.6° |
+
+- Prediction can't anticipate the *start* of a sudden turn; that is the floor set by the
+  Bluetooth latency. It catches up fast and doesn't overshoot by more than the 45° cap at a stop.
+- Smoothness: with the raw 25 Hz pose stepping 0.04 rad, the largest per-block step of the
+  rendered pose is < 0.006 rad (test `rendered_pose_is_smooth`).
+
+Offline renders (`cargo run --release --example headtrack_ab`, files in `build/ab/`):
+- `head_lagged.wav` vs `head_predicted.wav`: the engine is fed only the tracking error during the
+  natural-sway motion, which is what a moving listener hears. Lagged: the forest swings ±30°
+  (rms 15.3°). Predicted: it nearly stands still (rms 3.4°, max 6.5°).
+- `ext_anechoic.wav` vs `ext_full.wav` (static head): direct + ground only vs the full forest.
+  Interaural cross-correlation (IACC, 100 ms frames) at 250/500/1k/2k/4k Hz:
+  0.79/0.52/0.42/0.31/0.30 vs 0.75/0.46/0.32/0.22/0.21. The full forest is more decorrelated, a
+  standard correlate of externalisation and spaciousness.
+
+CPU: head pose ≈ 0 (one prediction + slerp per block); 64 emitters still 3.9–5.1 % of one core.
+
+### 6.5 Listening checks with AirPods (Pro / Max / 3rd gen)
+
+1. **Axes.** Recentre facing the screen, then:
+   - Turn your head left: the river (in front) must move to your **right**.
+   - Look up: sounds in front move **down**.
+   - Tilt your right ear down: a front source should lean **towards your left ear**.
+
+   If up/down or tilt are inverted (but left/right is right), run
+   `defaults write com.asmrx3000.app headAxes leftBackUp` and relaunch.
+2. **Lag.** Turn quickly to the left by ~45° and stop. The scene should land and stay. If it
+   keeps swinging after you stop (overshoot), lower the latency estimate:
+   `defaults write com.asmrx3000.app headLatencyMs 120`. If it trails behind, raise it to 200.
+   `defaults delete com.asmrx3000.app headLatencyMs` returns to the measured value.
+3. **Prediction A/B.** Compare HEAD_PREDICTION 1 vs 0 while looking around slowly. Until the UI
+   gets a toggle: `defaults write com.asmrx3000.app headPrediction -float 0` (1 = on), relaunch. With prediction the forest should feel nailed to the room.
+4. **System spatial audio.** Control Center → Sound → AirPods → Spatialize Stereo: Off / Fixed /
+   Head Tracked. Our output must not change. If it changes, macOS is double-spatialising: keep it
+   Off and report.
+5. **Parallax.** With HEAD_PARALLAX on (`defaults write com.asmrx3000.app headParallax -float 0` turns it off), turn your head while a close source plays (orbit bird at
+   0.5 m, or the stream). The close source should shift relative to the distant forest. Compare
+   with HEAD_PARALLAX = 0.
+6. **Personalised HRTF.** If you scanned your ears (iPhone: Settings → AirPods → Personalised
+   Spatial Audio), switch `renderer` to `apple`:
+   - `defaults write com.asmrx3000.app renderer apple` and relaunch; the console log line
+     "personalised HRTF: yes/no" tells whether the mixer uses it;
+   - compare front/back and elevation (birds above) with `core`;
+   - also try `renderer appleTracked`; `defaults delete com.asmrx3000.app renderer` goes back.
+7. **Drift.** Sit still facing the screen for 5 minutes. Forward should stay forward (±5°). If it
+   creeps while you hold a turned head, disable it with
+   `defaults write com.asmrx3000.app headDriftCorrection -bool false`.
+8. **Mic route.** Start a call or dictation using the AirPods mic. Sound quality drops (HFP), and
+   that is expected: note it, then end the call; the engine should come back at 48 kHz.
+
+### 6.6 Next
+- Torso/shoulder reflection: the KU100 has no torso, and the torso does not turn with the head,
+  which is a further dynamic externalisation cue. Needs a direction-dependent delay operator in the
+  SH domain.
+- BiMagLS (head-tracking-aware MagLS), and ITD individualisation from head size.
+- A signed build with the profile-access capability, so the personalised HRTF is guaranteed.

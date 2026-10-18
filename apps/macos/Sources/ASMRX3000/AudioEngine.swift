@@ -278,6 +278,10 @@ final class AudioEngine: ObservableObject {
             asmr_set_head_pose(core, s.q.real, s.q.imag.x, s.q.imag.y, s.q.imag.z, s.w.x, s.w.y, s.w.z, s.age)
         }
         if outputLatency > 0 { set(ASMR_PARAM_OUTPUT_LATENCY, Float(outputLatency)) }
+        // Listening-check overrides (docs/spatial-engine.md 6.5).
+        let d = UserDefaults.standard
+        if d.object(forKey: "headPrediction") != nil { set(ASMR_PARAM_HEAD_PREDICTION, d.float(forKey: "headPrediction")) }
+        if d.object(forKey: "headParallax") != nil { set(ASMR_PARAM_HEAD_PARALLAX, d.float(forKey: "headParallax")) }
         for (id, p) in placed {
             asmr_set_object_position(core, id, p.x, p.y, p.z)
         }
@@ -432,6 +436,7 @@ final class AudioEngine: ObservableObject {
         var size = UInt32(MemoryLayout<UInt32>.size)
         let status = AudioUnitGetProperty(mixer.audioUnit, kAudioUnitProperty_SpatialMixerAnyInputIsUsingPersonalizedHRTF, kAudioUnitScope_Global, 0, &v, &size)
         personalizedHRTF = status == noErr && v != 0
+        NSLog("ASMR X3000: Apple renderer (\(renderer.rawValue)), personalised HRTF: \(personalizedHRTF ? "yes" : "no")")
     }
 
     // MARK: Output latency (drives head-pose prediction)
@@ -458,6 +463,7 @@ final class AudioEngine: ObservableObject {
         outputDescription = String(format: "%@ %.0f Hz, %d-frame buffer, latency %.0f ms%@",
                                    bluetooth ? "Bluetooth" : "wired/built-in", rate, Int(bufferFrames), latency * 1000,
                                    override > 0 ? " (override)" : "")
+        NSLog("ASMR X3000: output \(outputDescription)")
         set(ASMR_PARAM_OUTPUT_LATENCY, Float(latency))
     }
 

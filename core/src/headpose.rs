@@ -33,6 +33,8 @@ pub const MAX_HORIZON: f32 = 0.30;
 /// Extrapolated rotation: linear up to KNEE, then saturating smoothly at MAX (rad).
 const KNEE_ANGLE: f32 = 25.0 * core::f32::consts::PI / 180.0;
 const MAX_PREDICTED_ANGLE: f32 = 45.0 * core::f32::consts::PI / 180.0;
+/// Weight of the angular-acceleration term in the prediction (0 = constant velocity).
+pub const ACCEL_GAIN: f32 = 0.5;
 /// Smoothing time constant (s).
 const SMOOTHING: f32 = 0.012;
 /// Head centre relative to the neck pivot (engine frame, metres): the head rotates about the
@@ -108,7 +110,6 @@ impl Quat {
     }
 
     /// Angle (rad) between two orientations.
-    #[allow(dead_code)] // tests and diagnostics
     pub fn angle_to(self, o: Quat) -> f32 {
         2.0 * self.dot(o).abs().min(1.0).acos()
     }
@@ -133,7 +134,6 @@ impl Quat {
     }
 
     /// Inverse of `from_yaw_pitch_roll`.
-    #[allow(dead_code)] // tests and diagnostics
     pub fn to_yaw_pitch_roll(self) -> (f32, f32, f32) {
         let m = self.to_mat3().m;
         let yaw = m[1][0].atan2(m[0][0]);
@@ -230,6 +230,9 @@ pub struct HeadTracker {
     /// Sensor samples per second (smoothed), for telemetry.
     pub rate: f32,
     last_arrival: f64,
+    last_w: Vec3,
+    /// Angular acceleration estimate (head frame, rad/s^2), from successive gyro samples.
+    accel: Vec3,
 }
 
 /// The pose to render a block with.
@@ -237,7 +240,6 @@ pub struct HeadTracker {
 pub struct RenderPose {
     /// Head -> world rotation.
     pub rotation: Mat3,
-    #[allow(dead_code)] // tests and diagnostics
     pub quat: Quat,
     /// Ear-centre offset from the neck-pivot rest position (world frame, m).
     pub offset: Vec3,
@@ -245,15 +247,16 @@ pub struct RenderPose {
 
 impl HeadTracker {
     pub fn new() -> Self {
-        Self { out: Quat::IDENTITY, started: false, last_seq: 0, horizon: 0.0, rate: 0.0, last_arrival: 0.0 }
+        Self { out: Quat::IDENTITY, started: false, last_seq: 0, horizon: 0.0, rate: 0.0, last_arrival: 0.0, last_w: Vec3::default(), accel: Vec3::default() }
     }
 
     /// Predicted orientation at `now + output_latency` for a sensor sample.
-    pub fn predict(sample: &Sample, now: f64, settings: &PoseSettings) -> (Quat, f32) {
+    pub fn predict(sample: &Sample, accel: Vec3, now: f64, settings: &PoseSettings) -> (Quat, f32) {
         let since = (now - sample.arrived).max(0.0) as f32;
         // The smoothing below lags a steady turn by its time constant; predict that far too.
         let h = ((sample.age + since + settings.output_latency + SMOOTHING) * settings.prediction.clamp(0.0, 1.5)).clamp(0.0, MAX_HORIZON);
-        let rv = sample.w * h;
+        // Constant angular acceleration, damped (the estimate from 25 Hz samples is noisy).
+        let rv = sample.w * h + accel * (0.5 * ACCEL_GAIN * h * h);
         let a = rv.length();
         let rv = if a > KNEE_ANGLE {
             let span = MAX_PREDICTED_ANGLE - KNEE_ANGLE;
@@ -272,11 +275,14 @@ impl HeadTracker {
                     if self.last_seq != 0 {
                         let gap = (s.arrived - self.last_arrival).max(1e-3) as f32;
                         self.rate += (1.0 / gap - self.rate) * 0.1;
+                        let raw = (s.w - self.last_w) * (1.0 / gap.max(0.01));
+                        self.accel = self.accel + (raw - self.accel) * 0.5;
                     }
+                    self.last_w = s.w;
                     self.last_seq = s.seq;
                     self.last_arrival = s.arrived;
                 }
-                let (q, h) = Self::predict(&s, now, settings);
+                let (q, h) = Self::predict(&s, self.accel, now, settings);
                 self.horizon = h;
                 q
             }
@@ -413,5 +419,87 @@ mod tests {
         let p = tr.step(&inp, (PI / 2.0, 0.0, 0.0), 0.0, 0.001, &s);
         // Turning 90 deg left moves the head centre 3 cm back and 3 cm left.
         assert!((p.offset.x + 0.03).abs() < 1e-4 && (p.offset.y - 0.03).abs() < 1e-4, "{:?}", p.offset);
+    }
+}
+
+#[cfg(test)]
+mod evaluation {
+    use super::*;
+    use core::f32::consts::PI;
+
+    /// Head-motion trajectories (yaw, pitch in rad) and their angular velocity (head frame).
+    fn trajectory(kind: usize, t: f32) -> (f32, f32) {
+        match kind {
+            // Natural looking around: two incommensurate sways + a slow nod.
+            0 => (
+                (50.0f32).to_radians() * (2.0 * PI * 0.23 * t).sin() + (15.0f32).to_radians() * (2.0 * PI * 0.71 * t + 1.0).sin(),
+                (10.0f32).to_radians() * (2.0 * PI * 0.37 * t).sin(),
+            ),
+            // Quick 90-degree turn (300 ms minimum-jerk) every 2 s, then hold.
+            _ => {
+                let cycle = (t / 2.0).floor();
+                let local = t - 2.0 * cycle;
+                let s = (local / 0.3).clamp(0.0, 1.0);
+                let mj = 10.0 * s.powi(3) - 15.0 * s.powi(4) + 6.0 * s.powi(5);
+                let from = if cycle as i32 % 2 == 0 { 0.0 } else { PI / 2.0 };
+                let to = PI / 2.0 - from;
+                (from + (to - from) * mj, 0.0)
+            }
+        }
+    }
+
+    /// RMS and max angle (deg) between the rendered pose and the true pose at hearing time.
+    fn evaluate(kind: usize, latency: f32, prediction: f32) -> (f32, f32) {
+        let inp = HeadPoseInput::new();
+        let mut tr = HeadTracker::new();
+        let s = PoseSettings { output_latency: latency, prediction, parallax: false };
+        let age = 0.03f32; // sensor fusion + Bluetooth uplink
+        let dt = 64.0 / 48_000.0f32;
+        let (mut sum, mut max, mut n) = (0.0f32, 0.0f32, 0);
+        let mut next = 0.0f64;
+        let mut t = 0.0f64;
+        let mut seed = 12345u64;
+        let q = |tt: f32| {
+            let (y, p) = trajectory(kind, tt);
+            Quat::from_yaw_pitch_roll(y, p, 0.0)
+        };
+        while t < 12.0 {
+            if t >= next {
+                let tm = next as f32 - age;
+                // Gyro: finite difference of the true motion, in the head frame.
+                let (q0, q1) = (q(tm - 0.005), q(tm + 0.005));
+                let d = q0.normalized();
+                let rel = Quat { w: d.w, x: -d.x, y: -d.y, z: -d.z }.mul(q1);
+                let rel = if rel.w < 0.0 { Quat { w: -rel.w, x: -rel.x, y: -rel.y, z: -rel.z } } else { rel };
+                let w = Vec3::new(rel.x, rel.y, rel.z) * (2.0 / 0.01);
+                // Gyro noise, ~0.03 rad/s rms.
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let nz = |k: u32| ((seed >> (16 + k * 8)) as u8 as f32 / 255.0 - 0.5) * 0.1;
+                let w = w + Vec3::new(nz(0), nz(1), nz(2));
+                inp.set(q(tm), w, age, next);
+                next += 0.04;
+            }
+            let pose = tr.step(&inp, (0.0, 0.0, 0.0), t, dt, &s);
+            if t > 1.0 {
+                let e = pose.quat.angle_to(q(t as f32 + latency)).to_degrees();
+                sum += e * e;
+                max = max.max(e);
+                n += 1;
+            }
+            t += dt as f64;
+        }
+        ((sum / n as f32).sqrt(), max)
+    }
+
+    #[test]
+    fn prediction_error_table() {
+        for (kind, name) in [(0, "natural sway"), (1, "90 deg quick turns")] {
+            for latency in [0.10f32, 0.16, 0.25] {
+                let (r0, m0) = evaluate(kind, latency, 0.0);
+                let (r1, m1) = evaluate(kind, latency, 1.0);
+                eprintln!("{name:>18}, latency {:>3.0} ms: no prediction rms {r0:5.1} max {m0:5.1} deg | prediction rms {r1:5.1} max {m1:5.1} deg", latency * 1000.0);
+                assert!(r1 < r0, "prediction must reduce the rms error");
+            }
+        }
     }
 }

@@ -14,7 +14,7 @@ mod engine;
 mod fft;
 mod delay;
 mod fftconv;
-mod headpose;
+pub mod headpose;
 mod hrtf;
 pub mod math;
 mod nearfield;
