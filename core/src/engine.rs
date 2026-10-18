@@ -147,9 +147,14 @@ pub mod telemetry {
     pub const FLIGHT_ALTITUDE: u32 = 16;
     /// Distance travelled along the path, m (wraps at 10 km).
     pub const FLIGHT_ODOMETER: u32 = 17;
-    /// Turn rate of the path, rad/s (+ = turning left).
+    /// Turn rate of the course, rad/s (+ = turning left).
     pub const FLIGHT_TURN: u32 = 18;
-    pub const COUNT: usize = 19;
+    /// Heading of the course in the landscape, rad (0..2π, counter-clockwise).
+    pub const FLIGHT_HEADING: u32 = 19;
+    /// Position in the landscape, m (wrapping at 4096 m: for scrolling ground textures).
+    pub const FLIGHT_X: u32 = 20;
+    pub const FLIGHT_Y: u32 = 21;
+    pub const COUNT: usize = 22;
 }
 
 #[repr(u32)]
@@ -843,8 +848,11 @@ impl Dsp {
                 rain: self.director.weather().rain_unit(),
                 ambient: self.director.weather().ambient(&env),
                 head,
-                // Yaw of the head relative to the direction of travel (+ = left).
-                head_yaw: head.m[1][0].atan2(head.m[0][0]),
+                // The predicted head pose, relative to the direction of travel (+ = left / up).
+                head_yaw: pose.quat.to_yaw_pitch_roll().0,
+                head_pitch: pose.quat.to_yaw_pitch_roll().1,
+                listener_offset: pose.offset,
+                head_tracked: shared.head.get().is_some_and(|s| self.time - s.arrived < 1.0),
                 acoustic: Acoustic {
                     temperature_c: env.temperature_c,
                     humidity_pct: env.humidity * 100.0,
@@ -954,6 +962,9 @@ impl Dsp {
             t[telemetry::FLIGHT_ALTITUDE as usize].store(pose.height);
             t[telemetry::FLIGHT_ODOMETER as usize].store((pose.s % 10_000.0) as f32);
             t[telemetry::FLIGHT_TURN as usize].store(pose.turn);
+            t[telemetry::FLIGHT_HEADING as usize].store(pose.heading as f32);
+            t[telemetry::FLIGHT_X as usize].store(pose.x.rem_euclid(4096.0) as f32);
+            t[telemetry::FLIGHT_Y as usize].store(pose.y.rem_euclid(4096.0) as f32);
         }
         t[telemetry::FLIGHT as usize].store(self.flight_mix);
         t[telemetry::GUST as usize].store(self.wind.gust());

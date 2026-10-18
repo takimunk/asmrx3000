@@ -1,12 +1,13 @@
 import AppKit
 import CAsmr
 import ImageIO
+import simd
 import SwiftUI
 import UniformTypeIdentifiers
 
 /// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1]
 ///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
-///  [--flight speed] [--seed n]`
+///  [--flight speed] [--seed n] [--steer yaw°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -48,9 +49,16 @@ enum Snapshot {
             model.audio.flying = true
         }
 
+        // --steer yaw° (+ = left): an AirPods head pose held from the 3rd second on, so flight
+        // mode steers by head (flight.steer_by_head).
+        let steer = value("--steer").flatMap(Float.init).map { $0 * .pi / 180 }
         let fps = 30.0
         let selectKind = value("--select") ?? "tree"
         for i in 0..<Int(seconds * fps) {
+            if let yaw = steer {
+                let y = Double(i) / fps < 3 ? 0 : yaw
+                model.audio.setHeadSample(HeadTracker.Sample(q: simd_quatf(angle: y, axis: SIMD3(0, 0, 1)), w: .zero, age: 0.01))
+            }
             model.audio.simulate(seconds: 1 / fps)
             stage.step(dt: 1 / fps)
             if i == 2 {

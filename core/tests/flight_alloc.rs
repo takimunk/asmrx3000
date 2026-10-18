@@ -1,6 +1,7 @@
 //! The render path of flight mode must not allocate: a counting global allocator watches the
 //! thread that calls `Engine::render` while the listener flies through streamed landscape
-//! (chunks generated and retired, slots changing hands, birds flushed, a reseed).
+//! (tiles generated and retired while steering by head through two U-turns, slots changing
+//! hands, birds flushed, a reseed).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -58,6 +59,9 @@ fn flight_render_does_not_allocate() {
     let blocks = 48_000 * 40 / 512;
     WATCH.with(|w| w.set(true));
     for i in 0..blocks {
+        // AirPods: look left for a while, then right (the course turns around and back).
+        let yaw: f32 = if i < blocks / 3 { 1.2 } else if i < 2 * blocks / 3 { -1.2 } else { 0.0 };
+        engine.set_head_pose([(yaw / 2.0).cos(), 0.0, 0.0, (yaw / 2.0).sin()], [0.0; 3], 0.01);
         if i == blocks / 2 {
             // Control changes are lock-free stores; a reseed rebuilds the landscape in place.
             engine.set_control(id::FLIGHT_SEED, 9.0);

@@ -120,6 +120,8 @@ pub mod id {
     pub const FLIGHT_DENSITY: u32 = 1004;
     pub const FLIGHT_SEED: u32 = 1005;
     pub const FLIGHT_AIRFLOW: u32 = 1006;
+    pub const FLIGHT_STEER: u32 = 1007;
+    pub const FLIGHT_TURN_RATE: u32 = 1008;
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -156,7 +158,7 @@ use flags::{DISCRETE as D, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 43;
+const N: usize = 45;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -202,6 +204,8 @@ static DEFS: [Def; N] = [
     def(FLIGHT_DENSITY, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 2.0, "flight.density", "", Store::Local),
     def(FLIGHT_SEED, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 999.0, "flight.seed", "", Store::Local),
     def(FLIGHT_AIRFLOW, g::FLIGHT, FLIGHT_SPEED, 0, 0.0, 3.0, "flight.airflow", "", Store::Local),
+    def(FLIGHT_STEER, g::FLIGHT, FLIGHT_SPEED, D, 0.0, 2.0, "flight.steer_by_head", "", Store::Local),
+    def(FLIGHT_TURN_RATE, g::FLIGHT, FLIGHT_SPEED, 0, 5.0, 90.0, "flight.turn_rate", "\u{b0}/s", Store::Local),
 ];
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -219,6 +223,7 @@ pub fn option_name(id: u32, i: u32) -> Option<&'static str> {
         RAIN_SURFACE => Rain::PRESETS,
         ENV_SEASON => return SEASONS.get(i).copied(),
         FLIGHT_BIOME => return crate::flight::land::BIOMES.get(i).map(|b| b.name),
+        FLIGHT_STEER => return ["off", "yaw", "yaw_pitch"].get(i).copied(),
         _ => return None,
     };
     if i == 0 {
@@ -373,7 +378,8 @@ impl ControlBank {
             FLIGHT_ALTITUDE => flight_altitude(6.0),
             FLIGHT_CURVINESS => 0.35,
             FLIGHT_BIOME | FLIGHT_SEED => 0.0,
-            FLIGHT_DENSITY | FLIGHT_AIRFLOW => 1.0,
+            FLIGHT_DENSITY | FLIGHT_AIRFLOW | FLIGHT_STEER => 1.0,
+            FLIGHT_TURN_RATE => 30.0,
             _ => 0.0,
         }
     }
