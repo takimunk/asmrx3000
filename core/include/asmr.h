@@ -218,6 +218,9 @@ enum {
     ASMR_CONTROL_FLAG_LOG = 1u << 1,        /* logarithmic slider (rain.rate: 0 at the far left) */
     ASMR_CONTROL_FLAG_DISCRETE = 1u << 2,   /* integer preset index */
     ASMR_CONTROL_FLAG_OVERRIDDEN = 1u << 3, /* child set by the user, not following its macro */
+    ASMR_CONTROL_FLAG_LEVEL = 1u << 4,      /* "<group>.level" loudness trim, dB -40..+12 [0]: pure gain on the group in the mix
+                                               (after calibration, before the director's analysis); never follows its macro,
+                                               NaN resets to 0 dB, -40 mutes */
 };
 
 /* Control ids (stable). Children list their macro in `parent`. */
@@ -231,23 +234,28 @@ enum {
     ASMR_CONTROL_WATER_AERATION = 106,
     ASMR_CONTROL_WATER_TURBULENCE = 107,
     ASMR_CONTROL_WATER_GAIN = 108,
+    ASMR_CONTROL_WATER_LEVEL = 150,      /* "water.level", dB (ASMR_CONTROL_FLAG_LEVEL) */
     ASMR_CONTROL_WIND_SPEED = 200,       /* macro, m/s */
     ASMR_CONTROL_WIND_GUSTINESS = 201,
     ASMR_CONTROL_WIND_EXPOSURE = 202,
     ASMR_CONTROL_WIND_CHARACTER = 203,   /* preset of the ambient wind sources */
     ASMR_CONTROL_WIND_WHISTLE = 204,
+    ASMR_CONTROL_WIND_LEVEL = 250,       /* "wind.level", dB: free wind sources (distant roar, whistles) */
     ASMR_CONTROL_FOLIAGE_DENSITY = 300,  /* macro, x leaf density */
     ASMR_CONTROL_FOLIAGE_DRYNESS = 301,  /* -1 = season, 0 fresh .. 1 dry */
     ASMR_CONTROL_FOLIAGE_FLUTTER = 302,
     ASMR_CONTROL_FOLIAGE_CREAK = 303,
     ASMR_CONTROL_FOLIAGE_EXPOSURE = 304,
+    ASMR_CONTROL_FOLIAGE_LEVEL = 350,    /* "foliage.level", dB: wind in the tree crowns */
     ASMR_CONTROL_RAIN_RATE = 400,        /* macro, mm/h */
     ASMR_CONTROL_RAIN_STORM = 401,       /* follows heavy rain */
     ASMR_CONTROL_RAIN_SURFACE = 402,     /* preset of the open rain patches */
     ASMR_CONTROL_RAIN_DRYING = 403,      /* x speed of draining/drying (1 = real time) */
     ASMR_CONTROL_RAIN_GAIN = 404,
+    ASMR_CONTROL_RAIN_LEVEL = 450,       /* "rain.level", dB: rain and thunder */
     ASMR_CONTROL_BIRDS_ACTIVITY = 500,   /* macro */
     ASMR_CONTROL_BIRDS_ORBIT = 501,
+    ASMR_CONTROL_BIRDS_LEVEL = 550,      /* "birds.level", dB */
     ASMR_CONTROL_MASTER_VOLUME = 600,    /* macro */
     ASMR_CONTROL_ENV_TIME = 700,         /* macro, hours */
     ASMR_CONTROL_ENV_TEMPERATURE = 701,  /* deg C, follows a diurnal cycle */
@@ -255,9 +263,11 @@ enum {
     ASMR_CONTROL_ENV_SEASON = 703,       /* spring, summer, autumn, winter */
     ASMR_CONTROL_INSECTS_ACTIVITY = 800, /* macro */
     ASMR_CONTROL_INSECTS_WARMTH = 801,   /* deg C microclimate offset */
+    ASMR_CONTROL_INSECTS_LEVEL = 850,    /* "insects.level", dB */
     ASMR_CONTROL_FIRE_HEAT = 900,        /* macro, kW */
     ASMR_CONTROL_FIRE_MOISTURE = 901,
     ASMR_CONTROL_FIRE_RESIN = 902,
+    ASMR_CONTROL_FIRE_LEVEL = 950,       /* "fire.level", dB */
     /* Flight mode (ASMR_PARAM_FLIGHT). Applied while flying and kept for the next flight. */
     ASMR_CONTROL_FLIGHT_SPEED = 1000,     /* macro, m/s 0..25 [6]: walk 1.5, run 5, glide 12, fast flight 25 */
     ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
@@ -290,6 +300,14 @@ enum {
     ASMR_CONTROL_MIX_FOCUS_RAIN = 1108,    /* rain and thunder */
     ASMR_CONTROL_MIX_FOCUS_INSECTS = 1109,
     ASMR_CONTROL_MIX_FOCUS_FIRE = 1110,
+    ASMR_CONTROL_MIX_FRONT_FOCUS = 1111,    /* "mix.front_focus" 0..1 [0.5]: attention follows the head pose; frontal cone up to +4*x dB
+                                               (textures +2*x), sides -x, rear -3*x dB and darker (soloists behind: half) */
+    ASMR_CONTROL_MIX_DISTANCE = 1112,       /* "mix.distance" 0..1 [0.6]: perceptual distance beyond 4 m: extra 1/r^(0.8x) (cap -18 dB),
+                                               HF loss, wetter; near (<4 m) a little louder and drier */
+    ASMR_CONTROL_MIX_TEXTURE_BUDGET = 1113, /* "mix.texture_budget" 0..1 [0.35]: broadband textures beyond the protected few streams may add at
+                                               most (1.05 + 0.95x) x their loudness (sone); 1 = no limit */
+    ASMR_CONTROL_MIX_REFOCUS = 1114,        /* "mix.refocus" 0..1 [0.5]: when the listener is still (not flying or flight speed ~0),
+                                               the nearest water and one bird come forward over ~4 s, the rest steps back */
 };
 
 typedef struct AsmrControlInfo {
@@ -446,6 +464,15 @@ typedef struct AsmrMixInfo {
     float masking_after;
     float smr_before_db;        /* soloists' signal-to-mask ratio in their bands without / with ducking, dB */
     float smr_after_db;
+    /* Scene focus (docs/sound-director.md, section 9). Appended: older readers stay valid. */
+    float texture_sone;           /* joint loudness of all broadband textures (water, wind, foliage, rain, insects), sone */
+    float texture_protected_sone; /* ... of the protected texture streams alone */
+    float texture_cut_db;         /* texture budget: cut on the low-priority tail, dB <= 0 */
+    float texture_bed_cut_db;     /* absolute sone budget: cut on the whole texture bed, dB <= 0 (half on protected streams) */
+    uint32_t textures;            /* sounding texture emitters */
+    uint32_t textures_protected;  /* of which protected streams */
+    float stillness;              /* listener still 0..1 (stationary refocus) */
+    uint32_t anchor_source[2];    /* stationary-refocus anchors (water, bird), like soloist_source; UINT32_MAX = none */
 } AsmrMixInfo;
 
 /* Any thread. */

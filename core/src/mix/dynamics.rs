@@ -21,6 +21,8 @@ const MAX_CUT_DB: f32 = 20.0;
 /// Comfort compressor: threshold above the target (LU), ratio.
 const COMFORT_LU: f32 = 6.0;
 const COMFORT_RATIO: f32 = 4.0;
+/// Loudness ceiling over the target that the comfort stage holds at strength ≥ 0.6, LU.
+const COMFORT_CEIL_LU: f32 = 10.0;
 /// Peak ceiling, linear (−1 dBFS).
 const CEILING: f32 = 0.891;
 
@@ -98,8 +100,20 @@ impl Dynamics {
             self.level_db += (want - self.level_db) * (1.0 - (-dt / tau).exp());
         }
         // Comfort compressor on momentary loudness after the leveller.
-        let over = self.pre.momentary + self.level_db - (p.target_lufs + COMFORT_LU);
-        let want = if over > 0.0 { -over * (1.0 - 1.0 / COMFORT_RATIO) * p.strength.clamp(0.0, 1.0) } else { 0.0 };
+        // The detector follows the newest 100 ms too: a clap is caught before the 400 ms
+        // momentary window has filled (events stand further out of a budgeted bed).
+        let det = self.pre.momentary.max(self.pre.fast - 1.0);
+        let over = det + self.level_db - (p.target_lufs + COMFORT_LU);
+        let s = p.strength.clamp(0.0, 1.0);
+        let mut want = if over > 0.0 { -over * (1.0 - 1.0 / COMFORT_RATIO) * s } else { 0.0 };
+        // Comfort ceiling: whatever the ratio leaves of a very loud event (a close thunder clap
+        // sits ~30 LU over the target), the loudness stays within COMFORT_CEIL_LU of the target
+        // once the dynamics are on (fades in over strength 0.3..0.6).
+        let rest = det + self.level_db + want - (p.target_lufs + COMFORT_CEIL_LU);
+        let k = ((s - 0.3) / 0.3).clamp(0.0, 1.0);
+        if rest > 0.0 {
+            want -= rest * k * k * (3.0 - 2.0 * k);
+        }
         let tau = if want < self.comp_db { 0.03 } else { 1.5 };
         self.comp_db += (want - self.comp_db) * (1.0 - (-dt / tau).exp());
 
