@@ -533,6 +533,10 @@ mod tests {
             }
             (hi - lo, wet)
         };
+        for b in BIOMES.iter() {
+            let (r, w) = range(b.name);
+            eprintln!("{:>16}: relief {r:.1} m, {w} wet of 3600", b.name);
+        }
         let (meadows, _) = range("meadows");
         let (mountains, _) = range("snowy_mountains");
         let (dunes, _) = range("desert");

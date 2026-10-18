@@ -272,11 +272,11 @@ impl Wind {
     /// Wind over a rocky crest: rough body from the crags and a low howl through the gaps,
     /// coming and going with the gusts.
     pub fn ridge_howl() -> WindConfig {
-        WindConfig { exposure: 1.7, d_min_m: 0.005, d_max_m: 0.6, body: 1.1, tilt_db: 2.0, gap_hz: 140.0, gap_length_m: 0.6, gap_q: 14.0, gap: 1.4, distance_m: 20.0, gust_response: 1.5, ..Default::default() }
+        WindConfig { exposure: 1.3, d_min_m: 0.005, d_max_m: 0.6, body: 0.6, tilt_db: 2.0, gap_hz: 140.0, gap_length_m: 0.6, gap_q: 14.0, gap: 1.0, distance_m: 20.0, gust_response: 1.5, ..Default::default() }
     }
     /// Snow drifting off a crest: a soft hiss of grains over the snow cover.
     pub fn blowing_snow() -> WindConfig {
-        WindConfig { exposure: 1.5, d_min_m: 0.001, d_max_m: 0.05, body: 0.45, sand: 0.7, sand_hz: 4200.0, sand_threshold_ms: 4.0, distance_m: 15.0, gust_response: 1.3, ..Default::default() }
+        WindConfig { exposure: 1.2, d_min_m: 0.001, d_max_m: 0.05, body: 0.3, sand: 0.9, sand_hz: 4200.0, sand_threshold_ms: 4.0, distance_m: 15.0, gust_response: 1.3, ..Default::default() }
     }
 
     pub fn preset(name: &str) -> Option<WindConfig> {
@@ -425,7 +425,7 @@ impl Generator for Wind {
         // mass flux q ∝ u³(1 − u_t²/u²). The hiss is the sum of countless impacts: power ∝ q.
         let xs = u / c.sand_threshold_ms.max(1.0);
         let flux = if c.sand > 0.0 && xs > 1.0 { xs * xs * xs * (1.0 - 1.0 / (xs * xs)) } else { 0.0 };
-        let sand_level = c.sand * 0.004 * flux.sqrt();
+        let sand_level = c.sand * 0.01 * flux.sqrt();
         self.sand_band.set(c.sand_hz, 0.7, sr);
         self.sand_gain.to(sand_level * band_norm(c.sand_hz, 0.7, sr), len);
         let grains = sand_level > 0.0 || self.sand_gain.cur > 0.0;
@@ -516,6 +516,32 @@ impl Generator for Wind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn level(cfg: WindConfig, wind_ms: f32) -> f32 {
+        let mut w = Wind::new(48_000.0, 3, cfg);
+        let mut c = Controls::default();
+        c.env.wind_ms = wind_ms;
+        c.gust = wind_slider(wind_ms);
+        let mut buf = [0.0f32; 512];
+        let mut e = 0.0f64;
+        for _ in 0..200 {
+            w.render(&mut buf, &c);
+            e += buf.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+        }
+        10.0 * (e / (200.0 * 512.0)).log10() as f32
+    }
+
+    #[test]
+    fn sand_hisses_only_in_a_wind() {
+        let calm = level(Wind::dune_sand(), 2.0);
+        let windy = level(Wind::dune_sand(), 9.0);
+        let breeze = level(Wind::breeze(), 9.0);
+        let howl = level(Wind::ridge_howl(), 9.0);
+        let snow = level(Wind::blowing_snow(), 9.0);
+        eprintln!("dune sand 2 m/s {calm:.1} dB, 9 m/s {windy:.1} dB; breeze {breeze:.1}; ridge howl {howl:.1}; blowing snow {snow:.1}");
+        assert!(windy > calm + 15.0);
+        assert!(howl.is_finite() && snow.is_finite());
+    }
 
     #[test]
     fn aeolian_tone_follows_wind_speed() {

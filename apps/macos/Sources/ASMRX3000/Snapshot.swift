@@ -33,7 +33,10 @@ enum Snapshot {
         model.audio.readControls(&tree)
         for (i, a) in args.enumerated() where a == "--set" && i + 1 < args.count {
             let kv = args[i + 1].split(separator: "=")
-            guard kv.count == 2, let v = Float(kv[1]), let c = tree.first(where: { $0.key == kv[0] }) else {
+            // A value or, for a preset, its option name (--set flight.biome=desert).
+            let c = kv.count == 2 ? tree.first(where: { $0.key == kv[0] }) : nil
+            let option = c.flatMap { $0.options.firstIndex(of: String(kv[1])) }.map(Float.init)
+            guard kv.count == 2, let c, let v = Float(kv[1]) ?? option else {
                 print("unknown control: \(args[i + 1])")
                 continue
             }

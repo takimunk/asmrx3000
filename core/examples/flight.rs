@@ -1,6 +1,6 @@
 //! Offline fly-throughs of flight mode (docs/flight-mode.md).
 //!
-//!   cargo run --release --example flight -- [seconds] [out_dir] [speeds] [biome] [seed]
+//!   cargo run --release --example flight -- [seconds] [out_dir] [speeds] [biome] [seed] [rain mm/h]
 //!
 //! Renders one binaural WAV per speed (default 60 s at 1.5, 6, 12 and 25 m/s, biome
 //! "mixed") plus a "tour" that accelerates from a walk to fast flight and slows down again,
@@ -23,6 +23,7 @@ fn main() -> std::io::Result<()> {
     let speeds: Vec<f32> = args.get(3).map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![1.5, 6.0, 12.0, 25.0]);
     let biome = args.get(4).cloned().unwrap_or_else(|| "mixed".into());
     let seed: u32 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let rain: f32 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(0.0);
     std::fs::create_dir_all(&dir)?;
 
     println!("{:>8} {:>7} {:>7} {:>8} {:>8}  file", "speed", "cpu %", "x rt", "rms dBFS", "peak");
@@ -46,6 +47,7 @@ fn main() -> std::io::Result<()> {
         engine.set_param(param::PLAYING, 1.0);
         engine.set_param(param::VOLUME, 0.8);
         engine.set_param(param::BIRDS, 0.8);
+        engine.set_param(param::RAIN, rain);
 
         let block = 512usize;
         let blocks = (seconds * 48_000.0) as usize / block;
@@ -95,13 +97,17 @@ fn main() -> std::io::Result<()> {
                     kinds[(o.kind as usize).min(5)] += 1;
                 }
                 let sounding = engine.sources(&mut src);
+                let frame = engine.flight_frame().unwrap_or_default();
                 log += &format!(
-                    "    t {:>4.0} s  flown {:>6.0} m  heading {:>4.0}°  v {:>4.1} m/s  h {:>4.1} m  emitters {:>2}  objects {:>3} (trees {}, rivers {}, birds {}, sources {}, lakes {}, rocks {})\n",
+                    "    t {:>4.0} s  flown {:>6.0} m  heading {:>4.0}°  v {:>4.1} m/s  h {:>4.1} m  ground {:>6.1} m  valley {:.2}  stop {:.1}  emitters {:>2}  objects {:>3} (trees {}, rivers {}, birds {}, sources {}, lakes {}, rocks {})\n",
                     t,
                     engine.telemetry(telemetry::FLIGHT_ODOMETER),
                     engine.telemetry(telemetry::FLIGHT_HEADING).to_degrees(),
                     engine.telemetry(telemetry::FLIGHT_SPEED),
                     engine.telemetry(telemetry::FLIGHT_ALTITUDE),
+                    frame.ground_z,
+                    frame.enclosure,
+                    frame.linger,
                     sounding,
                     n,
                     kinds[0],

@@ -269,6 +269,16 @@ final class AudioEngine: ObservableObject {
         out.append(contentsOf: rawObjects.prefix(Int(n)))
     }
 
+    /// Flight mode: where the listener is in the landscape and what it is (nil before flight
+    /// mode was first built). See Stage/FlightTerrain.swift.
+    func readFlightFrame() -> AsmrFlightFrame? {
+        var f = AsmrFlightFrame()
+        return asmr_get_flight_frame(core, &f) != 0 ? f : nil
+    }
+
+    /// Actual rain (or snow) rate, mm/h, for the precipitation drawn over the scene.
+    var rainRate: Float { telemetry(ASMR_TELEMETRY_RAIN_RATE) }
+
     /// Shape of a streamed object (river bed, lake shore, ridge line), listener-relative.
     func readObjectPath(_ id: UInt32, into out: inout [SIMD3<Float>]) {
         var raw = [Float](repeating: 0, count: 3 * 32)

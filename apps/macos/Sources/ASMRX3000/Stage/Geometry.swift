@@ -30,6 +30,8 @@ struct OrbitCamera {
     var elevation: Float = 0.25
     var distance: Float = 36
     var fovY: Float = 0.58
+    /// Far clipping distance, m (flight mode sees the relief far into the haze).
+    var far: Float = 120
 
     var eye: SIMD3<Float> {
         target + distance * SIMD3(cos(elevation) * cos(azimuth), cos(elevation) * sin(azimuth), sin(elevation))
@@ -46,7 +48,7 @@ struct OrbitCamera {
             SIMD4(-f.x, -f.y, -f.z, simd_dot(f, e)),
             SIMD4(0, 0, 0, 1),
         ])
-        let near: Float = 0.5, far: Float = 120
+        let near: Float = 0.5
         let ys = 1 / tan(fovY / 2)
         let zs = far / (near - far)
         let proj = simd_float4x4(columns: (

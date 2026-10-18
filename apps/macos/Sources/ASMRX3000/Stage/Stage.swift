@@ -97,6 +97,8 @@ final class Stage {
     private(set) var telemetry = Telemetry()
     /// Flight mode: telemetry and the shapes of the streamed water (see FlightStage.swift).
     var flight = FlightView()
+    /// Flight mode: the relief in world-anchored chunks (FlightTerrain.swift).
+    let terrain = FlightTerrain()
     /// Camera target height outside flight mode; in flight the view follows the herm up.
     /// The camera the scene is drawn and picked with: the user's orbit camera, and in flight
     /// tilted down onto the canopy and centred on the herm, so the ground streaming below and
@@ -109,6 +111,8 @@ final class Stage {
         c.elevation += (max(c.elevation, lift) - c.elevation) * m
         c.target.x *= 1 - m
         c.target.z -= 0.35 * flight.drop * m
+        // The relief runs on into the haze: see much further.
+        c.far += 520 * m
         return c
     }
 
@@ -286,7 +290,7 @@ final class Stage {
                 }
                 riverSum = p
             case UInt32(ASMR_OBJECT_TREE):
-                let g = flight.active ? FlightGround.height(p.x, p.y, frame: flight) - flight.drop : Terrain.height(p.x, p.y)
+                let g = flight.active ? p.z : Terrain.height(p.x, p.y)
                 things.append(Thing(key: .object(o.id), kind: .tree, ids: [o.id], anchor: SIMD3(p.x, p.y, g), movable: movable,
                                     boxMin: SIMD3(p.x - 2.0, p.y - 2.0, g), boxMax: SIMD3(p.x + 2.0, p.y + 2.0, g + Self.treeHeight)))
             case UInt32(ASMR_OBJECT_BIRD):

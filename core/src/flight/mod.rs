@@ -332,7 +332,7 @@ struct Route {
 
 impl Route {
     fn new() -> Self {
-        Self { visit: Visit::Cruise, at: (0.0, 0.0), id: 0, timer: 0.0, cooldown: 8.0, visited: [0; 16], next_visited: 0, down: 0.0 }
+        Self { visit: Visit::Cruise, at: (0.0, 0.0), id: 0, timer: 0.0, cooldown: 20.0, visited: [0; 16], next_visited: 0, down: 0.0 }
     }
 }
 
@@ -804,7 +804,7 @@ impl Flight {
             (1.2 * bearing).clamp(-0.35, 0.35)
         } else {
             let k = curvature(self.land.seed, self.pose.s) * self.curviness as f64;
-            (k * self.pose.speed as f64) as f32
+            (k * self.pose.speed as f64) as f32 + self.coast_bias()
         };
         self.pose.turn += (target - self.pose.turn).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
         if mode >= 2 {
@@ -852,6 +852,28 @@ impl Flight {
         self.pose.climb = if dt > 0.0 && prev.is_finite() { ((ear - prev) / dt).clamp(-30.0, 30.0) } else { 0.0 };
         self.pose.height = ear - here;
         self.world.ground_z = -self.pose.height;
+    }
+
+    /// On a sea coast the wandering course keeps to the shore: it turns back towards land
+    /// when the sea lies ahead and drifts towards the sea far inland (turn rate, rad/s).
+    fn coast_bias(&self) -> f32 {
+        if self.land.params.biome.relief.sea <= 0.0 {
+            return 0.0;
+        }
+        let d = (60.0 + 6.0 * self.pose.speed as f64).min(180.0);
+        let at = |a: f64| {
+            let h = self.pose.heading + a;
+            self.land.ground(self.pose.x + d * h.cos(), self.pose.y + d * h.sin())
+        };
+        let (ahead, left, right) = (at(0.0), at(0.7), at(-0.7));
+        let toward = |higher: bool| if (left > right) == higher { 1.0 } else { -1.0 };
+        if ahead < 1.5 {
+            0.16 * toward(true)
+        } else if ahead > 18.0 && left.min(right) < ahead {
+            0.05 * toward(false)
+        } else {
+            0.0
+        }
     }
 
     /// Speed the route allows: the cruise, easing into a stop, nothing while lingering.

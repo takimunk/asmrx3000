@@ -290,7 +290,7 @@ impl Surf {
                 b.on = false;
             }
         }
-        let k = 0.05 * EVENT_LEVEL * period.sqrt() / 3.0;
+        let k = 2.0 * EVENT_LEVEL * period.sqrt() / 3.0;
         for (band, (w, fc, q)) in self.crash.iter_mut().zip(CRASH_BANDS) {
             band.gain.to(k * w * (crash + 0.15 * wash) * band_norm(fc, q, sr), len);
         }
@@ -461,11 +461,11 @@ impl Water {
     }
     /// Mid-stream of a big lowland river: deep, wide, smooth; boils and eddies gulp now and then.
     pub fn big_river() -> WaterConfig {
-        WaterConfig { flow_ms: 1.0, depth_m: 3.5, width_m: 40.0, length_m: 30.0, rock_d50_m: 0.05, turbulence: 0.12, aeration: 0.3, waves: 0.2, fetch_m: 2000.0, ..Default::default() }
+        WaterConfig { flow_ms: 0.55, depth_m: 3.0, width_m: 12.0, length_m: 8.0, rock_d50_m: 0.04, turbulence: 0.04, aeration: 0.15, waves: 0.25, fetch_m: 2000.0, ..Default::default() }
     }
     /// The bank of a big river: slow water along the shore, small waves lapping.
     pub fn river_bank() -> WaterConfig {
-        WaterConfig { flow_ms: 0.3, depth_m: 0.6, width_m: 6.0, length_m: 30.0, rock_d50_m: 0.08, turbulence: 0.15, aeration: 0.35, waves: 0.9, fetch_m: 3000.0, ..Default::default() }
+        WaterConfig { flow_ms: 0.25, depth_m: 0.6, width_m: 4.0, length_m: 20.0, rock_d50_m: 0.06, turbulence: 0.1, aeration: 0.3, waves: 0.8, fetch_m: 3000.0, ..Default::default() }
     }
 
     pub fn preset(name: &str) -> Option<WaterConfig> {
@@ -718,7 +718,7 @@ impl Water {
             if surfing && self.surf.rattle_rate > 0.0 && self.surf.ev_rattle.tick(self.surf.rattle_rate, &mut self.rng) > 0 {
                 // A pebble knocked over by the backwash.
                 let rng = &mut self.rng;
-                let spec = GrainSpec { amp: 0.004 * EVENT_LEVEL * rng.range(0.3, 1.2), fc: rng.range(2500.0, 7000.0), q: 0.9, attack: 0.0002, decay: rng.range(0.002, 0.007), delay: at, ..Default::default() };
+                let spec = GrainSpec { amp: 0.05 * EVENT_LEVEL * rng.range(0.3, 1.2), fc: rng.range(2500.0, 7000.0), q: 0.9, attack: 0.0002, decay: rng.range(0.002, 0.007), delay: at, ..Default::default() };
                 self.grains.spawn(&spec, sr);
             }
             if self.trickle_rate > 0.0 && self.ev_trickle.tick(self.trickle_rate / sr, &mut self.rng) > 0 {
@@ -777,6 +777,45 @@ impl Water {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RMS (dB) of a preset over `seconds`, with the scene's controls.
+    fn level(cfg: WaterConfig, seconds: f32) -> (f32, f32) {
+        let sr = 48_000.0;
+        let mut w = Water::new(sr, 7, cfg);
+        let c = Controls { water: 1.0, ..Default::default() };
+        let mut buf = [0.0f32; 512];
+        let (mut e, mut n, mut peak) = (0.0f64, 0usize, 0.0f32);
+        let mut env = Vec::new();
+        for _ in 0..(seconds * sr / 512.0) as usize {
+            w.render(&mut buf, &c);
+            let be: f64 = buf.iter().map(|v| (*v as f64).powi(2)).sum();
+            env.push(be);
+            e += be;
+            n += 512;
+            peak = peak.max(buf.iter().fold(0.0, |m, v| m.max(v.abs())));
+        }
+        // Short-term (0.5 s) level swing: breakers come and go.
+        let k = 47;
+        let st: Vec<f64> = env.chunks(k).map(|c| c.iter().sum::<f64>() / (k * 512) as f64).collect();
+        let (lo, hi) = st.iter().fold((f64::MAX, 0.0f64), |a, v| (a.0.min(*v), a.1.max(*v)));
+        (10.0 * (e / n as f64).log10() as f32, 10.0 * (hi / lo.max(1e-30)).log10() as f32)
+    }
+
+    #[test]
+    fn surf_breaks_and_rivers_flow() {
+        let (brook, _) = level(Water::brook_pebbles(), 10.0);
+        let (surf, swing) = level(Water::sea_surf(), 40.0);
+        let (rock, _) = level(Water::rock_surf(), 40.0);
+        let (big, _) = level(Water::big_river(), 10.0);
+        let (bank, _) = level(Water::river_bank(), 10.0);
+        eprintln!("brook {brook:.1} dB, sea surf {surf:.1} dB (swing {swing:.1} dB), rock surf {rock:.1} dB, big river {big:.1} dB, bank {bank:.1} dB");
+        // Surf along 40 m of beach is far louder than one brook segment, and breathes with the
+        // breakers.
+        assert!(surf > brook + 15.0, "surf {surf} vs brook {brook}");
+        assert!(swing > 6.0, "surf swing {swing} dB");
+        assert!(big > brook - 25.0 && big < brook + 10.0, "big river {big}");
+        assert!(bank.is_finite() && rock.is_finite());
+    }
 
     #[test]
     fn regimes_follow_hydraulics() {

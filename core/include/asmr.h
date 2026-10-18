@@ -306,6 +306,42 @@ uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t
    without a shape and outside flight mode. `out` holds 3 * max_points floats. Any thread. */
 uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out, uint32_t max_points);
 
+/* Flight mode: where the listener is in the landscape and what the landscape is (docs/world.md).
+   Heights are absolute (m above sea level): a terrain sample at world (x, y) with ground height g
+   sits at travel-frame height g - ear_z, at travel-frame (x, y) = R(-heading) * (world - (x, y)). */
+typedef struct {
+    double x, y;          /* listener position in the landscape, m (world frame) */
+    float heading;        /* course heading, rad; travel frame = world rotated by -heading */
+    float ear_z;          /* absolute height of the ears */
+    float ground_z;       /* absolute height of the ground under the listener */
+    float relief;         /* flight.relief the landscape was made with */
+    uint64_t seed;        /* landscape seed and biome index: pass to asmr_terrain_new */
+    uint32_t biome;
+    uint32_t generation;  /* changes whenever the landscape is regenerated */
+    float linger;         /* 0 cruising .. 1 stopped at a place (flight.stops) */
+    float snow;           /* precipitation falls as snow (1) or rain (0) */
+    float snow_cover;     /* how the ground looks: snow cover 0..1, */
+    float sand_cover;     /* sand cover 0..1, */
+    float rock_slope;     /* bare rock above this slope (rise per metre), */
+    float sea;            /* 1 when the landscape has a sea */
+    float enclosure;      /* skyline elevation all around (sine), 0 open .. ~0.5 deep valley */
+    float pad;
+} AsmrFlightFrame;
+
+/* Fills `out` and returns 1 once flight mode has been built (else 0). Any thread. */
+uint32_t asmr_get_flight_frame(const AsmrEngine *engine, AsmrFlightFrame *out);
+
+/* A sampler of the flight relief for the UI: a pure function of (seed, biome, relief, place), the
+   same the engine hears. Allocates a few MB; UI thread. */
+typedef struct AsmrTerrain AsmrTerrain;
+AsmrTerrain *asmr_terrain_new(uint64_t seed, uint32_t biome, float relief);
+void asmr_terrain_free(AsmrTerrain *terrain);
+/* nx * ny samples on a world grid from (x0, y0), `step` m apart, row by row (index j * nx + i),
+   6 floats each: ground height, water level (-1e9 where dry), flow x, flow y (m/s, world frame),
+   height above the nearest water (beaches), water kind (0 none, 1 lake, 2 river, 3 sea).
+   `out` holds 6 * nx * ny floats. Returns the number of samples. */
+uint32_t asmr_terrain_sample(AsmrTerrain *terrain, double x0, double y0, float step, uint32_t nx, uint32_t ny, float *out);
+
 /* Prompt control (docs/prompt-control.md). Control thread. JSON strings, UTF-8. Read-only
    state/prompt calls write their NUL-terminated result into `out` only if `max` > its length,
    and return the length in bytes either way: call with out = NULL to size those buffers.
