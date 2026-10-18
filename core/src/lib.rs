@@ -117,3 +117,16 @@ pub unsafe extern "C" fn asmr_set_object_position(engine: *const Engine, id: u32
         e.move_object(id, x, y, z);
     }
 }
+
+/// Live per-track peak waveform, one point per 64-sample block, oldest first.
+/// Tracks: 0 water, 1 wind, 2 birds, 3 the flying bird, 4 output.
+///
+/// # Safety
+/// `out` must point to `points` writable floats.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_scope(engine: *const Engine, track: u32, out: *mut f32, points: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.scope(track, slice::from_raw_parts_mut(out, points as usize)) as u32,
+        _ => 0,
+    }
+}

@@ -28,6 +28,9 @@ pub const WIND_SPAN: f32 = 20.0;
 const SPECTRUM_RING: usize = 4096;
 const SPECTRUM_FFT: usize = 2048;
 const WIND_FIELD_POINTS: usize = 64;
+/// Per-track peak history, one value per control block (~1.3 ms at 48 kHz).
+pub const SCOPE_TRACKS: usize = 5;
+const SCOPE_LEN: usize = 4096;
 
 const WATER_GAIN: f32 = 1.0;
 const WIND_GAIN: f32 = 0.6;
@@ -113,6 +116,9 @@ struct Shared {
     /// Object positions requested by `move_object` (stub of the scene-graph ABI, see objects.rs).
     object_pos: Box<[AtomicF32]>,
     object_seq: Box<[AtomicU32]>,
+    /// Live waveform taps: water, wind, birds, the flying bird, output (see `scope`).
+    scope: Box<[AtomicF32]>,
+    scope_pos: AtomicUsize,
 }
 
 enum Generator {
@@ -217,6 +223,8 @@ impl Engine {
             wind_field: atomics(WIND_FIELD_POINTS),
             object_pos: atomics(MAX_SOURCES * 3),
             object_seq: (0..MAX_SOURCES).map(|_| AtomicU32::new(0)).collect(),
+            scope: atomics(SCOPE_TRACKS * SCOPE_LEN),
+            scope_pos: AtomicUsize::new(0),
         };
         for (i, s) in slots.iter().take(MAX_SOURCES).enumerate() {
             for (k, v) in [s.home.x, s.home.y, s.home.z].into_iter().enumerate() {
@@ -382,6 +390,7 @@ impl Dsp {
             out_r.fill(0.0);
             self.mono[..len].fill(0.0);
             self.out_level = 0.0;
+            push_scope(shared, &[0.0; SCOPE_TRACKS]);
             return;
         }
 
@@ -401,6 +410,7 @@ impl Dsp {
             ch[..len].fill(0.0);
         }
         let inv_len = 1.0 / len as f32;
+        let mut peaks = [0.0f32; SCOPE_TRACKS];
 
         for (idx, slot) in self.slots.iter_mut().enumerate() {
             if idx == self.orbit_slot {
@@ -426,6 +436,17 @@ impl Dsp {
                     BIRD_GAIN
                 }
             };
+
+            let peak = tmp.iter().fold(0.0f32, |m, v| m.max(v.abs())) * kind_gain;
+            let track = match slot.kind {
+                SourceKind::Water => 0,
+                SourceKind::Wind => 1,
+                SourceKind::Bird => 2,
+            };
+            peaks[track] = peaks[track].max(peak);
+            if idx == self.orbit_slot && orbit > 1e-3 {
+                peaks[3] = peak;
+            }
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
             slot.level = slot.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
@@ -479,6 +500,8 @@ impl Dsp {
             energy += m * m;
         }
         self.out_level = self.out_level * 0.9 + (energy * inv_len).sqrt() * 0.1;
+        peaks[4] = self.mono[..len].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        push_scope(shared, &peaks);
         self.time += dt as f64;
     }
 
@@ -536,6 +559,36 @@ impl Dsp {
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
         t[telemetry::TIME as usize].store((self.time % 86_400.0) as f32);
         t[telemetry::OUTPUT_LEVEL as usize].store(self.out_level);
+    }
+}
+
+fn push_scope(shared: &Shared, peaks: &[f32; SCOPE_TRACKS]) {
+    let pos = shared.scope_pos.load(Ordering::Relaxed);
+    let i = pos % SCOPE_LEN;
+    for (t, p) in peaks.iter().enumerate() {
+        shared.scope[t * SCOPE_LEN + i].store(*p);
+    }
+    shared.scope_pos.store(pos.wrapping_add(1), Ordering::Release);
+}
+
+impl Engine {
+    /// The newest `out.len()` peaks of a track, oldest first. Returns how many are real
+    /// (the rest, at the start, are zero).
+    pub fn scope(&self, track: u32, out: &mut [f32]) -> usize {
+        let t = track as usize;
+        if t >= SCOPE_TRACKS {
+            out.fill(0.0);
+            return 0;
+        }
+        let pos = self.shared.scope_pos.load(Ordering::Acquire);
+        let n = out.len().min(SCOPE_LEN).min(pos);
+        let pad = out.len() - n;
+        out[..pad].fill(0.0);
+        for k in 0..n {
+            let idx = (pos - n + k) % SCOPE_LEN;
+            out[pad + k] = self.shared.scope[t * SCOPE_LEN + idx].load();
+        }
+        n
     }
 }
 
@@ -622,6 +675,19 @@ mod tests {
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
+    }
+
+    #[test]
+    fn scope_follows_output() {
+        let engine = Engine::new(48_000.0);
+        engine.set_param(param::PLAYING, 1.0);
+        let mut l = vec![0.0f32; 4800];
+        let mut r = vec![0.0f32; 4800];
+        engine.render(&mut l, &mut r);
+        let mut scope = [0.0f32; 64];
+        assert_eq!(engine.scope(0, &mut scope), 64);
+        assert!(scope.iter().any(|v| *v > 0.0));
+        assert_eq!(engine.scope(9, &mut scope), 0);
     }
 
     #[test]

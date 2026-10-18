@@ -62,6 +62,16 @@ uint32_t asmr_get_sources(const AsmrEngine *engine, AsmrSourceInfo *out, uint32_
 void asmr_get_spectrum(const AsmrEngine *engine, float *out, uint32_t bands); /* 40 Hz..16 kHz, log bands, 0..1 */
 void asmr_get_wind_field(const AsmrEngine *engine, float *out, uint32_t points); /* left -> right */
 
+/* Live per-track peak waveform (asmr_get_scope): one point per 64-sample block, oldest first. */
+enum {
+    ASMR_SCOPE_WATER = 0,
+    ASMR_SCOPE_WIND = 1,
+    ASMR_SCOPE_BIRDS = 2,
+    ASMR_SCOPE_FLIGHT = 3, /* the bird that flies around the listener */
+    ASMR_SCOPE_OUTPUT = 4,
+};
+uint32_t asmr_get_scope(const AsmrEngine *engine, uint32_t track, float *out, uint32_t points);
+
 /* Scene objects (stub until the scene graph lands: objects = the sources above, id = index). */
 enum {
     ASMR_OBJECT_MOVABLE = 1u << 0, /* the user may move it */
