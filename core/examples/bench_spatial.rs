@@ -117,6 +117,11 @@ fn main() {
         println!("{mode}: {:.2} %", t * 100.0);
         return;
     }
+    let tail = Acoustics::new(48_000.0, 0).tail();
+    println!(
+        "default forest (400 trunks/ha, forest floor): T60 {:.2} s at 500 Hz, {:.2} s at 1 kHz, {:.2} s at 4 kHz, mean free path {:.0} m",
+        tail.t60_low, tail.t60_mid, tail.t60_high, tail.mean_free_path
+    );
     println!("{n} emitters, 48 kHz, block {BLOCK}:");
     run(n, secs, all, true, "full pipeline, half moving", &noise);
     run(n, secs, all, false, "full pipeline, all static", &noise);

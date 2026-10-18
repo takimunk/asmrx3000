@@ -21,6 +21,28 @@ enum {
     ASMR_PARAM_HEAD_YAW = 6,   /* + = turned left */
     ASMR_PARAM_HEAD_PITCH = 7, /* + = looking up */
     ASMR_PARAM_HEAD_ROLL = 8,  /* + = right ear down */
+
+    /* Acoustic environment (32..40). Any thread; applied at the next block. Values are
+     * clamped to the given ranges; defaults in brackets. See docs/spatial-engine.md. */
+    ASMR_PARAM_TEMPERATURE = 32,  /* air temperature, deg C, -30..45 [15]: speed of sound, ISO 9613-1 absorption */
+    ASMR_PARAM_HUMIDITY = 33,     /* relative humidity, %, 1..100 [70] */
+    ASMR_PARAM_PRESSURE = 34,     /* ambient pressure, kPa, 50..110 [101.325] */
+    ASMR_PARAM_GROUND = 35,       /* ground type, one of ASMR_GROUND_* [ASMR_GROUND_FOREST_FLOOR] */
+    ASMR_PARAM_TREE_DENSITY = 36, /* trunks per hectare, 0..3000 [400]: scattering, occlusion, reverb */
+    ASMR_PARAM_FOLIAGE = 37,      /* canopy foliage density, 0 (bare) .. 1 (dense summer) [0.6] */
+    ASMR_PARAM_REVERB = 38,       /* late reverb level relative to the physical estimate, 0..4 [1] */
+    ASMR_PARAM_EAR_HEIGHT = 39,   /* listener ear height above the ground, m, 0.1..3 [1.5] */
+    ASMR_PARAM_HRTF = 40,         /* 0 = measured HRTF (SADIE II KU100), 1 = analytic spherical head [0] */
+};
+
+/* Values of ASMR_PARAM_GROUND (effective flow resistivity in brackets). */
+enum {
+    ASMR_GROUND_FOREST_FLOOR = 0, /* litter / moss, 40 kPa s/m^2 */
+    ASMR_GROUND_GRASS = 1,        /* 200 kPa s/m^2 */
+    ASMR_GROUND_WATER = 2,        /* acoustically rigid */
+    ASMR_GROUND_COMPACT_SOIL = 3, /* 2000 kPa s/m^2 */
+    ASMR_GROUND_SNOW = 4,         /* 20 kPa s/m^2 */
+    ASMR_GROUND_ASPHALT = 5,      /* acoustically rigid */
 };
 
 /* Telemetry (asmr_get_telemetry). */
@@ -51,7 +73,8 @@ typedef struct AsmrSourceInfo {
 AsmrEngine *asmr_engine_new(float sample_rate);
 void asmr_engine_free(AsmrEngine *engine);
 
-/* Audio thread only. Non-interleaved stereo. */
+/* Audio thread only. Non-interleaved stereo. Any frame count; the binaural decoder adds a
+ * fixed latency of 64 samples. */
 void asmr_render(const AsmrEngine *engine, float *left, float *right, uint32_t frames);
 
 /* Any thread. */

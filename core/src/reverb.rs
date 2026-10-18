@@ -377,6 +377,7 @@ mod tests {
         let db = |b: usize| 10.0 * (edc[b] / edc[0]).log10();
         let t = |level: f64| (0..blocks).find(|&b| db(b) < level).unwrap() as f64 * BLOCK as f64 / fs as f64;
         let t60 = 3.0 * (t(-25.0) - t(-5.0));
+        eprintln!("FDN T60 measured {t60:.3} s (target 1.2 s)");
         assert!((t60 / 1.2 - 1.0).abs() < 0.1, "measured T60 {t60}");
     }
 
@@ -391,6 +392,7 @@ mod tests {
         let dense = ForestGeometry { density: 0.1, ..sparse };
         let a = tail_params(&sparse, &freqs, &s, &tr, &floor, &air, 0.5, 343.0);
         let b = tail_params(&dense, &freqs, &s, &tr, &floor, &air, 0.5, 343.0);
+        eprintln!("tail sparse {a:?}\ntail dense {b:?}");
         assert!(b.send > a.send);
         assert!(a.t60_mid > 0.3 && a.t60_mid < 3.0, "{a:?}");
         assert!(b.mean_free_path < a.mean_free_path);

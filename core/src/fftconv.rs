@@ -66,10 +66,12 @@ impl Fft {
 pub struct PartitionedDecoder {
     fft: Fft,
     parts: usize,
-    /// [ch][ear][part][bin]
-    h: Vec<Cf>,
+    /// Filter spectra [ch][ear][part][bin], real and imaginary parts apart (vectorises).
+    h_re: Vec<f32>,
+    h_im: Vec<f32>,
     /// Frequency-domain delay line: [part][ch][bin], ring over parts.
-    fdl: Vec<Cf>,
+    fdl_re: Vec<f32>,
+    fdl_im: Vec<f32>,
     fdl_pos: usize,
     /// Time-domain input history (previous + current block) per channel.
     frame: [[f32; N]; CHANNELS],
@@ -83,7 +85,8 @@ impl PartitionedDecoder {
     pub fn new(filters: &[f32], taps: usize) -> Self {
         let fft = Fft::new();
         let parts = taps.div_ceil(B);
-        let mut h = vec![Cf::default(); CHANNELS * 2 * parts * BINS];
+        let mut h_re = vec![0.0f32; CHANNELS * 2 * parts * BINS];
+        let mut h_im = vec![0.0f32; CHANNELS * 2 * parts * BINS];
         for ch in 0..CHANNELS {
             for ear in 0..2 {
                 let f = &filters[(ch * 2 + ear) * taps..(ch * 2 + ear + 1) * taps];
@@ -98,7 +101,8 @@ impl PartitionedDecoder {
                     let o = ((ch * 2 + ear) * parts + p) * BINS;
                     // Fold the 1/N of the inverse transform into the filter.
                     for k in 0..BINS {
-                        h[o + k] = Cf { re: buf[k].re / N as f32, im: buf[k].im / N as f32 };
+                        h_re[o + k] = buf[k].re / N as f32;
+                        h_im[o + k] = buf[k].im / N as f32;
                     }
                 }
             }
@@ -106,8 +110,10 @@ impl PartitionedDecoder {
         Self {
             fft,
             parts,
-            h,
-            fdl: vec![Cf::default(); parts * CHANNELS * BINS],
+            h_re,
+            h_im,
+            fdl_re: vec![0.0; parts * CHANNELS * BINS],
+            fdl_im: vec![0.0; parts * CHANNELS * BINS],
             fdl_pos: 0,
             frame: [[0.0; N]; CHANNELS],
             fill: 0,
@@ -117,7 +123,8 @@ impl PartitionedDecoder {
     }
 
     pub fn reset(&mut self) {
-        self.fdl.iter_mut().for_each(|v| *v = Cf::default());
+        self.fdl_re.fill(0.0);
+        self.fdl_im.fill(0.0);
         self.frame = [[0.0; N]; CHANNELS];
         self.out = [[0.0; B]; 2];
     }
@@ -157,8 +164,10 @@ impl PartitionedDecoder {
                 let zk = z[k];
                 let zn = z[(N - k) % N];
                 // A = (Z[k] + conj Z[N-k]) / 2, B = (Z[k] - conj Z[N-k]) / (2i)
-                self.fdl[base + a * BINS + k] = Cf { re: 0.5 * (zk.re + zn.re), im: 0.5 * (zk.im - zn.im) };
-                self.fdl[base + b * BINS + k] = Cf { re: 0.5 * (zk.im + zn.im), im: -0.5 * (zk.re - zn.re) };
+                self.fdl_re[base + a * BINS + k] = 0.5 * (zk.re + zn.re);
+                self.fdl_im[base + a * BINS + k] = 0.5 * (zk.im - zn.im);
+                self.fdl_re[base + b * BINS + k] = 0.5 * (zk.im + zn.im);
+                self.fdl_im[base + b * BINS + k] = -0.5 * (zk.re - zn.re);
             }
         }
         for ch in 0..CHANNELS {
@@ -166,29 +175,35 @@ impl PartitionedDecoder {
         }
 
         // Multiply-accumulate over channels and partitions.
-        let mut acc = [[Cf::default(); BINS]; 2];
+        let mut acc_re = [[0.0f32; BINS]; 2];
+        let mut acc_im = [[0.0f32; BINS]; 2];
         for p in 0..self.parts {
             let slot = (self.fdl_pos + p) % self.parts;
             for ch in 0..CHANNELS {
-                let x = &self.fdl[(slot * CHANNELS + ch) * BINS..(slot * CHANNELS + ch + 1) * BINS];
+                let xo = (slot * CHANNELS + ch) * BINS;
+                let xr = &self.fdl_re[xo..xo + BINS];
+                let xi = &self.fdl_im[xo..xo + BINS];
                 for ear in 0..2 {
-                    let h = &self.h[((ch * 2 + ear) * self.parts + p) * BINS..((ch * 2 + ear) * self.parts + p + 1) * BINS];
-                    let a = &mut acc[ear];
+                    let ho = ((ch * 2 + ear) * self.parts + p) * BINS;
+                    let hr = &self.h_re[ho..ho + BINS];
+                    let hi = &self.h_im[ho..ho + BINS];
+                    let (ar, ai) = (&mut acc_re[ear], &mut acc_im[ear]);
                     for k in 0..BINS {
-                        a[k].re += x[k].re * h[k].re - x[k].im * h[k].im;
-                        a[k].im += x[k].re * h[k].im + x[k].im * h[k].re;
+                        ar[k] += xr[k] * hr[k] - xi[k] * hi[k];
+                        ai[k] += xr[k] * hi[k] + xi[k] * hr[k];
                     }
                 }
             }
         }
+        let acc = |ear: usize, k: usize| Cf { re: acc_re[ear][k], im: acc_im[ear][k] };
 
         // One inverse FFT for both ears: W = L + i R (both real in time).
         for k in 0..N {
             let (l, r) = if k < BINS {
-                (acc[0][k], acc[1][k])
+                (acc(0, k), acc(1, k))
             } else {
                 let m = N - k;
-                (Cf { re: acc[0][m].re, im: -acc[0][m].im }, Cf { re: acc[1][m].re, im: -acc[1][m].im })
+                (Cf { re: acc(0, m).re, im: -acc(0, m).im }, Cf { re: acc(1, m).re, im: -acc(1, m).im })
             };
             z[k] = Cf { re: l.re - r.im, im: l.im + r.re };
         }

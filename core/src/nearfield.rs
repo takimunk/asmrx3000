@@ -297,6 +297,7 @@ mod range_extrapolation {
                 let exact = |ear: f64| field([0.0, r, 0.0], ear, k, r).abs();
                 let got = 20.0 * (ears[0].abs() / ears[1].abs()).log10();
                 let want = 20.0 * (exact(a) / exact(-a)).log10();
+                eprintln!("free-field range extrapolation f={f} r={r}: {got:.2} dB vs exact {want:.2} dB");
                 if r < rr {
                     assert!((got - want).abs() < 0.5, "f={f} r={r}: rendered ILD {got:.2} dB, exact {want:.2} dB");
                 }

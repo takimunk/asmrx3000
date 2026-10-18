@@ -654,6 +654,7 @@ mod tests {
         let w = run_w(&mut ac, 1500, |n| (2.0 * PI * f0 * n as f64 / FS as f64).sin() as f32, em);
         let got = frequency(&w[48_000..96_000]);
         let want = f0 * c / (c - v as f64);
+        eprintln!("doppler: heard {got:.2} Hz, moving source {want:.2} Hz, moving-listener formula {:.2} Hz", f0 * (1.0 + v as f64 / c));
         assert!((got - want).abs() < 0.3, "heard {got:.2} Hz, moving-source Doppler {want:.2} Hz");
         assert!((got - f0 * (1.0 + v as f64 / c)).abs() > 2.0);
     }
@@ -683,6 +684,7 @@ mod tests {
             }
             f += 0.5;
         }
+        eprintln!("rigid ground dip: {} Hz (theory {want:.1} Hz), depth {:.1} dB re 2f", best.0, best.1 - level_db(&h, 2.0 * want));
         assert!((best.0 / want - 1.0).abs() < 0.02, "dip at {} Hz, theory {want:.1} Hz", best.0);
         assert!(best.1 < level_db(&h, 2.0 * want) - 20.0, "dip depth");
     }
@@ -709,6 +711,7 @@ mod tests {
             let p = C64::new(air(r1) / r1, 0.0) + q * C64::from_polar(air(r2) / r2, k * (r2 - r1));
             let want = 20.0 * p.abs().log10();
             let got = level_db(&h, f);
+            eprintln!("grass f={f}: rendered {got:.2} dB, theory {want:.2} dB");
             assert!((got - want).abs() < 1.5, "f={f}: rendered {got:.2} dB, theory {want:.2} dB");
         }
     }
@@ -723,6 +726,7 @@ mod tests {
         for f in [125.0, 1000.0, 4000.0, 8000.0, 12_000.0] {
             let want = base - air::absorption_db_per_m(f, 15.0, 70.0, 101.325) * 100.0;
             let got = level_db(&h, f);
+            eprintln!("air 100 m f={f}: {got:.2} dB vs ISO {want:.2} dB");
             assert!((got - want).abs() < 0.6, "f={f}: {got:.2} vs {want:.2}");
         }
     }
@@ -739,6 +743,7 @@ mod tests {
         ac.set_features(Features { occlusion: true, ..quiet() });
         let free = impulse_response(&mut ac, Emitter::at(Vec3::new(10.0, 0.0, 0.0), 1.0), 64);
         let loss = |f: f64| level_db(&free, f) - level_db(&blocked, f);
+        eprintln!("trunk occlusion: loss 100 Hz {:.2} dB, 6 kHz {:.2} dB", loss(100.0), loss(6000.0));
         assert!(loss(100.0) < 2.5, "100 Hz loss {}", loss(100.0));
         assert!(loss(6000.0) > 8.0, "6 kHz loss {}", loss(6000.0));
     }
@@ -780,6 +785,7 @@ mod tests {
         let mut ac = Acoustics::new(FS, 1);
         ac.set_features(Features { near_field: true, ..quiet() });
         let near = ild_db(&mut ac, Vec3::new(0.0, 0.3, 0.0), head, (300.0, 900.0));
+        eprintln!("near-field ILD 300-900 Hz: 0.3 m {near:.2} dB, 2 m {far:.2} dB");
         assert!(far > 2.0, "far ILD {far}");
         assert!(near > far + 3.0, "near ILD {near} dB vs far {far} dB");
     }
