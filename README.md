@@ -51,6 +51,13 @@ cp core/target/wasm32-unknown-unknown/release/asmr_core.wasm site/asmr_core.wasm
 cargo run --release --manifest-path core/Cargo.toml --example render -- 30 forest.wav turn
 ```
 
+Жизнь птиц (на заданный час): таймлайн занятий каждой птицы — поёт, кормится на земле, летит своим стилем, парит, токует, тревожится — и сводка перекличек (docs/director.md, «Жизнь птиц»):
+
+```bash
+cargo run --release --manifest-path core/Cargo.toml --example render -- 180 dawn.wav life:5.5
+cargo run --release --manifest-path core/Cargo.toml --example render -- 240 open.wav life:7 core/scenes/open_country.json
+```
+
 Демо движения относительно головы (пролёт, стая, подлёт/удаление, круги) с таймлайном событий:
 
 ```bash
