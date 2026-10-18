@@ -96,7 +96,19 @@ final class Stage {
     /// Flight mode: telemetry and the shapes of the streamed water (see FlightStage.swift).
     var flight = FlightView()
     /// Camera target height outside flight mode; in flight the view follows the herm up.
-    private var cameraRestZ: Float?
+    /// The camera the scene is drawn and picked with: the user's orbit camera, and in flight
+    /// tilted down onto the canopy and centred on the herm, so the ground streaming below and
+    /// the herm stay in view at any altitude.
+    var viewCamera: OrbitCamera {
+        var c = camera
+        let m = min(max(flight.mix, 0), 1)
+        guard m > 0 else { return c }
+        let lift = min(0.5 + 0.012 * flight.altitude, 0.8)
+        c.elevation += (max(c.elevation, lift) - c.elevation) * m
+        c.target.x *= 1 - m
+        c.target.z -= 0.35 * flight.drop * m
+        return c
+    }
 
     /// Spectrogram history: `columns` columns of `bands` floats, column-major.
     private(set) var history = [Float](repeating: 0, count: Stage.columns * Stage.bands)
@@ -155,10 +167,6 @@ final class Stage {
         telemetry = audio.readTelemetry(spectrum: &spectrum, windField: &wind, sources: &sources)
         audio.readObjects(&objects)
         readFlight()
-        // Look down on the ground as it falls away under a high flight.
-        let restZ = cameraRestZ ?? camera.target.z
-        cameraRestZ = restZ
-        camera.target.z = restZ - 0.55 * flight.drop
         audio.readControls(&controlBuffer)
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
         rebuildThings()
@@ -229,7 +237,7 @@ final class Stage {
 
     func updateLabels() {
         guard sceneSize.x > 0 else { return }
-        let proj = Projector(camera: camera, size: sceneSize)
+        let proj = Projector(camera: viewCamera, size: sceneSize)
         let a = SIMD3<Float>(2.4, 0, Terrain.height(2.4, 0))
         let point = proj.project(a).map { CGPoint(x: CGFloat($0.point.x.rounded()), y: CGFloat($0.point.y.rounded())) }
         if labels.ahead != point { labels.ahead = point }
@@ -317,7 +325,7 @@ final class Stage {
 
     /// The thing under a point in a view of `size` points, if any.
     func pick(at point: SIMD2<Float>, size: SIMD2<Float>) -> Thing.Key? {
-        let proj = Projector(camera: camera, size: size)
+        let proj = Projector(camera: viewCamera, size: size)
         let focal = size.y * 0.5 / tan(camera.fovY / 2)
         var best: (Thing.Key, Float)?
         func consider(_ key: Thing.Key, _ world: SIMD3<Float>, _ radius: Float) {

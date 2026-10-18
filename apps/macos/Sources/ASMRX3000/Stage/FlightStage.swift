@@ -32,7 +32,7 @@ extension Stage {
         guard flight.active else { return }
         var pts: [SIMD3<Float>] = []
         var bestRiver: (Float, [SIMD4<Float>])?
-        let reach = Terrain.radius + 6
+        let reach = FlightGround.reach
         for o in objects where o.kind == UInt32(ASMR_OBJECT_RIVER) || o.kind == UInt32(ASMR_OBJECT_LAKE) {
             audio.readObjectPath(o.id, into: &pts)
             guard pts.count >= 2 else { continue }
@@ -61,7 +61,10 @@ extension Stage {
 /// cut through it. Coarser than the scene's terrain because it is rebuilt every frame.
 enum FlightGround {
     static let rings = 44
+    static let farRings = 24
     static let segments = 132
+    /// Streamed things are drawn out to here; beyond it the haze has them.
+    static let reach: Float = 70
 
     /// Relief at a listener-relative point (the world slides by under the herm).
     static func height(_ x: Float, _ y: Float, odometer: Float) -> Float {
@@ -98,46 +101,8 @@ enum FlightGround {
             if dist < 2.2 && ground < wl - 0.02 { return (wl, Part.water) }
             return (max(ground, wl + 0.05), Part.ground)
         }
-        func normal(_ x: Float, _ y: Float) -> SIMD3<Float> {
-            let e: Float = 0.12
-            let dx = surface(x + e, y).0 - surface(x - e, y).0
-            let dy = surface(x, y + e).0 - surface(x, y - e).0
-            return simd_normalize(SIMD3(-dx, -dy, 2 * e))
-        }
-        var verts: [MeshVertex] = []
-        var idx: [UInt32] = []
-        verts.reserveCapacity(rings * segments + 2 * segments + 1)
-        let (cz, cp) = surface(0, 0)
-        verts.append(MeshVertex(SIMD3(0, 0, cz), normal(0, 0), cp))
-        for r in 1...rings {
-            let radius = Terrain.radius * Float(r) / Float(rings)
-            for s in 0..<segments {
-                let a = 2 * Float.pi * Float(s) / Float(segments)
-                let x = radius * cos(a), y = radius * sin(a)
-                let (z, part) = surface(x, y)
-                verts.append(MeshVertex(SIMD3(x, y, z), normal(x, y), part))
-            }
-        }
-        func ring(_ r: Int, _ s: Int) -> UInt32 { UInt32(1 + (r - 1) * segments + (s % segments)) }
-        for s in 0..<segments { idx += [0, ring(1, s), ring(1, s + 1)] }
-        for r in 1..<rings {
-            for s in 0..<segments {
-                let a = ring(r, s), b = ring(r, s + 1), c = ring(r + 1, s), d = ring(r + 1, s + 1)
-                idx += [a, c, b, b, c, d]
-            }
-        }
-        let wallTop = UInt32(verts.count)
-        for s in 0..<segments {
-            let rim = verts[Int(ring(rings, s))]
-            let n = simd_normalize(SIMD3(rim.position.x, rim.position.y, 0))
-            verts.append(MeshVertex(rim.position, n, Part.section))
-            verts.append(MeshVertex(SIMD3(rim.position.x, rim.position.y, TerrainMesh.bottom), n, Part.section))
-        }
-        for s in 0..<segments {
-            let a = wallTop + UInt32(2 * s), b = wallTop + UInt32(2 * ((s + 1) % segments))
-            idx += [a, b, a + 1, b, b + 1, a + 1]
-        }
-        return Mesh.make(verts, idx)
+        // Rimless, out to the haze (GroundMesh); coarser than the scene's, as it is rebuilt every frame.
+        return GroundMesh.build(segments: segments, inner: rings, outer: farRings, surface: surface)
     }
 
     /// A unit boulder (radius 1, resting on z = 0), stone.

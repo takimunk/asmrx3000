@@ -49,6 +49,7 @@ enum Shaders {
         float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
         float4 gaze;         // gaze dot screen x, y px, px per metre, live 1 / resting 0
         float4 gazeHead;     // head screen x, y px, dot distance from the eye, visible
+        float4 haze;         // horizon y px (where the level ground meets the sky), -, -, -
     };
 
     struct Inst {
@@ -165,6 +166,8 @@ enum Shaders {
             lit += shadowMap.sample_compare(cmp, suv + o, sp.z - 0.0015);
         }
         lit *= 0.25;
+        // Beyond the shadow map (the far land) everything is in the open.
+        if (any(suv < 0.0) || any(suv > 1.0)) lit = 1.0;
 
         float diff = max(dot(n, L), 0.0) * lit;
         float sky = 0.5 + 0.5 * n.z;
@@ -261,6 +264,15 @@ enum Shaders {
 
         if (mat != M_VOID) {
             float ang = a.z;
+            // Open ground is drawn the way engravers draw it: in level strokes. (Following the
+            // surface at a grazing angle only beats into moiré.) Far water settles level too.
+            if (mat == M_GROUND) ang = 0.0;
+            if (mat == M_WATER) {
+                float far = smoothstep(14.0, 40.0, dist);
+                float c0 = cos(ang), s0 = sin(ang);
+                if (c0 < 0.0) { c0 = -c0; s0 = -s0; }
+                ang = atan2(s0 * (1.0 - far), mix(c0, 1.0, far));
+            }
             float2 dir = float2(cos(ang), sin(ang));
             float2 nrm = float2(-dir.y, dir.x);
             float along = dot(px, dir);
@@ -290,7 +302,7 @@ enum Shaders {
                 float ph = fract(along / P + hash11(line));
                 cov = cut(f, w * 0.55) * step(ph, clamp(t * 1.7, 0.12, 1.0));
                 // The ground fades into the plate towards the cut edge.
-                bright = 0.62 * (1.0 - 0.6 * smoothstep(8.0, 13.0, length(b.xy)));
+                bright = 0.62;
             } else if (mat == M_WATER) {
                 float P = (26.0 + 22.0 * hash11(line)) * s;
                 float ph = fract(along / P + hash11(line * 1.3) - time * (0.05 + 0.2 * F.counts.z));
@@ -427,6 +439,24 @@ enum Shaders {
         // The plate itself is not quite black.
         g = max(g, 0.025 * hash21(px));
 
+        // Atmosphere. The far land thins into haze, drawn as the old engravers drew a sky: level
+        // hairlines, thickest at the horizon. There is no edge to the world, only distance.
+        float haze;
+        float above = (F.haze.x - px.y) / (110.0 * s);       // 0 at the horizon, 1 well above it
+        if (mat == M_VOID) haze = 1.0;
+        else haze = smoothstep(26.0, 150.0, dist);
+        float glowBand = exp(-max(above, 0.0) * 2.6);         // the sky is brightest at the horizon
+        float hazeTone = mat == M_VOID ? glowBand : mix(0.55, 1.0, smoothstep(0.6, 1.0, haze));
+        if (haze > 0.001) {
+            float SPh = 2.6 * s;
+            float rowY = floor(px.y / SPh);
+            float fy = abs(fract(px.y / SPh) - 0.5) * SPh;
+            float lw = (0.18 + 0.62 * hazeTone) * SPh * 0.55;
+            float broken = step(fract(px.x / ((40.0 + 50.0 * hash11(rowY)) * s) + hash11(rowY * 1.7)), 0.82 + 0.18 * hazeTone);
+            float hz = cut(fy, lw) * broken * (0.12 + 0.4 * hazeTone);
+            g = mix(g, max(g * (1.0 - haze), hz), haze);
+        }
+
         // Generic sources: rain curtains with splashes, a campfire's flames and glow, crickets.
         float3 fireLight = float3(0);
         float warm = 0.0;
@@ -512,6 +542,8 @@ enum Shaders {
         float3 ink = sel ? float3(1.0) : mix(float3(1.0, 0.985, 0.95), WASH[mat] * 1.6, 0.12);
         // Night: the plate dims and turns moonlit, blue-silver; the fire keeps its warmth.
         float day = F.env.x;
+        // Haze: a pale, cool wash that swallows the colour of the far land.
+        wash = mix(wash, float3(0.42, 0.47, 0.56) * (0.05 + 0.22 * hazeTone), haze);
         wash *= mix(float3(0.45, 0.55, 0.85), float3(1.0), day);
         g *= mix(0.6, 1.0, day);
         ink = mix(float3(0.82, 0.88, 1.0), ink, day);

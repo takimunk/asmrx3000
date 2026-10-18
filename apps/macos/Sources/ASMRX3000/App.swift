@@ -15,6 +15,10 @@ struct ASMRX3000App: App {
             PromptCheck.run(CommandLine.arguments[i + 1])
             exit(0)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--menubar-frames"), i + 1 < CommandLine.arguments.count {
+            MenuBarFrames.write(to: CommandLine.arguments[i + 1])
+            exit(0)
+        }
         if CommandLine.arguments.contains("--bench") {
             Bench.start()
         }
@@ -54,9 +58,14 @@ final class AppModel: ObservableObject {
         audio.$isPlaying
             .removeDuplicates()
             .sink { [weak self] playing in
-                self?.icon.active = playing
+                self?.icon.playing = playing
                 self?.objectWillChange.send()
             }
+            .store(in: &bag)
+        // The popover is open exactly while the scene is on screen.
+        stage.meters.$live
+            .removeDuplicates()
+            .sink { [weak self] open in self?.icon.open = open }
             .store(in: &bag)
     }
 

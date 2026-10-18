@@ -5,6 +5,14 @@ enum Terrain {
     /// Radius of the ground disc the scene sits on.
     static let radius: Float = 13
 
+    /// The land beyond the play area: the same ground, rising into low hills towards the horizon.
+    static func farHeight(_ x: Float, _ y: Float) -> Float {
+        let r = (x * x + y * y).squareRoot()
+        let t = min(max((r - 15) / 45, 0), 1)
+        let hills = 2.2 * sin(x * 0.045 + 0.8) * sin(y * 0.038 + 2.1) + 1.1 * sin(x * 0.11 - y * 0.07 + 0.4)
+        return height(x, y) + t * t * (3 - 2 * t) * (hills + 0.9)
+    }
+
     static func height(_ x: Float, _ y: Float) -> Float {
         -1.7 + 0.22 * sin(x * 0.31 + 1.3) * sin(y * 0.23 + 0.4)
             + 0.06 * sin(x * 1.10 + y * 0.70) + 0.04 * sin(y * 1.9 - x * 0.4)
@@ -16,10 +24,11 @@ enum Terrain {
 
 /// Orbits a target in the engine's frame (+x forward, +y left, +z up).
 struct OrbitCamera {
-    var target = SIMD3<Float>(1.0, 0, -1.2)
+    var target = SIMD3<Float>(2.0, 0, -1.4)
     var azimuth: Float = .pi + 0.62
-    var elevation: Float = 0.82
-    var distance: Float = 34
+    // Low enough that the ground runs away into the haze, high enough to see over the river.
+    var elevation: Float = 0.25
+    var distance: Float = 36
     var fovY: Float = 0.58
 
     var eye: SIMD3<Float> {
@@ -63,9 +72,11 @@ struct OrbitCamera {
 struct Projector {
     let matrix: simd_float4x4
     let size: SIMD2<Float>
+    let camera: OrbitCamera
 
     init(camera: OrbitCamera, size: SIMD2<Float>) {
         self.size = size
+        self.camera = camera
         matrix = camera.viewProjection(aspect: size.x / max(size.y, 1))
     }
 

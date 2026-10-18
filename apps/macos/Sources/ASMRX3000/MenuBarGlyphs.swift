@@ -3,34 +3,30 @@
 import CoreGraphics
 
 enum MenuBarGlyphs {
-    static let size = CGSize(width: 24, height: 22)
-    /// Italic slope (dx per dy) of the ASMRX row; the sweep band uses it. "3000" is sheared harder.
-    static let slant: CGFloat = 0.4040
-    /// Closed rings in points, y up, origin bottom-left. Fill even-odd.
-    static let rings: [[(CGFloat, CGFloat)]] = [
-        [(4.804, 5.000), (5.304, 5.000), (4.214, 3.500), (3.714, 3.500), (1.727, 3.500), (1.227, 3.500), (0.500, 2.500), (2.838, 2.500), (4.564, 3.500), (5.064, 3.500), (5.755, 3.900), (6.554, 5.000), (6.054, 5.000), (6.417, 5.500), (7.144, 6.500), (8.960, 9.000), (9.687, 10.000), (8.437, 10.000), (6.749, 10.000), (5.368, 9.200), (5.223, 9.000), (7.710, 9.000), (5.894, 6.500), (4.527, 6.500), (3.801, 5.500), (5.167, 5.500)],
-        [(14.125, 10.000), (11.787, 10.000), (9.370, 8.600), (6.754, 5.000), (7.254, 5.000), (6.164, 3.500), (5.664, 3.500), (4.938, 2.500), (7.675, 2.500), (9.402, 3.500), (9.902, 3.500), (10.992, 5.000), (10.492, 5.000)],
-        [(9.242, 5.000), (9.742, 5.000), (8.652, 3.500), (8.152, 3.500), (7.414, 3.500), (8.504, 5.000), (8.004, 5.000), (10.910, 9.000), (12.148, 9.000)],
-        [(18.562, 10.000), (16.225, 10.000), (13.807, 8.600), (11.192, 5.000), (11.692, 5.000), (10.602, 3.500), (10.102, 3.500), (9.375, 2.500), (12.113, 2.500), (13.840, 3.500), (14.340, 3.500), (15.430, 5.000), (14.930, 5.000)],
-        [(13.680, 5.000), (14.180, 5.000), (13.090, 3.500), (12.590, 3.500), (11.852, 3.500), (12.942, 5.000), (12.442, 5.000), (15.348, 9.000), (16.586, 9.000)],
-        [(19.367, 5.000), (23.000, 10.000), (20.662, 10.000), (18.245, 8.600), (15.630, 5.000), (16.130, 5.000), (15.040, 3.500), (14.540, 3.500), (13.813, 2.500), (16.551, 2.500), (18.277, 3.500), (18.777, 3.500), (19.867, 5.000)],
-        [(21.023, 9.000), (18.117, 5.000), (18.617, 5.000), (17.527, 3.500), (17.027, 3.500), (16.290, 3.500), (17.380, 5.000), (16.880, 5.000), (19.786, 9.000)],
-        [(0.500, 10.500), (23.298, 10.500), (23.500, 11.000), (0.702, 11.000)],
-        [(0.500, 12.000), (1.500, 12.000), (2.712, 15.000), (3.899, 15.000), (2.687, 12.000), (3.687, 12.000), (4.899, 15.000), (5.303, 16.000), (6.515, 19.000), (6.919, 20.000), (5.919, 20.000), (5.332, 20.000), (3.086, 18.400), (2.116, 16.000), (1.712, 15.000)],
-        [(5.515, 19.000), (4.303, 16.000), (3.116, 16.000), (4.328, 19.000)],
-        [(5.701, 15.500), (6.701, 15.500), (7.888, 15.500), (6.878, 13.000), (4.691, 13.000), (4.287, 12.000), (5.874, 12.000), (8.120, 13.600), (8.888, 15.500), (9.292, 16.500), (8.292, 16.500), (7.105, 16.500), (8.115, 19.000), (10.302, 19.000), (10.706, 20.000), (9.119, 20.000), (6.873, 18.400), (6.105, 16.500)],
-        [(12.535, 12.000), (15.363, 19.000), (15.767, 20.000), (14.767, 20.000), (14.036, 20.000), (13.036, 20.000), (12.906, 20.000), (10.659, 18.400), (8.074, 12.000), (9.074, 12.000), (11.902, 19.000), (12.632, 19.000), (11.097, 15.200), (12.097, 15.200), (13.632, 19.000), (14.363, 19.000), (11.535, 12.000)],
-        [(17.967, 20.000), (15.721, 18.400), (14.751, 16.000), (14.347, 15.000), (13.135, 12.000), (14.135, 12.000), (15.347, 15.000), (15.534, 15.000), (15.322, 12.000), (16.322, 12.000), (16.534, 15.000), (17.534, 15.000), (17.938, 16.000), (19.150, 19.000), (19.554, 20.000), (18.554, 20.000)],
-        [(16.938, 16.000), (15.751, 16.000), (16.963, 19.000), (18.150, 19.000)],
-        [(23.500, 20.000), (22.200, 20.000), (21.238, 18.541), (21.454, 20.000), (20.154, 20.000), (19.561, 16.000), (16.922, 12.000), (18.222, 12.000), (19.184, 13.459), (18.968, 12.000), (20.268, 12.000), (20.861, 16.000)],
+    static let size = CGSize(width: 66, height: 22)
+    /// One group of pixel runs per letter of ASMRX, in points, y up, origin bottom-left.
+    static let letters: [[CGRect]] = [
+        // A
+        [CGRect(x: 8, y: 18, width: 6, height: 2), CGRect(x: 5, y: 16, width: 2, height: 2), CGRect(x: 13, y: 16, width: 2, height: 2), CGRect(x: 5, y: 14, width: 2, height: 2), CGRect(x: 13, y: 14, width: 2, height: 2), CGRect(x: 4, y: 12, width: 2, height: 2), CGRect(x: 12, y: 12, width: 2, height: 2), CGRect(x: 4, y: 10, width: 10, height: 2), CGRect(x: 3, y: 8, width: 2, height: 2), CGRect(x: 11, y: 8, width: 2, height: 2), CGRect(x: 3, y: 6, width: 2, height: 2), CGRect(x: 11, y: 6, width: 2, height: 2), CGRect(x: 2, y: 4, width: 2, height: 2), CGRect(x: 10, y: 4, width: 2, height: 2), CGRect(x: 2, y: 2, width: 2, height: 2), CGRect(x: 10, y: 2, width: 2, height: 2)],
+        // S
+        [CGRect(x: 20, y: 18, width: 8, height: 2), CGRect(x: 17, y: 16, width: 2, height: 2), CGRect(x: 17, y: 14, width: 2, height: 2), CGRect(x: 16, y: 12, width: 2, height: 2), CGRect(x: 18, y: 10, width: 6, height: 2), CGRect(x: 23, y: 8, width: 2, height: 2), CGRect(x: 23, y: 6, width: 2, height: 2), CGRect(x: 22, y: 4, width: 2, height: 2), CGRect(x: 14, y: 2, width: 8, height: 2)],
+        // M
+        [CGRect(x: 30, y: 18, width: 2, height: 2), CGRect(x: 38, y: 18, width: 2, height: 2), CGRect(x: 29, y: 16, width: 4, height: 2), CGRect(x: 35, y: 16, width: 4, height: 2), CGRect(x: 29, y: 14, width: 2, height: 2), CGRect(x: 33, y: 14, width: 2, height: 2), CGRect(x: 37, y: 14, width: 2, height: 2), CGRect(x: 28, y: 12, width: 2, height: 2), CGRect(x: 36, y: 12, width: 2, height: 2), CGRect(x: 28, y: 10, width: 2, height: 2), CGRect(x: 36, y: 10, width: 2, height: 2), CGRect(x: 27, y: 8, width: 2, height: 2), CGRect(x: 35, y: 8, width: 2, height: 2), CGRect(x: 27, y: 6, width: 2, height: 2), CGRect(x: 35, y: 6, width: 2, height: 2), CGRect(x: 26, y: 4, width: 2, height: 2), CGRect(x: 34, y: 4, width: 2, height: 2), CGRect(x: 26, y: 2, width: 2, height: 2), CGRect(x: 34, y: 2, width: 2, height: 2)],
+        // R
+        [CGRect(x: 42, y: 18, width: 8, height: 2), CGRect(x: 41, y: 16, width: 2, height: 2), CGRect(x: 49, y: 16, width: 2, height: 2), CGRect(x: 41, y: 14, width: 2, height: 2), CGRect(x: 49, y: 14, width: 2, height: 2), CGRect(x: 40, y: 12, width: 2, height: 2), CGRect(x: 48, y: 12, width: 2, height: 2), CGRect(x: 40, y: 10, width: 8, height: 2), CGRect(x: 39, y: 8, width: 2, height: 2), CGRect(x: 43, y: 8, width: 2, height: 2), CGRect(x: 39, y: 6, width: 2, height: 2), CGRect(x: 45, y: 6, width: 2, height: 2), CGRect(x: 38, y: 4, width: 2, height: 2), CGRect(x: 46, y: 4, width: 2, height: 2), CGRect(x: 38, y: 2, width: 2, height: 2), CGRect(x: 46, y: 2, width: 2, height: 2)],
+        // X
+        [CGRect(x: 54, y: 18, width: 2, height: 2), CGRect(x: 62, y: 18, width: 2, height: 2), CGRect(x: 53, y: 16, width: 2, height: 2), CGRect(x: 61, y: 16, width: 2, height: 2), CGRect(x: 55, y: 14, width: 2, height: 2), CGRect(x: 59, y: 14, width: 2, height: 2), CGRect(x: 54, y: 12, width: 2, height: 2), CGRect(x: 58, y: 12, width: 2, height: 2), CGRect(x: 56, y: 10, width: 2, height: 2), CGRect(x: 53, y: 8, width: 2, height: 2), CGRect(x: 57, y: 8, width: 2, height: 2), CGRect(x: 53, y: 6, width: 2, height: 2), CGRect(x: 57, y: 6, width: 2, height: 2), CGRect(x: 50, y: 4, width: 2, height: 2), CGRect(x: 58, y: 4, width: 2, height: 2), CGRect(x: 50, y: 2, width: 2, height: 2), CGRect(x: 58, y: 2, width: 2, height: 2)],
     ]
+
+    static let letterPaths: [CGPath] = letters.map { rects in
+        let p = CGMutablePath()
+        p.addRects(rects)
+        return p
+    }
 
     static let path: CGPath = {
         let p = CGMutablePath()
-        for ring in rings {
-            p.addLines(between: ring.map { CGPoint(x: $0.0, y: $0.1) })
-            p.closeSubpath()
-        }
+        for rects in letters { p.addRects(rects) }
         return p
     }()
 }
