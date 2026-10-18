@@ -1,6 +1,6 @@
 //! Renders neural birds solo (no spatialisation) and measures CPU per voice.
 //!
-//!   cargo run --release --example neural_bird -- [species] [seconds] [out.wav] [voices]
+//!   cargo run --release --example neural_bird -- [species] [seconds] [out.wav] [voices] [seed]
 //!
 //! CPU is reported two ways: averaged over the whole render (birds pause between songs, as in
 //! the scene) and only over blocks in which the bird was singing (the worst case).
@@ -17,11 +17,12 @@ fn main() -> std::io::Result<()> {
     let seconds: f32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30.0);
     let path = args.get(3).cloned().unwrap_or_else(|| format!("neural_{species}.wav"));
     let voices: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let seed: u64 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(11);
 
     let sr = 48_000.0f32;
     let model = neural::builtin(&species).unwrap_or_else(|| panic!("no built-in model {species}"));
     println!("{species}: {} parameters", model.params());
-    let mut birds: Vec<NeuralBird> = (0..voices).map(|i| NeuralBird::new(model.clone(), sr, 11 + i as u64)).collect();
+    let mut birds: Vec<NeuralBird> = (0..voices).map(|i| NeuralBird::new(model.clone(), sr, seed + 1000 * i as u64)).collect();
     let controls = BirdControls { activity: 0.8, ..Default::default() };
 
     let block = 256usize;

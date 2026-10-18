@@ -85,6 +85,19 @@ fn f16_to_f32(h: u16) -> f32 {
 }
 
 impl Weights {
+    /// In-memory weights (used when composing a base model with a species adapter).
+    pub fn from_tensors(tensors: Vec<Tensor>) -> Self {
+        Self { tensors }
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.tensors.iter().map(|t| t.name.as_str())
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.tensors.iter().any(|t| t.name == name)
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let mut r = Reader { b: bytes, pos: 0 };
         if r.take(4)? != b"ASNW" {
