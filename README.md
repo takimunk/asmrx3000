@@ -7,7 +7,10 @@
 ```
 core/          Rust: движок (источники → распространение → Ambisonics 3-го порядка → бинаурал)
   include/     C ABI (asmr.h), единственный интерфейс для оболочек
+  src/scene.rs, src/director/   граф сцены и режиссёр (docs/director.md)
+  scenes/      описания сцен (JSON): лес у реки, демо пространственного звука
   examples/    render.rs — офлайн-рендер сцены в WAV
+docs/          director.md — режиссёр, формат сцены, поведения
 apps/macos/    SwiftUI menu bar app (AVAudioEngine + CoreMotion + ASCII-консоль)
 scripts/       сборка
 ```
@@ -30,6 +33,12 @@ cargo test --manifest-path core/Cargo.toml
 
 ```bash
 cargo run --release --manifest-path core/Cargo.toml --example render -- 30 forest.wav turn
+```
+
+Демо движения относительно головы (пролёт, стая, подлёт/удаление, круги) с таймлайном событий:
+
+```bash
+cargo run --release --manifest-path core/Cargo.toml --example render -- 60 flyby.wav flyby
 ```
 
 ## Заметки
