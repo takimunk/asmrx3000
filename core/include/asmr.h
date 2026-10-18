@@ -22,6 +22,11 @@ enum {
     ASMR_PARAM_HEAD_PITCH = 7, /* + = looking up */
     ASMR_PARAM_HEAD_ROLL = 8,  /* + = right ear down */
     ASMR_PARAM_TIME_OF_DAY = 9, /* local time, hours 0..24; picks active species (dawn chorus, owls at night) */
+    /* Weather (docs/physical-models.md). 10..15 are left free for other parameters. */
+    ASMR_PARAM_RAIN = 16,        /* rain rate in the open, mm/h 0..200 (0.5 drizzle, 4 steady, 15 heavy, 50 cloudburst) */
+    ASMR_PARAM_TEMPERATURE = 17, /* air temperature, deg C (insect song rates follow it) */
+    ASMR_PARAM_HUMIDITY = 18,    /* relative humidity 0..1 (drying of leaves and ground) */
+    ASMR_PARAM_STORM = 19,       /* thunderstorm activity 0..1 (lightning rate and closeness) */
 };
 
 /* Telemetry (asmr_get_telemetry). */
@@ -32,12 +37,20 @@ enum {
     ASMR_TELEMETRY_BUBBLE_RATE = 3,  /* bubbles per second, whole river */
     ASMR_TELEMETRY_TIME = 4,         /* seconds of rendered audio */
     ASMR_TELEMETRY_OUTPUT_LEVEL = 5, /* RMS of the output */
+    ASMR_TELEMETRY_RAIN_RATE = 8,    /* actual rain rate (smoothed, fluctuating), mm/h */
+    ASMR_TELEMETRY_WETNESS = 9,      /* leaf wetness 0..1 */
+    ASMR_TELEMETRY_LIGHTNING = 10,   /* flash 0..1: jumps to 1 on a strike, thunder arrives distance/343 s later */
+    ASMR_TELEMETRY_DRIP = 11,        /* canopy drip rate, mm/h (keeps going after the rain) */
 };
 
 enum {
     ASMR_SOURCE_WATER = 0,
     ASMR_SOURCE_WIND = 1,
     ASMR_SOURCE_BIRD = 2,
+    ASMR_SOURCE_RAIN = 3,    /* rain patch / drip zone under a tree */
+    ASMR_SOURCE_THUNDER = 4, /* direction proxy ~40 m towards the latest strike */
+    ASMR_SOURCE_FIRE = 5,
+    ASMR_SOURCE_INSECT = 6,
 };
 
 /* World frame and head frame: +x forward, +y left, +z up, metres. */
@@ -46,7 +59,7 @@ typedef struct AsmrSourceInfo {
     float world_x, world_y, world_z; /* position in the scene */
     float rel_x, rel_y, rel_z;       /* position relative to the listener's head */
     float level;                     /* recent RMS of the source signal */
-    float freq;                      /* dominant pitch if known (birds), else 0 */
+    float freq;                      /* dominant pitch if known (birds, insects, wind tones), else 0 */
 } AsmrSourceInfo;
 
 /* Scene objects (asmr_get_objects). */
@@ -54,6 +67,7 @@ enum {
     ASMR_OBJECT_TREE = 0,
     ASMR_OBJECT_RIVER = 1,
     ASMR_OBJECT_BIRD = 2,
+    ASMR_OBJECT_SOURCE = 3, /* generic physical source: rain patch, campfire, crickets, waterfall, thunder */
 };
 
 enum {

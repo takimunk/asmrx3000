@@ -30,6 +30,17 @@ impl Svf {
         self.a3 = g * self.a2;
     }
 
+    /// Zero states that have decayed into the subnormal range.
+    #[inline]
+    pub fn flush(&mut self) {
+        if self.ic1.abs() < 1e-18 {
+            self.ic1 = 0.0;
+        }
+        if self.ic2.abs() < 1e-18 {
+            self.ic2 = 0.0;
+        }
+    }
+
     /// Returns (lowpass, bandpass normalised to unity peak, highpass).
     #[inline]
     pub fn process(&mut self, v0: f32) -> (f32, f32, f32) {

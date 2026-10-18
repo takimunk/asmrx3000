@@ -1,140 +1,632 @@
-//! Running water from first principles: the sound of a brook is mostly the sum of
-//! many small air bubbles ringing at their Minnaert resonance as they form.
+//! Water from first principles: almost everything we hear from water is air bubbles ringing
+//! at their Minnaert resonance as they are entrained, plus impacts and, for big flows, the
+//! collective oscillation of bubble clouds.
 //!
-//! Each bubble is a damped sinusoid with a slight upward chirp (van den Doel, 2005,
-//! "Physically based models for liquid sounds"):
-//!   f0 = 3.26 / r            (Hz, r in metres)
-//!   d  = 0.043 f0 + 0.0014 f0^1.5   (damping, 1/s)
-//!   f(t) = f0 (1 + sigma t), sigma = 0.1 d
-//! A river is several of these streams spread along a line, which gives it width.
+//! Each bubble is a damped sinusoid with a slight upward chirp (van den Doel 2005):
+//!   f₀ = 3.26/r (Hz, r in m),  d = 0.043·f₀ + 0.0014·f₀^1.5 (1/s),  f(t) = f₀(1 + ξ·d·t).
+//!
+//! Regimes come out of a few physical parameters rather than per-regime code paths:
+//! * **Entrainment** happens where turbulent velocity fluctuations u′ break the free surface.
+//!   u′ grows with flow speed, bed roughness relative to depth (rocks near the surface) and
+//!   extra turbulence (steps, constrictions); below u′ ≈ 0.05 m/s the surface stays smooth
+//!   (a slow deep river only gurgles at the odd snag).
+//! * **Bubble sizes** follow the broken power law measured under breaking water (Deane &
+//!   Stokes 2002): N(r) ∝ r^−3/2 below the Hinze scale a_H and ∝ r^−10/3 above it, with
+//!   a_H = 0.5·(We_c·σ/ρ)^{3/5}·ε^{−2/5} from the turbulent dissipation ε ≈ u′³/L. Gentle
+//!   brooks keep large bubbles (deep "bloops"); violent rapids shred them (bright fizz). The
+//!   largest bubbles scale with the rocks.
+//! * **Plunging flow** (falls, steps) adds impact noise with power ∝ ½ρ·Q·v², v = √(2gH+U²),
+//!   and bubble-cloud oscillations far below single-bubble frequencies (a cloud of radius R
+//!   and void fraction β rings near (1/2πR)·√(3γp₀/ρβ), tens of Hz): the waterfall's thrum.
+//! * **Lapping** on a lake shore: wind waves at the JONSWAP peak f_p = 3.5·(g/U)·(gF/U²)^−0.33
+//!   with height H ∝ U²/g·√(gF/U²) arrive and slosh against the stones, entrain a burst of
+//!   small bubbles and now and then gulp a big air pocket.
+//! * **Drips** into a pool: an impact plus one large chirping bubble (the "plink").
+//!   **Trickles**: a thin jet breaking into drops at the Rayleigh–Plateau rate U/(4.5·d).
+//! * Rain on the water surface (via [`RainLayer`]).
+//!
+//! Event counts that would be too many to render one by one go into a noise bed of the same
+//! energy and spectrum (Campbell's theorem); rapids are mostly bed, a brook mostly bubbles.
 
-use core::f32::consts::TAU;
+use serde::{Deserialize, Serialize};
 
-use crate::dsp::Svf;
+use super::common::*;
+use super::rain::{check, fall_speed, RainLayer, Surface};
+use super::{Controls, Generator, BLOCK};
 use crate::rng::Rng;
 
-const MAX_BUBBLES: usize = 64;
-const R_MIN: f32 = 0.000_6; // 0.6 mm -> ~5.4 kHz
-const R_MAX: f32 = 0.008; // 8 mm   -> ~400 Hz
-const UPDATE: usize = 16; // samples between chirp/frequency updates
+const R_MIN: f32 = 0.0003;
+/// Individually rendered bubbles per second (the rest goes into the bed).
+const RESOLVED: f32 = 500.0;
+/// WATER slider value that means "the configured flow".
+const NOMINAL_DRIVE: f32 = 0.6;
 
-struct Bubble {
-    re: f32,
-    im: f32,
-    cr: f32,
-    ci: f32,
-    freq: f32,
-    dfreq: f32,
-    decay: f32,
-    amp: f32,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct WaterConfig {
+    /// Mean surface flow speed, m/s (0..6). Scaled by the WATER slider (0.6 = as given).
+    pub flow_ms: f32,
+    /// Water depth, m (0.01..5).
+    pub depth_m: f32,
+    /// Width of the stream at this emitter, m (0.05..50).
+    pub width_m: f32,
+    /// Length of stream (or shore) this emitter represents, m (0.1..100).
+    pub length_m: f32,
+    /// Median bed / shore rock size, m (0.002..2).
+    pub rock_d50_m: f32,
+    /// Extra turbulence from steps and constrictions (0..1).
+    pub turbulence: f32,
+    /// How readily the flow entrains air (0..1.5): clear water 0.3, white water 1.
+    pub aeration: f32,
+    /// Fall height of a plunging flow (step, cascade, waterfall), m (0..30); also the fall
+    /// height of drips.
+    pub drop_height_m: f32,
+    /// Wave action on a shore (0..2): 0 none, 1 typical lake; waves also grow with the wind.
+    pub waves: f32,
+    /// Wind fetch over the lake, m (10..20000).
+    pub fetch_m: f32,
+    /// Discrete drips per second into a pool (0..20).
+    pub drips_hz: f32,
+    /// Thin stream (trickle) into a pool (0..1).
+    pub trickle: f32,
+    /// Level of rain falling on the water surface (0..3).
+    pub rain_on_surface: f32,
+    /// Linear output gain (0..8).
+    pub gain: f32,
 }
 
-impl Bubble {
-    #[inline]
-    fn update_rotation(&mut self, sample_rate: f32) {
-        let (s, c) = (TAU * self.freq / sample_rate).sin_cos();
-        self.cr = c * self.decay;
-        self.ci = s * self.decay;
+impl Default for WaterConfig {
+    fn default() -> Self {
+        Self {
+            flow_ms: 0.8,
+            depth_m: 0.12,
+            width_m: 1.5,
+            length_m: 4.0,
+            rock_d50_m: 0.08,
+            turbulence: 0.25,
+            aeration: 0.5,
+            drop_height_m: 0.0,
+            waves: 0.0,
+            fetch_m: 300.0,
+            drips_hz: 0.0,
+            trickle: 0.0,
+            rain_on_surface: 1.0,
+            gain: 1.0,
+        }
     }
 }
 
-pub struct BubbleStream {
+impl WaterConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        check("flow_ms", self.flow_ms, 0.0, 6.0)?;
+        check("depth_m", self.depth_m, 0.01, 5.0)?;
+        check("width_m", self.width_m, 0.05, 50.0)?;
+        check("length_m", self.length_m, 0.1, 100.0)?;
+        check("rock_d50_m", self.rock_d50_m, 0.002, 2.0)?;
+        check("turbulence", self.turbulence, 0.0, 1.0)?;
+        check("aeration", self.aeration, 0.0, 1.5)?;
+        check("drop_height_m", self.drop_height_m, 0.0, 30.0)?;
+        check("waves", self.waves, 0.0, 2.0)?;
+        check("fetch_m", self.fetch_m, 10.0, 20_000.0)?;
+        check("drips_hz", self.drips_hz, 0.0, 20.0)?;
+        check("trickle", self.trickle, 0.0, 1.0)?;
+        check("rain_on_surface", self.rain_on_surface, 0.0, 3.0)?;
+        check("gain", self.gain, 0.0, 8.0)
+    }
+}
+
+/// Derived hydraulics for the current flow (exposed for tests and telemetry).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Hydraulics {
+    pub froude: f32,
+    /// Turbulent velocity fluctuation u′, m/s.
+    pub u_turb: f32,
+    /// Hinze scale, m.
+    pub hinze_m: f32,
+    pub r_max_m: f32,
+    /// Bubbles entrained per second on this emitter's surface.
+    pub bubbles_per_s: f32,
+    /// Plunge impact power, W.
+    pub plunge_w: f32,
+}
+
+pub fn hydraulics(c: &WaterConfig, u: f32) -> Hydraulics {
+    let h = c.depth_m.max(0.01);
+    let k = (c.rock_d50_m / h).min(2.0);
+    let froude = u / (G * h).sqrt();
+    let mut u_t = u * (0.06 + 0.1 * k + 0.3 * c.turbulence);
+    let v_imp = (2.0 * G * c.drop_height_m + u * u).sqrt();
+    let q = u * h * c.width_m;
+    let plunge_w = if c.drop_height_m > 0.02 { 0.5 * 1000.0 * q * v_imp * v_imp } else { 0.0 };
+    if plunge_w > 0.0 {
+        u_t = u_t.max(0.25 * v_imp);
+    }
+    let l = h.min(2.0 * c.rock_d50_m).max(0.02);
+    let eps = u_t.powi(3) / l;
+    let hinze = 4.15e-3 * eps.max(1e-6).powf(-0.4);
+    // (The size law clamps a_H into [r_min, r_max]; the raw value is reported.)
+    let r_max = (0.06 * c.rock_d50_m).clamp(0.0015, 0.01).max(if plunge_w > 0.0 { 0.006 } else { 0.0 });
+    let area = c.width_m * c.length_m;
+    let s = smoothstep(0.05, 0.4, u_t) * (u_t / 0.3).powf(1.5);
+    let mut rate = 1500.0 * (0.3 + c.aeration) * s * area;
+    rate += plunge_w.sqrt() * 40.0 * (0.3 + c.aeration);
+    Hydraulics { froude, u_turb: u_t, hinze_m: hinze, r_max_m: r_max, bubbles_per_s: rate, plunge_w }
+}
+
+/// Broken power-law bubble radius sampler (Deane & Stokes).
+#[derive(Clone, Copy, Default)]
+struct RadiusLaw {
+    r0: f32,
+    a: f32,
+    r1: f32,
+    share_small: f32,
+}
+
+const P_SMALL: f32 = 1.5;
+const P_LARGE: f32 = 10.0 / 3.0;
+
+fn power_mass(r0: f32, r1: f32, p: f32) -> f32 {
+    (r1.powf(1.0 - p) - r0.powf(1.0 - p)) / (1.0 - p)
+}
+
+fn power_draw(r0: f32, r1: f32, p: f32, u: f32) -> f32 {
+    let (a, b) = (r0.powf(1.0 - p), r1.powf(1.0 - p));
+    (a + u * (b - a)).powf(1.0 / (1.0 - p))
+}
+
+impl RadiusLaw {
+    fn new(r0: f32, a: f32, r1: f32) -> Self {
+        let a = a.clamp(r0 * 1.01, r1);
+        let m1 = power_mass(r0, a, P_SMALL);
+        let m2 = if r1 > a * 1.001 { a.powf(P_LARGE - P_SMALL) * power_mass(a, r1, P_LARGE) } else { 0.0 };
+        Self { r0, a, r1, share_small: m1 / (m1 + m2).max(1e-12) }
+    }
+
+    fn draw(&self, rng: &mut Rng) -> f32 {
+        if rng.uniform() < self.share_small || self.r1 <= self.a * 1.001 {
+            power_draw(self.r0, self.a, P_SMALL, rng.uniform())
+        } else {
+            power_draw(self.a, self.r1, P_LARGE, rng.uniform())
+        }
+    }
+}
+
+#[inline]
+fn bubble_amp(r: f32) -> f32 {
+    0.32 * (r / 0.003).powf(0.9)
+}
+
+fn bubble_energy(r: f32, sr: f32) -> f32 {
+    let a = bubble_amp(r);
+    a * a * 0.25 * sr / bubble_damping(minnaert_hz(r))
+}
+
+pub struct Water {
     sample_rate: f32,
     rng: Rng,
-    bubbles: Vec<Bubble>,
-    bed: Svf,
-    base_rate: f32,
-    rate: f32,
-    lfo: f32,
-    lfo_rate: f32,
-    counter: usize,
+    cfg: WaterConfig,
+    flow: Smooth,
+    hyd: Hydraulics,
+    law: RadiusLaw,
+    bubbles: BubbleBank<72>,
+    ev_bubble: Events,
+    resolved: f32,
+    bed_lo: NoiseBand,
+    bed_hi: NoiseBand,
+    splash: NoiseBand,
+    plunge: [NoiseBand; 3],
+    cloud: [Mode; 2],
+    ev_cloud: Events,
+    cloud_rate: f32,
+    cloud_amp: f32,
+    murmur: NoiseBand,
+    grains: GrainPool<24>,
+    // Lapping.
+    wave_clock: f32,
+    wave_period: f32,
+    wave_h: f32,
+    group: f32,
+    burst: f32,
+    // Drips and trickles.
+    drip_clock: f32,
+    trickle_rate: f32,
+    ev_trickle: Events,
+    rain: RainLayer,
+    out: Ramp,
+    rate_telemetry: f32,
+    dirty: bool,
+    key_u: f32,
+    key_wind: f32,
+    /// Bubbles per second rendered one by one (the rest is bed).
+    resolved_per_s: f32,
 }
 
-impl BubbleStream {
-    pub fn new(sample_rate: f32, seed: u64, base_rate: f32) -> Self {
+impl Water {
+    pub fn new(sample_rate: f32, seed: u64, cfg: WaterConfig) -> Self {
+        let sr = sample_rate;
         let mut rng = Rng::new(seed);
-        let lfo_rate = rng.range(0.05, 0.15);
-        let lfo = rng.uniform();
+        let rain = RainLayer::new(Surface::Water, cfg.width_m * cfg.length_m, sr, &mut rng);
         Self {
             sample_rate,
+            flow: Smooth::new(0.0),
+            hyd: Hydraulics::default(),
+            law: RadiusLaw::new(R_MIN, 0.002, 0.006),
+            bubbles: BubbleBank::new(),
+            ev_bubble: Events::new(&mut rng),
+            resolved: 0.0,
+            bed_lo: NoiseBand::new(800.0, 1.0, sr),
+            bed_hi: NoiseBand::new(3000.0, 1.0, sr),
+            splash: NoiseBand::new(4500.0, 0.7, sr),
+            plunge: [NoiseBand::new(300.0, 0.7, sr), NoiseBand::new(1200.0, 0.7, sr), NoiseBand::new(4000.0, 0.8, sr)],
+            cloud: [Mode::default(); 2],
+            ev_cloud: Events::new(&mut rng),
+            cloud_rate: 0.0,
+            cloud_amp: 0.0,
+            murmur: NoiseBand::new(250.0, 0.6, sr),
+            grains: GrainPool::new(),
+            wave_clock: rng.uniform() * 2.0,
+            wave_period: 2.0,
+            wave_h: 0.0,
+            group: rng.uniform(),
+            burst: 0.0,
+            drip_clock: rng.uniform(),
+            trickle_rate: 0.0,
+            ev_trickle: Events::new(&mut rng),
+            rain,
+            out: Ramp::new(cfg.gain),
+            rate_telemetry: 0.0,
+            dirty: true,
+            key_u: -1.0,
+            key_wind: -1.0,
+            resolved_per_s: RESOLVED,
             rng,
-            bubbles: Vec::with_capacity(MAX_BUBBLES),
-            bed: Svf::new(700.0, 0.5, sample_rate),
-            base_rate,
-            rate: 0.0,
-            lfo,
-            lfo_rate,
-            counter: 0,
+            cfg,
         }
     }
 
-    /// Current bubble rate in bubbles per second.
-    pub fn rate(&self) -> f32 {
-        self.rate
+    pub fn config(&self) -> &WaterConfig {
+        &self.cfg
     }
 
-    fn spawn(&mut self) {
-        // Power-law radius distribution: many small bubbles, few large ones.
-        let u = self.rng.uniform();
-        let r = R_MIN * (R_MAX / R_MIN).powf(u.powf(1.6));
-        let f = 3.26 / r;
-        if f > 0.45 * self.sample_rate {
+    /// Change parameters at run time (flow and levels glide, no clicks).
+    pub fn set_config(&mut self, cfg: WaterConfig) {
+        self.rain.area = cfg.width_m * cfg.length_m;
+        self.cfg = cfg;
+        self.dirty = true;
+    }
+
+    pub fn hydraulics(&self) -> Hydraulics {
+        self.hyd
+    }
+
+    /// Budget of individually rendered bubbles per second (tests / quality settings).
+    pub fn set_resolved_per_s(&mut self, n: f32) {
+        self.resolved_per_s = n.clamp(1.0, 5000.0);
+        self.dirty = true;
+    }
+
+    pub fn still_lake() -> WaterConfig {
+        WaterConfig { flow_ms: 0.0, depth_m: 2.0, width_m: 3.0, length_m: 6.0, rock_d50_m: 0.04, waves: 0.5, fetch_m: 300.0, aeration: 0.3, ..Default::default() }
+    }
+    pub fn lake_lapping() -> WaterConfig {
+        WaterConfig { waves: 1.2, fetch_m: 800.0, rock_d50_m: 0.12, ..Self::still_lake() }
+    }
+    pub fn slow_river() -> WaterConfig {
+        WaterConfig { flow_ms: 0.4, depth_m: 1.2, width_m: 8.0, length_m: 6.0, rock_d50_m: 0.05, turbulence: 0.1, aeration: 0.3, ..Default::default() }
+    }
+    pub fn brook_pebbles() -> WaterConfig {
+        WaterConfig::default()
+    }
+    /// Steeper mountain brook among bigger stones with little steps.
+    pub fn brook_rocks() -> WaterConfig {
+        WaterConfig { flow_ms: 1.3, depth_m: 0.25, width_m: 2.5, rock_d50_m: 0.25, turbulence: 0.35, aeration: 0.5, drop_height_m: 0.15, gain: 0.3, ..Default::default() }
+    }
+    pub fn rapids() -> WaterConfig {
+        // Rapids are ~25 dB louder than a pebble brook; `gain` trims that into the mix headroom.
+        WaterConfig { flow_ms: 2.5, depth_m: 0.4, width_m: 6.0, length_m: 5.0, rock_d50_m: 0.4, turbulence: 0.5, aeration: 0.6, gain: 0.15, ..Default::default() }
+    }
+    pub fn small_waterfall() -> WaterConfig {
+        WaterConfig { flow_ms: 1.2, depth_m: 0.15, width_m: 1.5, length_m: 2.0, rock_d50_m: 0.3, turbulence: 0.7, aeration: 1.0, drop_height_m: 1.5, gain: 0.3, ..Default::default() }
+    }
+    pub fn drips() -> WaterConfig {
+        WaterConfig { flow_ms: 0.0, depth_m: 0.3, width_m: 0.5, length_m: 0.5, drips_hz: 1.3, drop_height_m: 1.2, waves: 0.0, ..Default::default() }
+    }
+    pub fn trickle() -> WaterConfig {
+        WaterConfig { flow_ms: 0.0, depth_m: 0.1, width_m: 0.4, length_m: 0.4, trickle: 0.6, drop_height_m: 0.3, ..Default::default() }
+    }
+
+    pub fn preset(name: &str) -> Option<WaterConfig> {
+        Some(match name {
+            "still_lake" => Self::still_lake(),
+            "lake_lapping" => Self::lake_lapping(),
+            "slow_river" => Self::slow_river(),
+            "brook_pebbles" => Self::brook_pebbles(),
+            "brook_rocks" => Self::brook_rocks(),
+            "rapids" => Self::rapids(),
+            "small_waterfall" => Self::small_waterfall(),
+            "drips" => Self::drips(),
+            "trickle" => Self::trickle(),
+            _ => return None,
+        })
+    }
+
+    pub const PRESETS: &'static [&'static str] =
+        &["still_lake", "lake_lapping", "slow_river", "brook_pebbles", "brook_rocks", "rapids", "small_waterfall", "drips", "trickle"];
+
+    fn update(&mut self, c: &Controls, len: usize) {
+        let sr = self.sample_rate;
+        let dt = len as f32 / sr;
+        let cfg = self.cfg.clone();
+        let drive = (c.water / NOMINAL_DRIVE).clamp(0.0, 3.0);
+        if self.key_u < 0.0 {
+            self.flow = Smooth::new(cfg.flow_ms * drive);
+        }
+        let u = self.flow.step(cfg.flow_ms * drive, dt, 0.6);
+        let wind = c.env.wind_ms;
+        let unchanged = !self.dirty && (u - self.key_u).abs() <= 0.01 * u.max(self.key_u) + 1e-5 && (wind - self.key_wind).abs() < 0.05;
+        if unchanged {
+            for b in [&mut self.bed_lo, &mut self.bed_hi, &mut self.splash, &mut self.murmur] {
+                let t = b.gain.cur;
+                b.gain.to(t, len);
+            }
+            for b in self.plunge.iter_mut() {
+                let t = b.gain.cur;
+                b.gain.to(t, len);
+            }
+            self.rain.update(c.env.rain_mm_h, 0.0, 1.0, 1.0, 0.0, len, sr);
             return;
         }
-        let damping = 0.043 * f + 0.0014 * f.powf(1.5);
-        let sigma = 0.1 * damping;
-        let mut b = Bubble {
-            re: 1.0,
-            im: 0.0,
-            cr: 0.0,
-            ci: 0.0,
-            freq: f,
-            dfreq: f * sigma * UPDATE as f32 / self.sample_rate,
-            decay: (-damping / self.sample_rate).exp(),
-            amp: (r / R_MAX).powf(0.6) * self.rng.range(0.3, 1.0),
+        self.dirty = false;
+        self.key_u = u;
+        self.key_wind = wind;
+        let mut hyd = hydraulics(&cfg, u);
+        hyd.hinze_m = hyd.hinze_m.clamp(0.0008, hyd.r_max_m);
+        if cfg.drop_height_m > 0.02 && cfg.flow_ms == 0.0 {
+            hyd.plunge_w = 0.0;
+        }
+        self.law = RadiusLaw::new(R_MIN, hyd.hinze_m, hyd.r_max_m);
+
+        // Slow, deep water: eddies and snags gulp now and then.
+        let snag_rate = cfg.width_m * cfg.length_m * 0.15 * u * (1.0 - smoothstep(0.2, 0.6, hyd.u_turb));
+        let total = hyd.bubbles_per_s + snag_rate;
+        self.resolved = total.min(self.resolved_per_s) / sr;
+        let bed_rate = (total - self.resolved_per_s).max(0.0) / sr;
+        // Energy and spectral centre of the bubble population (deterministic quantiles).
+        let (mut e_sum, mut lf_sum) = (0.0f32, 0.0f32);
+        for i in 0..12 {
+            let q = (i as f32 + 0.5) / 12.0;
+            let r = if q < self.law.share_small {
+                power_draw(self.law.r0, self.law.a, P_SMALL, q / self.law.share_small)
+            } else {
+                power_draw(self.law.a, self.law.r1, P_LARGE, (q - self.law.share_small) / (1.0 - self.law.share_small))
+            };
+            let e = bubble_energy(r, sr);
+            e_sum += e;
+            lf_sum += e * minnaert_hz(r).ln();
+        }
+        let e_mean = e_sum / 12.0;
+        let fc = (lf_sum / e_sum.max(1e-12)).exp().clamp(300.0, 8000.0);
+        // A bubble's band-limited energy, rendered as noise: unit-noise energy = amp²·τ/2.
+        // Split over two bands around the population's spectral centre.
+        let bed = campbell_amp(bed_rate, e_mean) * core::f32::consts::FRAC_1_SQRT_2;
+        self.bed_lo.svf.set(fc / 1.7, 1.4, sr);
+        self.bed_hi.svf.set(fc * 1.7, 1.4, sr);
+        self.bed_lo.gain.to(bed * band_norm(fc / 1.7, 1.4, sr), len);
+        self.bed_hi.gain.to(bed * band_norm(fc * 1.7, 1.4, sr), len);
+        // Spray falling back: hiss once the surface is really broken.
+        let spray = 0.0004 * (total * smoothstep(0.25, 0.8, hyd.u_turb)).sqrt();
+        self.splash.gain.to(spray * band_norm(4500.0, 0.7, sr), len);
+        // Turbulent murmur of moving water (very quiet unless fast).
+        let murmur = 0.00015 * u.powi(2) * (cfg.width_m * cfg.length_m).sqrt();
+        self.murmur.gain.to(murmur * band_norm(250.0, 0.6, sr), len);
+
+        // Plunge: impact noise and bubble-cloud thrum.
+        let p = hyd.plunge_w;
+        let amp = 0.0006 * p.sqrt();
+        for (k, w) in [0.6f32, 1.0, 0.5].iter().enumerate() {
+            let f = [300.0, 1200.0, 4000.0][k];
+            self.plunge[k].gain.to(amp * w * band_norm(f, 0.7, sr) * 0.3, len);
+        }
+        let q = u * cfg.depth_m * cfg.width_m;
+        let r_cloud = (0.12 + 0.25 * q.sqrt()).clamp(0.08, 1.5);
+        let beta = 0.05;
+        let f_cloud = (3.0 * 1.4 * P0 / (1000.0 * beta)).sqrt() / (core::f32::consts::TAU * r_cloud);
+        self.cloud[0].tune(f_cloud, f_cloud / 3.0, sr);
+        self.cloud[1].tune(f_cloud * 1.9, f_cloud * 1.9 / 3.0, sr);
+        self.cloud_rate = if p > 0.0 { (4.0 + 0.5 * p.sqrt()).min(20.0) } else { 0.0 };
+        self.cloud_amp = amp * 1.5;
+
+        // Wind waves on a lake shore.
+        if cfg.waves > 0.0 {
+            let uw = c.env.wind_ms.max(0.7);
+            let x = G * cfg.fetch_m / (uw * uw);
+            let fp = (3.5 * G / uw * x.powf(-0.33)).clamp(0.2, 2.5);
+            let hs = 0.0016 * uw * uw / G * x.sqrt();
+            self.wave_period = 1.0 / fp;
+            self.wave_h = cfg.waves * (0.008 + hs).min(0.5);
+        } else {
+            self.wave_h = 0.0;
+        }
+
+        // Trickle: jet breaks into drops, a share entrains bubbles.
+        self.trickle_rate = if cfg.trickle > 0.0 {
+            let uj = (0.4 + 1.6 * cfg.trickle) * drive.sqrt().min(1.5);
+            let dj = 0.002 + 0.004 * cfg.trickle;
+            uj / (4.5 * dj) * 0.4
+        } else {
+            0.0
         };
-        b.update_rotation(self.sample_rate);
-        self.bubbles.push(b);
+
+        let area = cfg.width_m * cfg.length_m;
+        self.rain.area = area;
+        self.rain.update(c.env.rain_mm_h, 0.0, 1.0, 1.0, 0.0, len, sr);
+        self.hyd = hyd;
+        self.rate_telemetry = total + self.trickle_rate;
     }
 
-    /// `water` is the flow intensity in 0..1.
-    pub fn render(&mut self, out: &mut [f32], water: f32) {
-        let w = water.clamp(0.0, 1.0);
-        self.lfo = (self.lfo + self.lfo_rate * out.len() as f32 / self.sample_rate) % 1.0;
-        self.rate = self.base_rate * (0.1 + 1.6 * w) * (1.0 + 0.35 * (TAU * self.lfo).sin());
-        if w < 1e-3 && self.bubbles.is_empty() {
-            self.rate = 0.0;
-            out.fill(0.0);
-            return;
+    fn lap(&mut self, at: u32) {
+        let sr = self.sample_rate;
+        let rng = &mut self.rng;
+        let h = self.wave_h * (0.6 + 0.8 * (core::f32::consts::TAU * self.group).sin().abs()) * (0.4 * rng.gauss()).exp();
+        let a = (h / 0.03).sqrt().min(3.0);
+        self.grains.spawn(
+            &GrainSpec { amp: 0.03 * a, fc: rng.range(300.0, 600.0), q: 0.6, attack: 0.04, decay: rng.range(0.12, 0.3), delay: at, ..Default::default() },
+            sr,
+        );
+        // Backwash through the gravel.
+        self.grains.spawn(
+            &GrainSpec { amp: 0.006 * a, fc: rng.range(2500.0, 4000.0), q: 0.7, attack: 0.05, decay: 0.2, delay: at + (rng.range(0.15, 0.35) * sr) as u32, ..Default::default() },
+            sr,
+        );
+        self.burst += 150.0 * a;
+        if rng.uniform() < (6.0 * h).min(0.5) {
+            let r = rng.range(0.008, 0.02);
+            let delay = at + (rng.range(0.02, 0.15) * sr) as u32;
+            self.bubbles.spawn(r, 0.08 * a, rng.range(0.3, 0.6), delay, sr);
         }
-        let p = self.rate / self.sample_rate;
-        let bed_gain = 0.04 * w;
+    }
 
-        for o in out.iter_mut() {
-            if self.counter % UPDATE == 0 {
-                self.bubbles.retain(|b| b.re * b.re + b.im * b.im > 1e-6);
-                let sr = self.sample_rate;
-                for b in self.bubbles.iter_mut() {
-                    b.freq += b.dfreq;
-                    b.update_rotation(sr);
+    fn drip(&mut self, at: u32) {
+        let sr = self.sample_rate;
+        let rng = &mut self.rng;
+        let v = fall_speed(4.6, self.cfg.drop_height_m.max(0.1));
+        let a = (v / 4.0).powf(1.5);
+        self.grains.spawn(&GrainSpec { amp: 0.05 * a, fc: rng.range(1200.0, 2200.0), q: 0.8, attack: 0.0001, decay: 0.001, delay: at, ..Default::default() }, sr);
+        if rng.uniform() < 0.8 {
+            let r = rng.range(0.0015, 0.0035);
+            self.bubbles.spawn(r, 0.25 * a * rng.range(0.7, 1.1), rng.range(0.08, 0.2), at + (0.002 * sr) as u32, sr);
+        }
+    }
+}
+
+impl Generator for Water {
+    fn render(&mut self, out: &mut [f32], c: &Controls) {
+        for chunk in out.chunks_mut(BLOCK) {
+            self.render_block(chunk, c);
+        }
+    }
+
+    fn event_rate(&self) -> f32 {
+        self.rate_telemetry
+    }
+}
+
+impl Water {
+    fn render_block(&mut self, out: &mut [f32], c: &Controls) {
+        let sr = self.sample_rate;
+        let len = out.len();
+        let dt = len as f32 / sr;
+        self.update(c, len);
+        let law = self.law;
+        let drip_inc = if self.cfg.drips_hz > 0.0 { self.cfg.drips_hz / sr } else { 0.0 };
+        let wave_inc = if self.wave_h > 0.0 { 1.0 / (self.wave_period * sr) } else { 0.0 };
+        self.group = (self.group + dt / (8.0 * self.wave_period)) % 1.0;
+        let burst_decay = (-1.0 / (0.08 * sr)).exp();
+        let mut white = [0.0f32; BLOCK];
+        for w in white[..len].iter_mut() {
+            *w = self.rng.bipolar();
+        }
+        let white = &white[..len];
+        out.fill(0.0);
+
+        // Events at their sample offsets.
+        let clouds = self.cloud_rate > 0.0 || self.cloud.iter().any(|m| m.energy() > 1e-14);
+        for i in 0..len {
+            let at = i as u32;
+            let n = self.ev_bubble.tick(self.resolved + self.burst / sr, &mut self.rng);
+            for _ in 0..n {
+                let small_burst = self.burst > 1.0 && self.rng.uniform() < 0.5;
+                // Log-normal jitter softens the hard edges of the size law (no spectral ridge).
+                let r = if small_burst { self.rng.range(0.0005, 0.003) } else { law.draw(&mut self.rng) * (0.2 * self.rng.gauss()).exp() };
+                let amp = bubble_amp(r) * (0.5 * self.rng.gauss()).exp() * 0.6;
+                let xi = self.rng.range(0.0, 0.2);
+                self.bubbles.spawn(r, amp, xi, at, sr);
+            }
+            self.burst *= burst_decay;
+            if wave_inc > 0.0 {
+                self.wave_clock += wave_inc;
+                if self.wave_clock >= 1.0 {
+                    self.wave_clock -= 1.0 + 0.25 * self.rng.gauss().clamp(-2.0, 2.0) * 0.5;
+                    self.lap(at);
                 }
             }
-            self.counter = self.counter.wrapping_add(1);
-
-            if w > 1e-3 && self.bubbles.len() < MAX_BUBBLES && self.rng.uniform() < p {
-                self.spawn();
+            if drip_inc > 0.0 {
+                self.drip_clock += drip_inc;
+                if self.drip_clock >= 1.0 {
+                    self.drip_clock -= 1.0 + 0.25 * self.rng.bipolar();
+                    self.drip(at);
+                }
             }
-
-            let mut s = 0.0f32;
-            for b in self.bubbles.iter_mut() {
-                let re = b.re * b.cr - b.im * b.ci;
-                let im = b.re * b.ci + b.im * b.cr;
-                b.re = re;
-                b.im = im;
-                s += im * b.amp;
+            if self.trickle_rate > 0.0 && self.ev_trickle.tick(self.trickle_rate / sr, &mut self.rng) > 0 {
+                let r = self.rng.range(0.0006, 0.002);
+                self.bubbles.spawn(r, bubble_amp(r) * 1.5, self.rng.range(0.05, 0.2), at, sr);
             }
-            let (_, bed, _) = self.bed.process(self.rng.bipolar());
-            *o = s * 0.5 + bed * bed_gain;
+            if clouds {
+                if self.ev_cloud.tick(self.cloud_rate / sr, &mut self.rng) > 0 {
+                    let a = self.cloud_amp * self.rng.range(0.4, 1.0);
+                    self.cloud[0].strike(a);
+                    self.cloud[1].strike(a * 0.4);
+                }
+                out[i] += self.cloud[0].tick() + self.cloud[1].tick();
+            }
         }
+        self.bubbles.render_add(out, sr);
+        self.grains.render_add(out);
+        for b in [&mut self.bed_lo, &mut self.bed_hi, &mut self.splash, &mut self.murmur] {
+            b.render_add(white, out);
+        }
+        for b in self.plunge.iter_mut() {
+            b.render_add(white, out);
+        }
+        let mut rain = [0.0f32; BLOCK];
+        let rain = &mut rain[..len];
+        self.rain.render_add(rain, white, &mut self.rng, sr);
+        let rain_level = self.cfg.rain_on_surface;
+        self.out.to(self.cfg.gain, len);
+        for (o, r) in out.iter_mut().zip(rain.iter()) {
+            *o = (*o + r * rain_level) * self.out.next();
+        }
+        self.out.finish();
+        for m in self.cloud.iter_mut() {
+            if m.energy() < 1e-14 {
+                m.clear();
+            }
+        }
+        self.burst = flush(self.burst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regimes_follow_hydraulics() {
+        let rate = |c: WaterConfig| hydraulics(&c, c.flow_ms).bubbles_per_s;
+        // A slow deep river barely entrains air; rapids entrain orders of magnitude more.
+        assert!(rate(Water::slow_river()) < 1.0);
+        assert!(rate(Water::brook_pebbles()) > 100.0);
+        assert!(rate(Water::rapids()) > 50.0 * rate(Water::brook_pebbles()));
+        // Violent turbulence shreds bubbles: smaller Hinze scale in rapids.
+        let h = |c: WaterConfig| hydraulics(&c, c.flow_ms).hinze_m;
+        assert!(h(Water::rapids()) < h(Water::brook_pebbles()));
+        // Falls carry impact power.
+        assert!(hydraulics(&Water::small_waterfall(), 1.2).plunge_w > 1000.0);
+    }
+
+    #[test]
+    fn radius_law_respects_bounds() {
+        let law = RadiusLaw::new(R_MIN, 0.0015, 0.006);
+        let mut rng = Rng::new(9);
+        let mut small = 0;
+        for _ in 0..10_000 {
+            let r = law.draw(&mut rng);
+            assert!((R_MIN * 0.999..=0.006 * 1.001).contains(&r));
+            if r < 0.0015 {
+                small += 1;
+            }
+        }
+        // r^-1.5 below the Hinze scale puts most bubbles there.
+        assert!(small > 7000, "{small}");
     }
 }

@@ -47,7 +47,7 @@ engine.rs: apply_moves (UI) → director.step → world.update_emitters → дл
   "environment": {
     "time_of_day": 9.0,               // часы 0..24 → ASMR_PARAM_TIME_OF_DAY
     "season": "summer",               // spring|summer|autumn|winter (пока заглушка)
-    "rain": 0.0,                      // 0..1 (заглушка: птицы меньше поют и летают)
+    "rain_mm_h": 0.0,                 // мм/ч; погода и звуки природы: docs/physical-models.md
     "wind": 0.45, "birds": 0.6, "water": 0.6,   // необязательно: стартовые значения слайдеров
     "ground_z": -1.7
   },
@@ -63,7 +63,7 @@ engine.rs: apply_moves (UI) → director.step → world.update_emitters → дл
 }
 ```
 
-Деревья: `birch | oak | spruce | willow | alder` (тембр шелеста). Виды птиц: `chaffinch | robin | song_thrush | nightingale | tawny_owl | cuckoo | wood_pigeon | swallow`. Поля с умолчаниями можно опускать; `id` тоже (тогда `1000 + индекс`), но для UI и промптов лучше задавать.
+Деревья: `birch | oak | spruce | willow | alder | aspen | pine` (пресет кроны и земли под ней, см. docs/physical-models.md). Источники `kind: "source"` (дождь, гроза, костёр, насекомые, водопад…) описаны там же. Виды птиц: `chaffinch | robin | song_thrush | nightingale | tawny_owl | cuckoo | wood_pigeon | swallow`. Поля с умолчаниями можно опускать; `id` тоже (тогда `1000 + индекс`), но для UI и промптов лучше задавать.
 
 ## Поведения
 
@@ -145,6 +145,6 @@ cargo run --release --manifest-path core/Cargo.toml --example render -- 60 rende
 ## Что дальше
 
 - События для UI-нарратора (кольцевой буфер «взлетел/сел/пролетел» через атомики).
-- Ход времени (параметр скорости суток), реальный дождь и сезон.
+- Ход времени (параметр скорости суток). Дождь, гроза, сезон листвы — сделаны (docs/physical-models.md).
 - Видимость и избегание: птицы не садятся на дерево, которое пользователь тащит; реакция на резкое движение головы.
 - Стаи как группа с общим маршрутом (скворцы), перекличка соседей и «акустическая ниша».

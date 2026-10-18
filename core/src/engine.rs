@@ -33,6 +33,12 @@ const WIND_FIELD_POINTS: usize = 64;
 const WATER_GAIN: f32 = 1.0;
 const WIND_GAIN: f32 = 0.6;
 const BIRD_GAIN: f32 = 0.8;
+const RAIN_GAIN: f32 = 1.0;
+/// The thunder emitter is a direction proxy at `director::THUNDER_PROXY_M`; its generator
+/// already includes the long-range attenuation, so undo the proxy's 1/r here.
+const THUNDER_GAIN: f32 = crate::director::THUNDER_PROXY_M;
+const FIRE_GAIN: f32 = 1.0;
+const INSECT_GAIN: f32 = 0.8;
 const MASTER_GAIN: f32 = 1.0;
 
 pub mod param {
@@ -47,7 +53,15 @@ pub mod param {
     pub const HEAD_ROLL: u32 = 8;
     /// Local time of day in hours, 0..24.
     pub const TIME_OF_DAY: u32 = 9;
-    pub const COUNT: usize = 10;
+    /// Rain rate in the open, mm/h (0..200). 0.5 drizzle, 4 steady, 15 heavy, 50 cloudburst.
+    pub const RAIN: u32 = 16;
+    /// Air temperature, °C.
+    pub const TEMPERATURE: u32 = 17;
+    /// Relative humidity 0..1.
+    pub const HUMIDITY: u32 = 18;
+    /// Thunderstorm activity 0..1 (lightning rate and closeness).
+    pub const STORM: u32 = 19;
+    pub const COUNT: usize = 20;
 }
 
 pub mod telemetry {
@@ -57,7 +71,15 @@ pub mod telemetry {
     pub const BUBBLE_RATE: u32 = 3;
     pub const TIME: u32 = 4;
     pub const OUTPUT_LEVEL: u32 = 5;
-    pub const COUNT: usize = 6;
+    /// Actual rain rate (smoothed, fluctuating), mm/h.
+    pub const RAIN_RATE: u32 = 8;
+    /// Leaf wetness 0..1 (canopy water store / capacity).
+    pub const WETNESS: u32 = 9;
+    /// Lightning flash 0..1 (jumps to 1 on a strike, decays in ~0.2 s; thunder follows r/c later).
+    pub const LIGHTNING: u32 = 10;
+    /// Canopy drip rate, mm/h.
+    pub const DRIP: u32 = 11;
+    pub const COUNT: usize = 12;
 }
 
 #[repr(u32)]
@@ -66,6 +88,10 @@ pub enum SourceKind {
     Water = 0,
     Wind = 1,
     Bird = 2,
+    Rain = 3,
+    Thunder = 4,
+    Fire = 5,
+    Insect = 6,
 }
 
 /// Mirrors `AsmrSourceInfo` in asmr.h.
@@ -220,10 +246,14 @@ impl Engine {
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
-        shared.params[param::WIND as usize].store(env.wind.unwrap_or(0.45));
+        shared.params[param::WIND as usize].store(env.initial_wind().unwrap_or(0.45));
         shared.params[param::BIRDS as usize].store(env.birds.unwrap_or(0.6));
         shared.params[param::WATER as usize].store(env.water.unwrap_or(0.6));
         shared.params[param::TIME_OF_DAY as usize].store(env.time_of_day.rem_euclid(24.0));
+        shared.params[param::RAIN as usize].store(env.initial_rain_mm_h());
+        shared.params[param::TEMPERATURE as usize].store(env.temperature_c);
+        shared.params[param::HUMIDITY as usize].store(env.humidity);
+        shared.params[param::STORM as usize].store(env.storm);
         shared.telemetry[telemetry::SAMPLE_RATE as usize].store(sr);
 
         let dsp = Dsp {
@@ -404,7 +434,17 @@ impl Dsp {
         self.wind.step(wind, dt, &mut self.rng);
         // Scene: user moves in, director moves the animals, emitters follow their owners.
         shared.objects.apply_moves(&mut self.world);
-        let env = Environment { hour: p(param::TIME_OF_DAY).rem_euclid(24.0), birds, rain: 0.0, orbit };
+        let env = Environment {
+            hour: p(param::TIME_OF_DAY).rem_euclid(24.0),
+            birds,
+            rain: 0.0,
+            orbit,
+            wind,
+            rain_mm_h: p(param::RAIN).clamp(0.0, 200.0),
+            temperature_c: p(param::TEMPERATURE).clamp(-40.0, 50.0),
+            humidity: p(param::HUMIDITY).clamp(0.0, 1.0),
+            storm: p(param::STORM).clamp(0.0, 1.0),
+        };
         self.director.step(dt, &env, &mut self.world);
         self.world.update_emitters();
 
@@ -423,6 +463,10 @@ impl Dsp {
                 SourceKind::Water => WATER_GAIN,
                 SourceKind::Wind => WIND_GAIN,
                 SourceKind::Bird => BIRD_GAIN,
+                SourceKind::Rain => RAIN_GAIN,
+                SourceKind::Thunder => THUNDER_GAIN,
+                SourceKind::Fire => FIRE_GAIN,
+                SourceKind::Insect => INSECT_GAIN,
             };
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
@@ -487,6 +531,11 @@ impl Dsp {
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
         t[telemetry::TIME as usize].store((self.time % 86_400.0) as f32);
         t[telemetry::OUTPUT_LEVEL as usize].store(self.out_level);
+        let w = self.director.weather();
+        t[telemetry::RAIN_RATE as usize].store(w.rain_mm_h());
+        t[telemetry::WETNESS as usize].store(w.leaf_wetness());
+        t[telemetry::LIGHTNING as usize].store(w.flash());
+        t[telemetry::DRIP as usize].store(w.drip_mm_h());
     }
 }
 
@@ -514,7 +563,7 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 23);
+        assert_eq!(engine.sources(&mut src), 43);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
@@ -527,7 +576,7 @@ mod tests {
         assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
         let mut objs = [ObjectInfo::default(); 64];
         let n = engine.objects(&mut objs);
-        assert_eq!(n, 19);
+        assert_eq!(n, 31);
         let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
         assert_eq!(tree.kind, ObjectKind::Tree as u32);
         assert_ne!(tree.flags & object_flags::MOVABLE, 0);
@@ -545,6 +594,23 @@ mod tests {
         let after = objs[..n].iter().find(|o| o.id == bird.id).unwrap();
         assert!((after.x, after.y, after.z) != (0.0, 0.0, 0.0));
         assert!(Engine::from_json(48_000.0, "{\"name\":1}").is_err());
+    }
+
+    #[test]
+    fn rain_param_reaches_the_rain_emitters() {
+        let engine = Engine::new(48_000.0);
+        engine.set_param(param::PLAYING, 1.0);
+        engine.set_param(param::RAIN, 12.0);
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        for _ in 0..(48_000 * 6 / 512) {
+            engine.render(&mut l, &mut r);
+            assert!(l.iter().chain(&r).all(|v| v.is_finite() && v.abs() <= 1.0));
+        }
+        assert!(engine.telemetry(telemetry::RAIN_RATE) > 6.0);
+        let mut src = [SourceInfo::default(); MAX_SOURCES];
+        let n = engine.sources(&mut src);
+        let rain = src[..n].iter().filter(|s| s.kind == SourceKind::Rain as u32 && s.level > 1e-4).count();
+        assert!(rain >= 10, "{rain} rain emitters audible");
     }
 
     #[test]

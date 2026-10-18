@@ -8,12 +8,19 @@
 
 mod agent;
 mod species;
+pub mod weather;
 
 pub use agent::{Agent, State};
 pub use species::{day_phase, daylight, DayPhase, Species, SpeciesDef};
+pub use weather::Weather;
 
+use crate::math::Vec3;
 use crate::rng::Rng;
-use crate::scene::{object_flags, BehaviourDesc, DirectorDesc, EntityDesc, ObjectKind, SceneDesc, World};
+use crate::scene::{object_flags, BehaviourDesc, DirectorDesc, EntityDesc, Geometry, ObjectKind, SceneDesc, World};
+use crate::sources::ModelKind;
+
+/// Distance of the thunder direction proxy from the listener, m (see `sources::thunder`).
+pub const THUNDER_PROXY_M: f32 = 40.0;
 
 /// Environment the director reacts to. Sliders feed it every block.
 #[derive(Clone, Copy, Debug)]
@@ -22,15 +29,26 @@ pub struct Environment {
     pub hour: f32,
     /// BIRDS slider 0..1 (0.6 = species-default activity).
     pub birds: f32,
-    /// Rain 0..1 (placeholder: suppresses song and flight).
+    /// Extra rain suppression of birds 0..1 (the director also derives it from the actual
+    /// rain rate, whichever is larger).
     pub rain: f32,
     /// ORBIT slider 0..1.
     pub orbit: f32,
+    /// WIND slider 0..1 (`sources::common::wind_speed_ms` maps it to m/s).
+    pub wind: f32,
+    /// Rain rate in the open, mm/h (RAIN param).
+    pub rain_mm_h: f32,
+    /// Air temperature, °C.
+    pub temperature_c: f32,
+    /// Relative humidity 0..1.
+    pub humidity: f32,
+    /// Thunderstorm activity 0..1 (lightning rate and closeness).
+    pub storm: f32,
 }
 
 impl Default for Environment {
     fn default() -> Self {
-        Self { hour: 9.0, birds: 0.6, rain: 0.0, orbit: 0.0 }
+        Self { hour: 9.0, birds: 0.6, rain: 0.0, orbit: 0.0, wind: 0.45, rain_mm_h: 0.0, temperature_c: 16.0, humidity: 0.75, storm: 0.0 }
     }
 }
 
@@ -41,6 +59,8 @@ pub struct Director {
     policy: DirectorDesc,
     flock_left: f32,
     time: f64,
+    weather: Weather,
+    thunder: Vec<usize>,
 }
 
 impl Director {
@@ -66,7 +86,23 @@ impl Director {
             let [a, b] = policy.flock_interval;
             rng.range(a, b.max(a))
         });
-        Self { agents, trees, rng, policy, flock_left, time: 0.0 }
+        let thunder = world
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.geometry, Geometry::Source { model: ModelKind::Thunder, .. }))
+            .map(|(i, _)| i)
+            .collect();
+        let weather = Weather::new(&desc.environment, desc.seed ^ 0x5EA7_4E12);
+        Self { agents, trees, rng, policy, flock_left, time: 0.0, weather, thunder }
+    }
+
+    pub fn weather(&self) -> &Weather {
+        &self.weather
+    }
+
+    pub fn weather_mut(&mut self) -> &mut Weather {
+        &mut self.weather
     }
 
     pub fn agents(&self) -> &[Agent] {
@@ -119,6 +155,22 @@ impl Director {
     /// Advance the scene by `dt` seconds (one control block). Audio thread.
     pub fn step(&mut self, dt: f32, env: &Environment, world: &mut World) {
         self.time += dt as f64;
+        // Weather first: every emitter sees the same environment this block.
+        self.weather.step(dt, env);
+        let ambient = self.weather.ambient(env);
+        for em in world.emitters.iter_mut() {
+            em.controls.env = ambient;
+        }
+        if self.weather.struck() {
+            // Point the thunder proxies at the strike (elevation shrinks with distance).
+            let (bearing, distance) = self.weather.strike_position();
+            let elev = (2000.0 / distance.max(1.0)).atan().min(0.9) * 0.6;
+            let dir = Vec3::new(bearing.cos() * elev.cos(), bearing.sin() * elev.cos(), elev.sin());
+            for &i in &self.thunder {
+                world.entities[i].position = dir * THUNDER_PROXY_M;
+            }
+        }
+        let env = &Environment { rain: env.rain.max(self.weather.rain_unit()), ..*env };
         self.flock_left -= dt;
         if self.flock_left <= 0.0 {
             let fired = self.flock_event(env, world);

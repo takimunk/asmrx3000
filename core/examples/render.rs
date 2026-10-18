@@ -7,6 +7,11 @@
 //! * `flyby` runs the built-in spatial demo scene (fly-bys, a flock changing trees, an
 //!   approach/recede, circling) and prints the director's timeline plus a per-second
 //!   left/right level trace.
+//! * `levels` prints the weather and an approximate at-ear level per source kind every 5 s.
+//! * `weather` runs the default scene at dusk through a weather change: calm with crickets →
+//!   wind rising → thunderstorm and heavy rain while it cools → rain stops, the canopy keeps
+//!   dripping, a gust shakes down a shower → crickets resume, slower. Weather stores run 20×
+//!   faster so the drying fits in the take. Prints the weather and levels every 5 s.
 //!
 //! A scene file given as the 4th argument replaces the default (or demo) scene.
 
@@ -15,7 +20,7 @@ use std::io::{BufWriter, Write};
 use std::time::Instant;
 
 use asmr_core::scene::DEMO_SCENE_JSON;
-use asmr_core::{object_flags, param, telemetry, Engine, ObjectInfo, ObjectKind, SceneDesc, MAX_OBJECTS};
+use asmr_core::{object_flags, param, telemetry, Engine, ObjectInfo, ObjectKind, SceneDesc, SourceInfo, MAX_OBJECTS, MAX_SOURCES};
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -24,6 +29,8 @@ fn main() -> std::io::Result<()> {
     let mode = args.get(3).map(String::as_str).unwrap_or("");
     let turn = mode == "turn";
     let flyby = mode == "flyby";
+    let weather = mode == "weather";
+    let levels = weather || mode == "levels";
 
     let sr = 48_000.0f32;
     let scene = match args.get(4) {
@@ -31,7 +38,13 @@ fn main() -> std::io::Result<()> {
         None if flyby => DEMO_SCENE_JSON.to_string(),
         None => asmr_core::scene::DEFAULT_SCENE_JSON.to_string(),
     };
-    let desc = SceneDesc::from_json(&scene).unwrap_or_else(|e| panic!("{e}"));
+    let mut desc = SceneDesc::from_json(&scene).unwrap_or_else(|e| panic!("{e}"));
+    if weather {
+        desc.environment.time_of_day = 20.5;
+        desc.environment.temperature_c = 22.0;
+        desc.environment.weather_time_scale = 20.0;
+        desc.environment.wind = Some(0.08);
+    }
     let engine = Engine::with_scene(sr, &desc).unwrap_or_else(|e| panic!("{e}"));
     engine.set_param(param::PLAYING, 1.0);
     engine.set_param(param::VOLUME, 0.8);
@@ -58,11 +71,15 @@ fn main() -> std::io::Result<()> {
     let mut closest = [f32::MAX; MAX_OBJECTS];
     let (mut win_l, mut win_r, mut win_n) = (0.0f64, 0.0f64, 0usize);
 
+    let mut last_flash = 0.0f32;
     let started = Instant::now();
     for b in 0..blocks {
         let t = (b * block) as f32 / sr;
         if turn {
             engine.set_param(param::HEAD_YAW, (t * 0.4).sin() * std::f32::consts::FRAC_PI_2);
+        }
+        if weather {
+            weather_script(&engine, t, seconds);
         }
         engine.render(&mut l, &mut r);
         for (a, c) in l.iter().zip(&r) {
@@ -76,6 +93,39 @@ fn main() -> std::io::Result<()> {
         }
         win_n += block;
 
+        if levels && win_n as f32 >= 5.0 * sr {
+            let db = |e: f64| 10.0 * (e / win_n as f64).max(1e-12).log10();
+            let tl = |k| engine.telemetry(k);
+            println!(
+                "{:6.1}s  wind {:4.1} m/s  rain {:5.1} mm/h  leaves wet {:3.0}%  drip {:5.2} mm/h  {:4.1} °C   L {:6.1} dB  R {:6.1} dB",
+                t + block as f32 / sr,
+                asmr_core::sources::common::wind_speed_ms(engine.param(param::WIND)),
+                tl(telemetry::RAIN_RATE),
+                tl(telemetry::WETNESS) * 100.0,
+                tl(telemetry::DRIP),
+                engine.param(param::TEMPERATURE),
+                db(win_l),
+                db(win_r),
+            );
+            // Rough at-ear level per source kind (emitter RMS × kind gain / distance).
+            let mut src = [SourceInfo::default(); MAX_SOURCES];
+            let ns = engine.sources(&mut src);
+            let mut kinds = [0.0f64; 7];
+            for s in &src[..ns] {
+                let d = (s.rel_x * s.rel_x + s.rel_y * s.rel_y + s.rel_z * s.rel_z).sqrt().max(0.7);
+                let g = [1.0, 0.6, 0.8, 1.0, 40.0, 1.0, 0.8][s.kind as usize % 7];
+                kinds[s.kind as usize % 7] += ((s.level * g / d) as f64).powi(2);
+            }
+            let names = ["water", "wind", "birds", "rain", "thunder", "fire", "insects"];
+            let parts: Vec<String> = (0..7).filter(|&k| k != 5).map(|k| format!("{} {:4.0}", names[k], 10.0 * kinds[k].max(1e-12).log10())).collect();
+            println!("          dsp {:4.1}%   {}", engine.telemetry(telemetry::DSP_LOAD) * 100.0, parts.join("  "));
+            (win_l, win_r, win_n) = (0.0, 0.0, 0);
+        }
+        let flash = engine.telemetry(telemetry::LIGHTNING);
+        if weather && flash > last_flash + 0.5 {
+            println!("{t:6.1}s  ⚡ lightning");
+        }
+        last_flash = flash;
         if flyby {
             engine.objects(&mut objs);
             let mut bird_no = 0;
@@ -132,6 +182,30 @@ fn main() -> std::io::Result<()> {
         engine.telemetry(telemetry::DSP_LOAD) * 100.0,
     );
     Ok(())
+}
+
+/// calm → wind rising → storm and rain, cooling → rain stops, dripping, a gust → calm.
+/// Times scale with the take length (the script is written for 150 s).
+fn weather_script(engine: &Engine, t: f32, seconds: f32) {
+    let u = t * 150.0 / seconds;
+    let ramp = |a: f32, b: f32, t0: f32, t1: f32| a + (b - a) * ((u - t0) / (t1 - t0)).clamp(0.0, 1.0);
+    let wind = if u < 20.0 {
+        0.08
+    } else if u < 45.0 {
+        ramp(0.08, 0.85, 20.0, 45.0)
+    } else if u < 100.0 {
+        ramp(0.85, 0.6, 45.0, 60.0)
+    } else if (118.0..124.0).contains(&u) {
+        0.55
+    } else {
+        ramp(0.6, 0.12, 100.0, 110.0)
+    };
+    engine.set_param(param::WIND, wind);
+    let rain = if u < 48.0 { 0.0 } else if u < 100.0 { ramp(0.0, 14.0, 48.0, 58.0) } else { 0.0 };
+    engine.set_param(param::RAIN, rain);
+    engine.set_param(param::STORM, if (45.0..98.0).contains(&u) { 1.0 } else { 0.0 });
+    engine.set_param(param::TEMPERATURE, ramp(22.0, 15.0, 45.0, 100.0));
+    engine.set_param(param::HUMIDITY, if u < 45.0 { 0.65 } else { 0.95 });
 }
 
 fn write_wav(path: &str, sample_rate: u32, pcm: &[i16]) -> std::io::Result<()> {

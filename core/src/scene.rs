@@ -20,7 +20,8 @@ use crate::director::Species;
 use crate::engine::{AtomicF32, SourceKind, MAX_SOURCES};
 use crate::math::Vec3;
 use crate::rng::Rng;
-use crate::sources::{Bird, BubbleStream, Controls, Flyer, Generator, WindSource, Wings};
+use crate::sources::common::{rain_mm_h, wind_slider};
+use crate::sources::{Bird, Controls, Flyer, Generator, ModelConfig, ModelKind, SoundDesc, Wings};
 
 /// The default scene: forest by a river.
 pub const DEFAULT_SCENE_JSON: &str = include_str!("../scenes/forest_river.json");
@@ -53,8 +54,23 @@ pub struct EnvironmentDesc {
     /// Local time, hours 0..24. Drives which species sing and fly.
     pub time_of_day: f32,
     pub season: Season,
-    /// Rain 0..1 (placeholder: birds sing and fly less; no rain sound yet).
+    /// Rain intensity 0..1 (0.1 drizzle, 0.5 heavy, 1 cloudburst = 50 mm/h); `rain_mm_h`
+    /// takes precedence when given.
     pub rain: f32,
+    /// Rain rate in the open, mm/h (0..200).
+    pub rain_mm_h: Option<f32>,
+    /// Air temperature, °C.
+    pub temperature_c: f32,
+    /// Relative humidity 0..1.
+    pub humidity: f32,
+    /// Thunderstorm activity 0..1 (lightning rate and closeness).
+    pub storm: f32,
+    /// How wet everything is at the start, 0..1 ("after a storm" = 1): leaves, ground.
+    pub wetness: f32,
+    /// Speed-up of drying and draining (canopy and ground water stores), 1 = real time.
+    pub weather_time_scale: f32,
+    /// Mean wind at canopy height in m/s; overrides `wind` (slider units) when given.
+    pub wind_ms: Option<f32>,
     /// Initial slider values (0..1); omitted = engine defaults.
     pub wind: Option<f32>,
     pub birds: Option<f32>,
@@ -65,7 +81,45 @@ pub struct EnvironmentDesc {
 
 impl Default for EnvironmentDesc {
     fn default() -> Self {
-        Self { time_of_day: 9.0, season: Season::Summer, rain: 0.0, wind: None, birds: None, water: None, ground_z: -1.7 }
+        Self {
+            time_of_day: 9.0,
+            season: Season::Summer,
+            rain: 0.0,
+            rain_mm_h: None,
+            temperature_c: 16.0,
+            humidity: 0.75,
+            storm: 0.0,
+            wetness: 0.0,
+            weather_time_scale: 1.0,
+            wind_ms: None,
+            wind: None,
+            birds: None,
+            water: None,
+            ground_z: -1.7,
+        }
+    }
+}
+
+impl EnvironmentDesc {
+    /// Starting RAIN parameter, mm/h.
+    pub fn initial_rain_mm_h(&self) -> f32 {
+        self.rain_mm_h.unwrap_or_else(|| rain_mm_h(self.rain)).clamp(0.0, 200.0)
+    }
+
+    /// Starting WIND slider value, if the scene sets one.
+    pub fn initial_wind(&self) -> Option<f32> {
+        self.wind_ms.map(wind_slider).or(self.wind)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let ok = |v: f32, lo: f32, hi: f32| v.is_finite() && v >= lo && v <= hi;
+        if !ok(self.temperature_c, -40.0, 50.0) || !ok(self.humidity, 0.0, 1.0) || !ok(self.storm, 0.0, 1.0) || !ok(self.wetness, 0.0, 1.0) {
+            return Err("environment: temperature_c -40..50, humidity/storm/wetness 0..1".into());
+        }
+        if !ok(self.initial_rain_mm_h(), 0.0, 200.0) || !ok(self.weather_time_scale, 0.0, 1000.0) {
+            return Err("environment: rain_mm_h 0..200, weather_time_scale 0..1000".into());
+        }
+        Ok(())
     }
 }
 
@@ -101,6 +155,31 @@ pub enum EntityDesc {
     Tree(TreeDesc),
     River(RiverDesc),
     Bird(BirdDesc),
+    /// Any physical sound model at a point or along a path (rain patch, waterfall, campfire,
+    /// crickets, distant wind, the storm's thunder).
+    Source(SourceDesc),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceDesc {
+    #[serde(default)]
+    pub id: Option<u32>,
+    /// Where the source is (required unless `path` is given).
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+    /// Extended source: emitters spread evenly along this polyline.
+    #[serde(default)]
+    pub path: Option<Vec<[f32; 3]>>,
+    /// Number of decorrelated emitters along `path` (1..16).
+    #[serde(default = "one_u32")]
+    pub segments: u32,
+    /// Model + preset + parameter overrides (docs/physical-models.md).
+    pub sound: SoundDesc,
+}
+
+fn one_u32() -> u32 {
+    1
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,6 +198,14 @@ pub struct TreeDesc {
     /// Horizontal radius of the canopy; birds perch within it.
     #[serde(default = "default_canopy_radius")]
     pub canopy_radius: f32,
+    /// Crown sound (model `foliage`); omitted = the species preset. `area_m2` defaults to
+    /// the crown area.
+    #[serde(default)]
+    pub foliage: Option<SoundDesc>,
+    /// Ground under the crown (model `rain`: throughfall and canopy drips); omitted =
+    /// `under_canopy` (`under_conifer` for conifers).
+    #[serde(default)]
+    pub ground: Option<SoundDesc>,
 }
 
 fn default_canopy_height() -> f32 {
@@ -137,18 +224,26 @@ pub enum TreeSpecies {
     Spruce,
     Willow,
     Alder,
+    Aspen,
+    Pine,
 }
 
 impl TreeSpecies {
-    /// Leaf-rustle spectral tilt (see `WindSource::new`).
-    fn timbre(self) -> f32 {
+    /// Foliage preset for the crown.
+    pub fn foliage_preset(self) -> &'static str {
         match self {
-            TreeSpecies::Birch => 1.1,
-            TreeSpecies::Oak => 0.85,
-            TreeSpecies::Spruce => 0.7,
-            TreeSpecies::Willow => 1.25,
-            TreeSpecies::Alder => 0.95,
+            TreeSpecies::Birch => "birch",
+            TreeSpecies::Oak => "oak",
+            TreeSpecies::Spruce => "spruce",
+            TreeSpecies::Willow => "willow",
+            TreeSpecies::Alder => "alder",
+            TreeSpecies::Aspen => "aspen",
+            TreeSpecies::Pine => "pine",
         }
+    }
+
+    pub fn is_conifer(self) -> bool {
+        matches!(self, TreeSpecies::Spruce | TreeSpecies::Pine)
     }
 }
 
@@ -165,9 +260,13 @@ pub struct RiverDesc {
     /// Number of decorrelated emitters along the path.
     #[serde(default = "default_segments")]
     pub segments: u32,
-    /// Bubbles per second per segment at full flow.
+    /// Legacy: scales air entrainment relative to 350.
     #[serde(default = "default_bubble_rate")]
     pub bubble_rate: f32,
+    /// Water model (model `water`); omitted = `brook_pebbles`. `length_m` defaults to the
+    /// river length per segment.
+    #[serde(default)]
+    pub sound: Option<SoundDesc>,
 }
 
 fn one() -> f32 {
@@ -335,6 +434,8 @@ pub enum ObjectKind {
     Tree = 0,
     River = 1,
     Bird = 2,
+    /// A generic physical source (`EntityDesc::Source`).
+    Source = 3,
 }
 
 pub mod object_flags {
@@ -364,6 +465,8 @@ pub enum Geometry {
     Tree { canopy_height: f32, canopy_radius: f32 },
     /// Polyline relative to the entity position (its centroid at load time).
     River { path: Vec<Vec3>, flow: f32 },
+    /// A physical model source; `path` (relative to the entity) for extended ones.
+    Source { model: ModelKind, path: Option<Vec<Vec3>> },
 }
 
 pub struct Entity {
@@ -432,6 +535,7 @@ impl World {
                 EntityDesc::Tree(t) => id_for(t.id, i),
                 EntityDesc::River(r) => id_for(r.id, i),
                 EntityDesc::Bird(b) => id_for(b.id, i),
+                EntityDesc::Source(s) => id_for(s.id, i),
             };
             if ids.contains(&id) {
                 return Err(format!("entity {i}: duplicate id {id}"));
@@ -439,6 +543,7 @@ impl World {
             ids.push(id);
         }
 
+        desc.environment.validate()?;
         for (i, e) in desc.entities.iter().enumerate() {
             let id = ids[i];
             let first = emitters.len();
@@ -460,9 +565,19 @@ impl World {
                     if !finite(&t.position) || !finite(&[t.canopy_height, t.canopy_radius]) {
                         return Err(format!("tree {id}: non-finite geometry"));
                     }
-                    let timbre = t.species.timbre() * rng.range(0.92, 1.08);
-                    let gen = Box::new(WindSource::new(sample_rate, rng.next_u64(), timbre));
+                    let r = t.canopy_radius.max(0.2);
+                    let crown = core::f32::consts::PI * r * r;
+                    let foliage = t.foliage.clone().unwrap_or_else(|| SoundDesc::new(ModelKind::Foliage, t.species.foliage_preset()));
+                    let foliage = expect_model(foliage, ModelKind::Foliage, id)?;
+                    let foliage = default_param(foliage, "area_m2", crown);
+                    let gen = foliage.build(sample_rate, rng.next_u64()).map_err(|e| format!("tree {id}: {e}"))?;
                     push(&mut emitters, SourceKind::Wind, Vec3::new(0.0, 0.0, t.canopy_height), gen, 1.0);
+                    let under = if t.species.is_conifer() { "under_conifer" } else { "under_canopy" };
+                    let ground = t.ground.clone().unwrap_or_else(|| SoundDesc::new(ModelKind::Rain, under));
+                    let ground = expect_model(ground, ModelKind::Rain, id)?;
+                    let ground = default_param(default_param(ground, "area_m2", crown), "drip_height_m", t.canopy_height.clamp(0.5, 40.0));
+                    let gen = ground.build(sample_rate, rng.next_u64()).map_err(|e| format!("tree {id} ground: {e}"))?;
+                    push(&mut emitters, SourceKind::Rain, Vec3::new(0.0, 0.0, 0.1), gen, 1.0);
                     Entity {
                         id,
                         kind: ObjectKind::Tree,
@@ -482,9 +597,18 @@ impl World {
                     let pts: Vec<Vec3> = r.path.iter().map(|p| v3(*p)).collect();
                     let centroid = pts.iter().fold(Vec3::default(), |a, p| a + *p) * (1.0 / pts.len() as f32);
                     let rel: Vec<Vec3> = pts.iter().map(|p| *p - centroid).collect();
+                    let length: f32 = rel.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                    let sound = r.sound.clone().unwrap_or_else(|| SoundDesc::new(ModelKind::Water, "brook_pebbles"));
+                    let sound = expect_model(sound, ModelKind::Water, id)?;
+                    let sound = default_param(sound, "length_m", (length / r.segments as f32).clamp(0.1, 100.0));
+                    let mut cfg = match sound.resolve().map_err(|e| format!("river {id}: {e}"))? {
+                        ModelConfig::Water(c) => c,
+                        _ => unreachable!(),
+                    };
+                    cfg.aeration = (cfg.aeration * r.bubble_rate.max(0.0) / 350.0).min(1.5);
                     for k in 0..r.segments {
                         let at = sample_polyline(&rel, (k as f32 + 0.5) / r.segments as f32);
-                        let gen = Box::new(BubbleStream::new(sample_rate, rng.next_u64(), r.bubble_rate));
+                        let gen = ModelConfig::Water(cfg.clone()).build(sample_rate, rng.next_u64());
                         push(&mut emitters, SourceKind::Water, at, gen, r.flow.clamp(0.0, 2.0));
                     }
                     Entity {
@@ -510,6 +634,38 @@ impl World {
                         flags: 0,
                         emitters: 0..0,
                     }
+                }
+                EntityDesc::Source(src) => {
+                    let model = src.sound.model;
+                    let cfg = src.sound.resolve().map_err(|e| format!("source {id}: {e}"))?;
+                    let kind = model.source_kind();
+                    let (position, path) = match (&src.path, src.position) {
+                        (Some(path), _) => {
+                            if path.len() < 2 || !path.iter().all(|p| finite(p)) {
+                                return Err(format!("source {id}: path needs at least two finite points"));
+                            }
+                            if src.segments == 0 || src.segments > 16 {
+                                return Err(format!("source {id}: segments must be 1..16"));
+                            }
+                            let pts: Vec<Vec3> = path.iter().map(|p| v3(*p)).collect();
+                            let centroid = pts.iter().fold(Vec3::default(), |a, p| a + *p) * (1.0 / pts.len() as f32);
+                            (centroid, Some(pts.iter().map(|p| *p - centroid).collect::<Vec<_>>()))
+                        }
+                        (None, Some(p)) if finite(&p) => (v3(p), None),
+                        _ => return Err(format!("source {id}: needs a finite position or a path")),
+                    };
+                    match &path {
+                        Some(rel) => {
+                            for k in 0..src.segments {
+                                let at = sample_polyline(rel, (k as f32 + 0.5) / src.segments as f32);
+                                push(&mut emitters, kind, at, cfg.clone().build(sample_rate, rng.next_u64()), 1.0);
+                            }
+                        }
+                        None => push(&mut emitters, kind, Vec3::default(), cfg.build(sample_rate, rng.next_u64()), 1.0),
+                    }
+                    // The director moves the thunder proxy; everything else can be dragged.
+                    let flags = if model == ModelKind::Thunder { 0 } else { object_flags::MOVABLE };
+                    Entity { id, kind: ObjectKind::Source, position, geometry: Geometry::Source { model, path }, flags, emitters: 0..0 }
                 }
             };
             entities.push(Entity { emitters: first..emitters.len(), ..entity });
@@ -567,6 +723,22 @@ impl World {
         let e = &self.entities[index];
         ObjectInfo { id: e.id, kind: e.kind as u32, x: e.position.x, y: e.position.y, z: e.position.z, flags: e.flags }
     }
+}
+
+fn expect_model(d: SoundDesc, want: ModelKind, id: u32) -> Result<SoundDesc, String> {
+    if d.model == want {
+        Ok(d)
+    } else {
+        Err(format!("entity {id}: sound model must be `{}`, got `{}`", want.name(), d.model.name()))
+    }
+}
+
+/// Sets a parameter from the geometry unless the description already gives it.
+fn default_param(mut d: SoundDesc, key: &str, value: f32) -> SoundDesc {
+    if !d.params.contains_key(key) {
+        d.params.insert(key.to_string(), serde_json::Value::from(value as f64));
+    }
+    d
 }
 
 /// Point at fraction `u` (0..1) of the polyline's arc length.
@@ -694,6 +866,36 @@ mod tests {
             let r = SceneDesc::from_json(json).and_then(|d| World::build(&d, 48_000.0).map(|_| ()));
             assert!(r.is_err(), "accepted: {json}");
         }
+    }
+
+    #[test]
+    fn physical_sources_validate() {
+        let bad = [
+            // Source without position or path.
+            r#"{"name":"x","entities":[{"kind":"source","sound":{"model":"fire"}}]}"#,
+            // Unknown preset, unknown parameter, out-of-range parameter.
+            r#"{"name":"x","entities":[{"kind":"source","position":[0,0,0],"sound":{"model":"water","preset":"jacuzzi"}}]}"#,
+            r#"{"name":"x","entities":[{"kind":"source","position":[0,0,0],"sound":{"model":"rain","params":{"colour":1}}}]}"#,
+            r#"{"name":"x","entities":[{"kind":"source","position":[0,0,0],"sound":{"model":"insects","params":{"count":99}}}]}"#,
+            // A tree's crown must be a foliage model.
+            r#"{"name":"x","entities":[{"kind":"tree","position":[0,0,0],"foliage":{"model":"rain"}}]}"#,
+            // Environment ranges.
+            r#"{"name":"x","environment":{"humidity":2.0},"entities":[]}"#,
+        ];
+        for json in bad {
+            let r = SceneDesc::from_json(json).and_then(|d| World::build(&d, 48_000.0).map(|_| ()));
+            assert!(r.is_err(), "accepted: {json}");
+        }
+        let ok = r#"{"name":"x","environment":{"rain_mm_h":3,"temperature_c":12,"wind_ms":6,"wetness":1},
+            "entities":[{"kind":"tree","position":[3,0,-1.7],"species":"aspen","foliage":{"model":"foliage","preset":"aspen","params":{"exposure":1.5}}},
+                        {"kind":"river","path":[[4,-5,-1.5],[4,5,-1.5]],"sound":{"model":"water","preset":"rapids"}},
+                        {"kind":"source","path":[[-3,-2,-1.7],[-3,2,-1.7]],"segments":2,"sound":{"model":"water","preset":"lake_lapping"}},
+                        {"kind":"source","position":[0,-3,-1.5],"sound":{"model":"fire","preset":"campfire","params":{"moisture":0.3}}}]}"#;
+        let desc = SceneDesc::from_json(ok).unwrap();
+        let world = World::build(&desc, 48_000.0).unwrap();
+        // Tree: crown + ground; river: 5 segments; lake: 2; fire: 1.
+        assert_eq!(world.emitters.len(), 2 + 5 + 2 + 1);
+        assert!((desc.environment.initial_wind().unwrap() - crate::sources::common::wind_slider(6.0)).abs() < 1e-6);
     }
 
     #[test]

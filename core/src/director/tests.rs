@@ -214,3 +214,31 @@ fn orbit_slider_circles_then_returns_home() {
     assert_eq!(e.flags & object_flags::MOVING, 0, "landed again");
     assert!((e.position - Vec3::new(0.0, 0.0, 1.8)).length() > 4.0);
 }
+
+#[test]
+fn thunder_proxy_points_at_the_strike() {
+    use crate::scene::{Geometry, SceneDesc, World};
+    use crate::sources::ModelKind;
+    let desc = SceneDesc::default_scene();
+    let mut world = World::build(&desc, 48_000.0).unwrap();
+    let mut dir = Director::new(&desc, &world);
+    let storm = Environment { storm: 1.0, rain_mm_h: 10.0, ..Default::default() };
+    let thunder = world.entities.iter().position(|e| matches!(e.geometry, Geometry::Source { model: ModelKind::Thunder, .. })).unwrap();
+    let mut struck = 0;
+    for _ in 0..(90.0 * 750.0) as usize {
+        dir.step(1.0 / 750.0, &storm, &mut world);
+        if dir.weather().struck() {
+            struck += 1;
+            let p = world.entities[thunder].position;
+            assert!((p.length() - super::THUNDER_PROXY_M).abs() < 0.01);
+            let (bearing, _) = dir.weather().strike_position();
+            assert!((p.y.atan2(p.x) - bearing).abs() < 1e-3 || (p.y.atan2(p.x) - bearing).abs() > 6.28);
+            let em = &world.emitters[world.entities[thunder].emitters.start];
+            assert!(em.controls.env.strike > 0 && em.controls.env.strike_distance_m >= 300.0);
+        }
+    }
+    assert!(struck > 0);
+    // Rain reached the emitters and the birds noticed.
+    let em = &world.emitters[0];
+    assert!(em.controls.env.rain_mm_h > 5.0);
+}
