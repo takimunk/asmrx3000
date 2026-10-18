@@ -33,8 +33,9 @@ final class AppModel: ObservableObject {
     private var bag = Set<AnyCancellable>()
 
     init() {
-        head.onPose = { [weak audio] yaw, pitch, roll in
-            audio?.setHeadPose(yaw: Float(yaw), pitch: Float(pitch), roll: Float(roll))
+        // Straight from the motion queue: the engine side is lock-free.
+        head.onSample = { [weak audio] sample in
+            audio?.setHeadSample(sample)
         }
         // Re-render the menu bar label when playback state changes.
         audio.$isPlaying

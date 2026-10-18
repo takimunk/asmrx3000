@@ -75,9 +75,34 @@ final class AudioEngine: ObservableObject {
     /// Positions the user gave objects; re-applied when the core is rebuilt for a new sample rate.
     private var placed: [UInt32: SIMD3<Float>] = [:]
 
+    /// Binaural renderer. `core`: our MagLS decoder of the measured SADIE II HRTF (default).
+    /// `apple`: the engine renders a 7.1.4 bed and Apple's AUSpatialMixer makes it binaural
+    /// with the listener's personalised HRTF when the system grants it, head rotation still
+    /// ours (predicted). `appleTracked`: same, but Apple applies AirPods head tracking itself.
+    enum Renderer: String, CaseIterable { case core, apple, appleTracked }
+    @Published var renderer: Renderer = Renderer(rawValue: UserDefaults.standard.string(forKey: "renderer") ?? "") ?? .core {
+        didSet {
+            UserDefaults.standard.set(renderer.rawValue, forKey: "renderer")
+            if renderer != oldValue { switchRenderer() }
+        }
+    }
+    /// Whether AUSpatialMixer reports that it renders with a personalised HRTF.
+    @Published private(set) var personalizedHRTF = false
+    /// Render-to-ear latency the head pose is predicted over (s), and how it was derived.
+    @Published private(set) var outputLatency: Double = 0
+    @Published private(set) var outputDescription = ""
+
+    /// Guards `core` against the motion queue while `rebuild` swaps engines.
+    private let coreLock = NSLock()
+    private var lastHead: HeadTracker.Sample?
+    private var spatialMixer: AVAudioUnit?
+    private var spatialMixerPending = false
+    private let bedPointers = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 12)
+
     init() {
         core = asmr_engine_new(48_000)
         applyParams()
+        if renderer != .core { prepareSpatialMixer() }
         NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
@@ -107,6 +132,8 @@ final class AudioEngine: ObservableObject {
                 NSLog("ASMR X3000: audio engine failed to start: \(error)")
                 return
             }
+            updateOutputLatency()
+            updatePersonalizedHRTF()
         }
         isPlaying = true
         set(ASMR_PARAM_PLAYING, 1)
@@ -138,6 +165,15 @@ final class AudioEngine: ObservableObject {
         }
     }
 
+    /// Head pose from the tracker, called on its motion queue (the engine side is lock-free).
+    func setHeadSample(_ s: HeadTracker.Sample) {
+        coreLock.lock()
+        defer { coreLock.unlock() }
+        lastHead = s
+        asmr_set_head_pose(core, s.q.real, s.q.imag.x, s.q.imag.y, s.q.imag.z, s.w.x, s.w.y, s.w.z, s.age)
+    }
+
+    /// Legacy Euler pose (used only until the first quaternion sample).
     func setHeadPose(yaw: Float, pitch: Float, roll: Float) {
         headPose = (yaw, pitch, roll)
         set(ASMR_PARAM_HEAD_YAW, yaw)
@@ -238,6 +274,10 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_ORBIT, orbit)
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
+        if let s = lastHead {
+            asmr_set_head_pose(core, s.q.real, s.q.imag.x, s.q.imag.y, s.q.imag.z, s.w.x, s.w.y, s.w.z, s.age)
+        }
+        if outputLatency > 0 { set(ASMR_PARAM_OUTPUT_LATENCY, Float(outputLatency)) }
         for (id, p) in placed {
             asmr_set_object_position(core, id, p.x, p.y, p.z)
         }
@@ -253,11 +293,19 @@ final class AudioEngine: ObservableObject {
             node = nil
         }
         if rate != coreRate {
+            coreLock.lock()
             let old = core
             core = asmr_engine_new(Float(rate))
             coreRate = rate
+            coreLock.unlock()
             applyParams()
             asmr_engine_free(old)
+        }
+        if let mixer = spatialMixer, engine.attachedNodes.contains(mixer) {
+            engine.detach(mixer)
+        }
+        if renderer != .core, let mixer = spatialMixer, attachBed(rate: rate, mixer: mixer) {
+            return
         }
         guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return }
         let core = self.core
@@ -287,5 +335,147 @@ final class AudioEngine: ObservableObject {
         if wasPlaying {
             play()
         }
+    }
+
+    // MARK: Apple renderer (AUSpatialMixer, personalised HRTF)
+
+    private func switchRenderer() {
+        if renderer != .core, spatialMixer == nil {
+            prepareSpatialMixer() // rebuilds once the unit exists
+            return
+        }
+        restartGraph()
+    }
+
+    private func restartGraph() {
+        let wasRunning = engine.isRunning
+        engine.stop()
+        if let old = node {
+            engine.detach(old)
+            node = nil
+        }
+        if wasRunning || isPlaying { play() }
+    }
+
+    /// AUSpatialMixer has to be instantiated asynchronously.
+    private func prepareSpatialMixer() {
+        guard !spatialMixerPending else { return }
+        spatialMixerPending = true
+        let desc = AudioComponentDescription(
+            componentType: kAudioUnitType_Mixer,
+            componentSubType: kAudioUnitSubType_SpatialMixer,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        AVAudioUnit.instantiate(with: desc, options: []) { [weak self] unit, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.spatialMixerPending = false
+                guard let unit else {
+                    NSLog("ASMR X3000: AUSpatialMixer unavailable (\(String(describing: error))), using the core renderer")
+                    return
+                }
+                self.spatialMixer = unit
+                if self.renderer != .core { self.restartGraph() }
+            }
+        }
+    }
+
+    /// source (7.1.4 bed from the core) -> AUSpatialMixer (binaural, personalised HRTF) -> main mixer.
+    private func attachBed(rate: Double, mixer: AVAudioUnit) -> Bool {
+        guard let layout = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_Atmos_7_1_4) else { return false }
+        let bedFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channelLayout: layout)
+        guard let stereo = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return false }
+        let au = mixer.audioUnit
+        func set(_ id: AudioUnitPropertyID, _ scope: AudioUnitScope, _ value: UInt32) {
+            var v = value
+            let status = AudioUnitSetProperty(au, id, scope, 0, &v, UInt32(MemoryLayout<UInt32>.size))
+            if status != noErr { NSLog("ASMR X3000: AUSpatialMixer property \(id) failed: \(status)") }
+        }
+        set(kAudioUnitProperty_ElementCount, kAudioUnitScope_Input, 1)
+        set(kAudioUnitProperty_SpatializationAlgorithm, kAudioUnitScope_Input, AUSpatializationAlgorithm.spatializationAlgorithm_UseOutputType.rawValue)
+        set(kAudioUnitProperty_SpatialMixerSourceMode, kAudioUnitScope_Input, AUSpatialMixerSourceMode.spatialMixerSourceMode_AmbienceBed.rawValue)
+        set(kAudioUnitProperty_SpatialMixerOutputType, kAudioUnitScope_Global, AUSpatialMixerOutputType.spatialMixerOutputType_Headphones.rawValue)
+        set(kAudioUnitProperty_UsesInternalReverb, kAudioUnitScope_Global, 0)
+        set(kAudioUnitProperty_SpatialMixerPersonalizedHRTFMode, kAudioUnitScope_Global, AUSpatialMixerPersonalizedHRTFMode.auto.rawValue)
+        set(kAudioUnitProperty_SpatialMixerEnableHeadTracking, kAudioUnitScope_Global, renderer == .appleTracked ? 1 : 0)
+
+        let core = self.core
+        let worldLocked: UInt32 = renderer == .appleTracked ? 1 : 0
+        // Channel-pointer table allocated here, not in the render callback (no allocation there).
+        let ptrs = bedPointers
+        let source = AVAudioSourceNode(format: bedFormat) { _, _, frameCount, bufferList -> OSStatus in
+            let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+            guard buffers.count == 12 else { return noErr }
+            for i in 0..<12 {
+                guard let p = buffers[i].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+                ptrs[i] = p
+            }
+            asmr_render_bed(core, ptrs, 12, frameCount, worldLocked)
+            return noErr
+        }
+        engine.attach(source)
+        engine.attach(mixer)
+        engine.connect(source, to: mixer, format: bedFormat)
+        engine.connect(mixer, to: engine.mainMixerNode, format: stereo)
+        node = source
+        return true
+    }
+
+    private func updatePersonalizedHRTF() {
+        guard renderer != .core, let mixer = spatialMixer, engine.attachedNodes.contains(mixer) else {
+            personalizedHRTF = false
+            return
+        }
+        var v: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioUnitGetProperty(mixer.audioUnit, kAudioUnitProperty_SpatialMixerAnyInputIsUsingPersonalizedHRTF, kAudioUnitScope_Global, 0, &v, &size)
+        personalizedHRTF = status == noErr && v != 0
+    }
+
+    // MARK: Output latency (drives head-pose prediction)
+
+    /// Render-to-ear delay: device presentation latency (+ safety offset, stream latency), the IO
+    /// buffer, our decoder block, the spatial mixer's own latency, and for Bluetooth the AAC
+    /// encoder + radio, which macOS under-reports (assume >= 160 ms in total on Bluetooth).
+    /// UserDefaults "headLatencyMs" overrides it (the listening check tunes it).
+    private func updateOutputLatency() {
+        let out = engine.outputNode
+        let rate = max(out.outputFormat(forBus: 0).sampleRate, 8_000)
+        var latency = out.presentationLatency
+        let device = Self.defaultOutputDevice()
+        let bufferFrames = Self.property(device, kAudioDevicePropertyBufferFrameSize, UInt32(0))
+        latency += Double(bufferFrames) / rate
+        latency += 64.0 / rate
+        if renderer != .core, let mixer = spatialMixer { latency += mixer.auAudioUnit.latency }
+        let transport = Self.property(device, kAudioDevicePropertyTransportType, UInt32(0))
+        let bluetooth = transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+        if bluetooth { latency = max(latency, 0.16) }
+        let override = UserDefaults.standard.double(forKey: "headLatencyMs")
+        if override > 0 { latency = override / 1000 }
+        outputLatency = latency
+        outputDescription = String(format: "%@ %.0f Hz, %d-frame buffer, latency %.0f ms%@",
+                                   bluetooth ? "Bluetooth" : "wired/built-in", rate, Int(bufferFrames), latency * 1000,
+                                   override > 0 ? " (override)" : "")
+        set(ASMR_PARAM_OUTPUT_LATENCY, Float(latency))
+    }
+
+    private static func defaultOutputDevice() -> AudioObjectID {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var id = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        _ = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id)
+        return id
+    }
+
+    private static func property(_ device: AudioObjectID, _ selector: AudioObjectPropertySelector, _ fallback: UInt32) -> UInt32 {
+        var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var v = fallback
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &v) == noErr ? v : fallback
     }
 }

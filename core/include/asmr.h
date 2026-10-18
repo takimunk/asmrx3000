@@ -39,6 +39,12 @@ enum {
     ASMR_PARAM_REVERB = 38,       /* late reverb level relative to the physical estimate, 0..4 [1] */
     ASMR_PARAM_EAR_HEIGHT = 39,   /* listener ear height above the ground, m, 0.1..3 [1.5] */
     ASMR_PARAM_HRTF = 40,         /* 0 = measured HRTF (SADIE II KU100), 1 = analytic spherical head [0] */
+
+    /* Head tracking (41..43). See asmr_set_head_pose. */
+    ASMR_PARAM_OUTPUT_LATENCY = 41,  /* render-to-ear delay the head pose is predicted over, s, 0..0.5 [0.15];
+                                        host-measured (output presentation latency + IO buffer, incl. Bluetooth) */
+    ASMR_PARAM_HEAD_PREDICTION = 42, /* 0 = last measured pose, 1 = full latency compensation [1] */
+    ASMR_PARAM_HEAD_PARALLAX = 43,   /* 1 = head turns about the neck: the ears translate (motion parallax) [1] */
 };
 
 /* Values of ASMR_PARAM_GROUND (effective flow resistivity in brackets). */
@@ -63,6 +69,8 @@ enum {
     ASMR_TELEMETRY_WETNESS = 9,      /* leaf wetness 0..1 */
     ASMR_TELEMETRY_LIGHTNING = 10,   /* flash 0..1: jumps to 1 on a strike, thunder arrives distance/343 s later */
     ASMR_TELEMETRY_DRIP = 11,        /* canopy drip rate, mm/h (keeps going after the rain) */
+    ASMR_TELEMETRY_HEAD_HORIZON_MS = 12, /* head-pose prediction horizon used, ms */
+    ASMR_TELEMETRY_HEAD_RATE = 13,       /* head-pose samples per second arriving */
 };
 
 enum {
@@ -193,6 +201,21 @@ void asmr_engine_free(AsmrEngine *engine);
 /* Audio thread only. Non-interleaved stereo. Any frame count; the binaural decoder adds a
  * fixed latency of 64 samples. */
 void asmr_render(const AsmrEngine *engine, float *left, float *right, uint32_t frames);
+
+/* Audio thread only, instead of asmr_render: a 7.1.4 loudspeaker bed for an external binaural
+ * renderer (AUSpatialMixer with the listener's personalised HRTF). channels: count pointers to
+ * frames floats, order L R C LFE Ls Rs Rls Rrs Vhl Vhr Ltr Rtr (kAudioChannelLayoutTag_Atmos_7_1_4);
+ * extra channels are zeroed, LFE is silent. world_locked = 1: the engine does not apply its head
+ * rotation (the renderer tracks the head itself). */
+void asmr_render_bed(const AsmrEngine *engine, float *const *channels, uint32_t count, uint32_t frames,
+                     uint32_t world_locked);
+
+/* Any thread. Head orientation from a motion sensor: quaternion (w, x, y, z) rotating head-frame
+ * vectors into the world frame, engine axes (+x forward, +y left, +z up), already recentred;
+ * angular velocity wx, wy, wz in rad/s in the head frame (+z = turning left); age = seconds since
+ * the sensor measured it. Replaces ASMR_PARAM_HEAD_YAW/PITCH/ROLL from the first call on. */
+void asmr_set_head_pose(const AsmrEngine *engine, float qw, float qx, float qy, float qz,
+                        float wx, float wy, float wz, float age);
 
 /* Any thread. */
 void asmr_set_param(const AsmrEngine *engine, uint32_t param, float value);

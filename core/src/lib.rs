@@ -4,6 +4,7 @@
 
 pub mod acoustics;
 mod ambisonics;
+mod bed;
 mod binaural;
 pub mod controls;
 pub mod director;
@@ -13,6 +14,7 @@ mod engine;
 mod fft;
 mod delay;
 mod fftconv;
+mod headpose;
 mod hrtf;
 pub mod math;
 mod nearfield;
@@ -222,4 +224,43 @@ pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32
     dst[..n].copy_from_slice(&name.as_bytes()[..n]);
     dst[n] = 0;
     n as u32
+}
+
+/// Head orientation from a motion sensor (AirPods), any thread. Quaternion (w, x, y, z) rotating
+/// head-frame vectors into the world frame, in the engine frame (+x forward, +y left, +z up) and
+/// already recentred; angular velocity (rad/s) in the head frame; `age` = seconds since the
+/// sensor measured it. From the first call on this replaces ASMR_PARAM_HEAD_YAW/PITCH/ROLL; the
+/// engine predicts the pose to the time each block is heard (ASMR_PARAM_OUTPUT_LATENCY).
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_head_pose(engine: *const Engine, qw: f32, qx: f32, qy: f32, qz: f32, wx: f32, wy: f32, wz: f32, age: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.set_head_pose([qw, qx, qy, qz], [wx, wy, wz], age);
+    }
+}
+
+/// Instead of `asmr_render`: renders a 7.1.4 loudspeaker bed for an external binaural renderer
+/// (AUSpatialMixer with the listener's personalised HRTF). `channels` points to `count` channel
+/// pointers of `frames` floats, order L R C LFE Ls Rs Rls Rrs Vhl Vhr Ltr Rtr
+/// (kAudioChannelLayoutTag_Atmos_7_1_4); extra channels are zeroed. `world_locked` = 1 skips the
+/// engine's head rotation (the renderer tracks the head itself). Audio thread only.
+///
+/// # Safety
+/// `channels` must point to `count` valid pointers, each to `frames` writable floats.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_render_bed(engine: *const Engine, channels: *const *mut f32, count: u32, frames: u32, world_locked: u32) {
+    if engine.is_null() || channels.is_null() || count == 0 {
+        return;
+    }
+    let ptrs = slice::from_raw_parts(channels, count as usize);
+    if ptrs.iter().any(|p| p.is_null()) || count as usize > 32 {
+        return;
+    }
+    let mut outs: [&mut [f32]; 32] = Default::default();
+    for (o, p) in outs.iter_mut().zip(ptrs) {
+        *o = slice::from_raw_parts_mut(*p, frames as usize);
+    }
+    (*engine).render_bed(&mut outs[..count as usize], world_locked != 0);
 }

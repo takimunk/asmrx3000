@@ -5,19 +5,21 @@
 //! (params, telemetry, spectrum) may be called from any thread; it only touches atomics.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use core::f32::consts::TAU;
 
+use crate::bed;
 use crate::acoustics::{Acoustics, Emitter, Environment as Acoustic, HrtfModel};
 use crate::ambisonics::CHANNELS;
 use crate::controls::{self, ControlBank, ControlInfo, ControlState};
 use crate::director::{Director, Environment};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
-use crate::math::{Mat3, Vec3};
+use crate::headpose::{HeadPoseInput, HeadTracker, PoseSettings, Quat};
+use crate::math::Vec3;
 use crate::physics::ground::GroundType;
 use crate::rng::Rng;
 use crate::scene::{object_flags, ObjectBridge, ObjectInfo, SceneDesc, World};
@@ -77,7 +79,14 @@ pub mod param {
     pub const REVERB: u32 = 38;
     pub const EAR_HEIGHT: u32 = 39;
     pub const HRTF: u32 = 40;
-    pub const COUNT: usize = 41;
+    // Head tracking (headpose.rs).
+    /// Render-to-ear delay the head pose is predicted over, seconds (host-measured).
+    pub const OUTPUT_LATENCY: u32 = 41;
+    /// 0 = render the last measured pose, 1 = full latency compensation.
+    pub const HEAD_PREDICTION: u32 = 42;
+    /// 1 = the head turns about the neck (ears translate: motion parallax), 0 = pure rotation.
+    pub const HEAD_PARALLAX: u32 = 43;
+    pub const COUNT: usize = 44;
 }
 
 pub mod telemetry {
@@ -95,7 +104,11 @@ pub mod telemetry {
     pub const LIGHTNING: u32 = 10;
     /// Canopy drip rate, mm/h.
     pub const DRIP: u32 = 11;
-    pub const COUNT: usize = 12;
+    /// Head-pose prediction horizon used in the last block, ms.
+    pub const HEAD_HORIZON_MS: u32 = 12;
+    /// Head-pose samples per second arriving from the host.
+    pub const HEAD_RATE: u32 = 13;
+    pub const COUNT: usize = 14;
 }
 
 #[repr(u32)]
@@ -160,6 +173,9 @@ struct Shared {
     /// Live waveform taps, see `scope`.
     scope: Box<[AtomicF32]>,
     scope_pos: AtomicUsize,
+    head: HeadPoseInput,
+    /// Seconds of audio rendered (f64 bits): the clock head-pose arrivals are stamped with.
+    clock: AtomicU64,
 }
 
 struct Dsp {
@@ -167,6 +183,10 @@ struct Dsp {
     world: World,
     director: Director,
     acoustics: Acoustics,
+    head: HeadTracker,
+    /// 0 = binaural (our decoder), 1 = 7.1.4 bed rotated by our head pose, 2 = world-locked bed.
+    bed_mode: u8,
+    bed: [[f32; BLOCK]; bed::CHANNELS],
     wind: WindField,
     rng: Rng,
     bus: [[f32; BLOCK]; CHANNELS],
@@ -223,6 +243,8 @@ impl Engine {
             controls: ControlBank::new(controls::Bases::new(desc, &world), desc),
             scope: atomics(SCOPE_TRACKS * SCOPE_LEN),
             scope_pos: AtomicUsize::new(0),
+            head: HeadPoseInput::new(),
+            clock: AtomicU64::new(0),
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -245,6 +267,9 @@ impl Engine {
             (param::REVERB, env.reverb),
             (param::EAR_HEIGHT, env.ear_height),
             (param::HRTF, env.hrtf as u32 as f32),
+            (param::OUTPUT_LATENCY, 0.15),
+            (param::HEAD_PREDICTION, 1.0),
+            (param::HEAD_PARALLAX, 1.0),
         ] {
             shared.params[id as usize].store(v);
         }
@@ -255,6 +280,9 @@ impl Engine {
             world,
             director,
             acoustics,
+            head: HeadTracker::new(),
+            bed_mode: 0,
+            bed: [[0.0; BLOCK]; bed::CHANNELS],
             wind: WindField::new(sr),
             rng,
             bus: [[0.0; BLOCK]; CHANNELS],
@@ -272,6 +300,18 @@ impl Engine {
         };
         dsp.publish(&shared);
         Ok(Self { shared, dsp: UnsafeCell::new(dsp) })
+    }
+
+    /// Head orientation from a motion sensor. Any thread. `q` (w, x, y, z): head -> world rotation in
+    /// the engine frame (+x forward, +y left, +z up), already recentred; `w`: angular velocity in
+    /// the head frame, rad/s; `age`: how long ago (s) the sensor measured it. Overrides the
+    /// HEAD_YAW/PITCH/ROLL params from the first call on.
+    pub fn set_head_pose(&self, q: [f32; 4], w: [f32; 3], age: f32) {
+        if q.iter().chain(&w).all(|v| v.is_finite()) && age.is_finite() {
+            let now = f64::from_bits(self.shared.clock.load(Ordering::Relaxed));
+            let q = Quat { w: q[0], x: q[1], y: q[2], z: q[3] };
+            self.shared.head.set(q, Vec3::new(w[0], w[1], w[2]), age.clamp(0.0, 1.0), now);
+        }
     }
 
     pub fn set_param(&self, id: u32, value: f32) {
@@ -338,6 +378,32 @@ impl Engine {
             dsp.load = dsp.load * 0.95 + load * 0.05;
             self.shared.telemetry[telemetry::DSP_LOAD as usize].store(dsp.load);
         }
+    }
+
+    /// Audio thread only, instead of `render`: renders a 7.1.4 loudspeaker bed (channel order
+    /// `bed::LAYOUT`, L R C LFE Ls Rs Rls Rrs Vhl Vhr Ltr Rtr) for an external binaural renderer.
+    /// `world_locked`: skip our head rotation (the renderer applies AirPods tracking itself).
+    pub fn render_bed(&self, out: &mut [&mut [f32]], world_locked: bool) {
+        // SAFETY: single audio thread, see the type-level comment.
+        let dsp = unsafe { &mut *self.dsp.get() };
+        dsp.bed_mode = if world_locked { 2 } else { 1 };
+        let n = out.iter().map(|c| c.len()).min().unwrap_or(0);
+        let mut l = [0.0f32; BLOCK];
+        let mut r = [0.0f32; BLOCK];
+        let mut off = 0;
+        while off < n {
+            let len = (n - off).min(BLOCK);
+            dsp.process_block(&self.shared, &mut l[..len], &mut r[..len]);
+            for (ch, o) in out.iter_mut().enumerate() {
+                match dsp.bed.get(ch) {
+                    Some(b) => o[off..off + len].copy_from_slice(&b[..len]),
+                    None => o[off..off + len].fill(0.0),
+                }
+            }
+            off += len;
+        }
+        dsp.bed_mode = 0;
+        dsp.publish(&self.shared);
     }
 
     /// Copies source telemetry into `out`, returns how many were written.
@@ -503,7 +569,16 @@ impl Dsp {
         let water = p(param::WATER).clamp(0.0, 1.0);
         let orbit = p(param::ORBIT).clamp(0.0, 1.0);
         let volume = p(param::VOLUME).clamp(0.0, 1.5);
-        let head = Mat3::from_head(p(param::HEAD_YAW), p(param::HEAD_PITCH), p(param::HEAD_ROLL));
+        // Head pose: predicted to the time this block is heard, smoothed, plus neck parallax.
+        let settings = PoseSettings {
+            output_latency: p(param::OUTPUT_LATENCY).clamp(0.0, 0.5),
+            prediction: p(param::HEAD_PREDICTION).clamp(0.0, 1.5),
+            parallax: p(param::HEAD_PARALLAX) > 0.5,
+        };
+        let fallback = (p(param::HEAD_YAW), p(param::HEAD_PITCH), p(param::HEAD_ROLL));
+        let pose = self.head.step(&shared.head, fallback, self.time, dt, &settings);
+        let head = pose.rotation;
+        self.acoustics.set_listener_offset(pose.offset);
 
         self.wind.step(wind, dt, &mut self.rng);
         // Scene: user moves in, director moves the animals, emitters follow their owners.
@@ -583,7 +658,15 @@ impl Dsp {
             self.acoustics.propagate(idx, &emitter, tmp, &mut self.bus);
         }
 
-        self.acoustics.render(&mut self.bus, &head, len, &mut self.left[..len], &mut self.right[..len]);
+        if self.bed_mode == 0 {
+            self.acoustics.render(&mut self.bus, &head, len, &mut self.left[..len], &mut self.right[..len]);
+        } else {
+            let h = if self.bed_mode == 1 { Some(&head) } else { None };
+            self.acoustics.render_bed(&mut self.bus, h, len, &mut self.bed);
+            // Front pair stands in for the stereo taps (spectrum, level meters).
+            self.left[..len].copy_from_slice(&self.bed[0][..len]);
+            self.right[..len].copy_from_slice(&self.bed[1][..len]);
+        }
 
         let target_fade = if playing { 1.0 } else { 0.0 };
         let fade_coef = 1.0 - (-1.0 / (0.06 * sr)).exp();
@@ -593,6 +676,11 @@ impl Dsp {
             self.fade += (target_fade - self.fade) * fade_coef;
             self.volume += (volume - self.volume) * vol_coef;
             let g = self.fade * self.volume * MASTER_GAIN;
+            if self.bed_mode != 0 {
+                for ch in self.bed.iter_mut() {
+                    ch[i] = soft_clip(ch[i] * g);
+                }
+            }
             let l = soft_clip(self.left[i] * g);
             let r = soft_clip(self.right[i] * g);
             out_l[i] = l;
@@ -605,6 +693,7 @@ impl Dsp {
         peaks[scope::OUTPUT] = self.mono[..len].iter().fold(0.0f32, |m, v| m.max(v.abs()));
         push_scope(shared, &peaks);
         self.time += dt as f64;
+        shared.clock.store(self.time.to_bits(), Ordering::Relaxed);
     }
 
     fn publish(&self, shared: &Shared) {
@@ -645,6 +734,8 @@ impl Dsp {
         t[telemetry::WETNESS as usize].store(w.leaf_wetness());
         t[telemetry::LIGHTNING as usize].store(w.flash());
         t[telemetry::DRIP as usize].store(w.drip_mm_h());
+        t[telemetry::HEAD_HORIZON_MS as usize].store(self.head.horizon * 1000.0);
+        t[telemetry::HEAD_RATE as usize].store(self.head.rate);
     }
 }
 
