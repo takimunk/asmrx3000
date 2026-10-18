@@ -159,6 +159,59 @@ A-S-M-R-X, the cursor stays blue and blinks.
 - CPU while open: `--bench` could not render (display asleep during the run: 0 fps). The
   audio engine alone measured ~9 % of a core here; rerun `--bench` with the screen on.
 - Labels are English, the prompt area Russian (as before). One language for the whole
-  popover is a product decision.
+  popover is a product decision. (Done in section 4: Russian everywhere.)
 - The lever sliders are not keyboard-focusable (the scene owns the arrows); VoiceOver can
   adjust them.
+
+## 4. Second pass: sound vs world, Russian, the mark
+
+Before: `docs/ux/after/` (section 3). After: `docs/ux/v2/` (static, selected, flight, water
+drawer, all levers, night, mix drawer, and `without-levels` for a core without level controls).
+The snapshots with a sound section were taken with `ASMR_PREVIEW_LEVELS=1` (inert 0 dB stand-ins,
+see below) until the core's level controls are merged.
+
+**Pictograms were invisible at rest** (`docs/ux/v2/icons-live-before.png` → `-after.png`, a live
+AppKit render; snapshots draw icons through a Canvas and never showed the bug). SwiftUI configures
+`IconLayerView` before it has a size, so its stroke layers were built later in `layout()` without
+a stroke colour; only a hover re-ran `configure()` and coloured them. Layers are now coloured (and
+given the screen's contents scale) when built. Animation still runs on hover only.
+
+**Two sections instead of one list of sliders** (`Panel/Levers.swift`)
+- **ЗВУК — громкость групп, дБ.** One trim per group (вода, ветер, листва, дождь, птицы,
+  насекомые, костёр): controls with `ASMR_CONTROL_FLAG_LEVEL` (1 << 4), key `<group>.level`,
+  −40…+12 dB, 0 default. Two columns of 22 pt rows: pictogram (click mutes = −40 dB, struck
+  through; click again restores), name, rail with a tick at 0 dB, value ("−6 дБ", "выкл").
+  Double-click the rail: 0 dB. Last cell: the mix's clarity ("Ясность"), which opens the mix
+  drawer. A group's `*.gain` leaves its drawer once the group has a level. Without level
+  controls the section keeps only the mix.
+- **МИР — что происходит в лесу** (in flight: "полёт над лесом"). The macro levers, each with
+  pictogram, name of what it physically sets ("Течение воды", "Скорость ветра", "Сила дождя",
+  "Время суток", "Скорость полёта"…), the waveform slider, the value with units ("4.8 м/с",
+  "0 мм/ч", "09:00", "×1.0") and the chevron to its drawer. Nothing is hover-only any more.
+- Master volume stays in the transport.
+
+**Transport**: flight is a two-segment switch "На земле | Полёт": the current mode is raised,
+the other is what a click does (hint: "Взлететь над лесом F" / "Приземлиться F"). Head tracking
+is a labelled toggle "Голова" with a new pictogram (a head with an AirPod in each ear and a turn
+arc), struck through when off, a violet dot when on. The status shows the gaze as arrows
+("← 35° ↑ 15°"); the hour moved to the world's "Время суток" lever when head tracking is on.
+The scene is 336 pt (was 384) to make room; the popover is about 790 pt tall with every section.
+
+**One language**: every label, hint, unit, preset name ("ручей по гальке", "тайга") and
+accessibility label in the popover is Russian. Coppice Mono now has the full Russian Cyrillic
+(`tools/font/coppice.py`, proof `docs/ux/v2/coppice-cyrillic.png`): А–я, Ёё in the same nib,
+serifs and pixel grid; letters shared with Latin reuse its drawings, the small-capital lowercase
+letters (в г д ж з и к л м н п т ц ч ш щ ъ ы ь э ю я) are one function of height. Also № « » …
+− (minus) ⏎. No more fallback to a system face.
+
+**Menu bar**: "ASMR" over "X3000" (was "X_"), 26 × 18 pt: the figures are 3 × 7 so the second
+line is one point wider than "ASMR". The crest passes A S M R, then X 3 0 0 0; no cursor.
+Variants in `docs/ux/icon/menubar-variants.png` (a, chosen; b, 4-wide figures, 30 pt, a little
+easier to read; c, upright; the old X_). The app icon already reads ASMR / X / 3000.
+
+**Not done / open**
+- The "X_" at the start of the prompt field is drawn in `Prompt/PromptField.swift`
+  (`PromptMark`), owned by the prompt work; it still says X_. Prompt help and accessibility
+  strings there ("Send   Enter", "Listening", "Prompt") are still English.
+- The gaze label is built in English in `Stage/Stage.swift` and translated at display time.
+- Not checked in the running popover by eye (snapshots and a live AppKit icon render only).
