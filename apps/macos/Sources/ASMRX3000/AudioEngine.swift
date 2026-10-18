@@ -56,6 +56,11 @@ struct Telemetry {
     var lightning: Float = 0
     /// Leaf and ground wetness 0..1.
     var wetness: Float = 0
+    /// Flight mode: cross-fade 0..1, ears above the ground (m), distance travelled (m), turn rate.
+    var flight: Float = 0
+    var altitude: Float = 1.7
+    var odometer: Float = 0
+    var speed: Float = 0
 }
 
 /// Hosts the Rust engine inside AVAudioEngine. The Rust side does all DSP; this class only
@@ -67,6 +72,8 @@ final class AudioEngine: ObservableObject {
     @Published var birds: Float = 0.6 { didSet { set(ASMR_PARAM_BIRDS, birds) } }
     @Published var water: Float = 0.6 { didSet { set(ASMR_PARAM_WATER, water) } }
     @Published var orbit: Float = 0 { didSet { set(ASMR_PARAM_ORBIT, orbit) } }
+    /// Flight mode: the listener travels through an endless landscape (speed: flight.speed).
+    @Published var flying = false { didSet { set(ASMR_PARAM_FLIGHT, flying ? 1 : 0) } }
 
     private let engine = AVAudioEngine()
     private var node: AVAudioSourceNode?
@@ -75,7 +82,7 @@ final class AudioEngine: ObservableObject {
     private var headPose: (Float, Float, Float) = (0, 0, 0)
     private var stopWork: DispatchWorkItem?
     private var rawSources = [AsmrSourceInfo](repeating: AsmrSourceInfo(), count: 128)
-    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 128)
+    private var rawObjects = [AsmrObjectInfo](repeating: AsmrObjectInfo(), count: 256)
     private var rawControls = [AsmrControlInfo](repeating: AsmrControlInfo(), count: 64)
     private var controlNames: [UInt32: (String, String)] = [:]
     /// Control values the user set, in order, re-applied when the core is rebuilt.
@@ -226,7 +233,11 @@ final class AudioEngine: ObservableObject {
             bubbleRate: telemetry(ASMR_TELEMETRY_BUBBLE_RATE),
             outputLevel: telemetry(ASMR_TELEMETRY_OUTPUT_LEVEL),
             lightning: telemetry(ASMR_TELEMETRY_LIGHTNING),
-            wetness: telemetry(ASMR_TELEMETRY_WETNESS)
+            wetness: telemetry(ASMR_TELEMETRY_WETNESS),
+            flight: telemetry(ASMR_TELEMETRY_FLIGHT),
+            altitude: telemetry(ASMR_TELEMETRY_FLIGHT_ALTITUDE),
+            odometer: telemetry(ASMR_TELEMETRY_FLIGHT_ODOMETER),
+            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED)
         )
     }
 
@@ -237,6 +248,14 @@ final class AudioEngine: ObservableObject {
         }
         out.removeAll(keepingCapacity: true)
         out.append(contentsOf: rawObjects.prefix(Int(n)))
+    }
+
+    /// Shape of a streamed object (river bed, lake shore, ridge line), listener-relative.
+    func readObjectPath(_ id: UInt32, into out: inout [SIMD3<Float>]) {
+        var raw = [Float](repeating: 0, count: 3 * 32)
+        let n = raw.withUnsafeMutableBufferPointer { asmr_get_object_path(core, id, $0.baseAddress, 32) }
+        out.removeAll(keepingCapacity: true)
+        for i in 0..<Int(n) { out.append(SIMD3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2])) }
     }
 
     /// The control tree: macros and their children. Values change when a macro moves, so this is
@@ -354,6 +373,7 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_BIRDS, birds)
         set(ASMR_PARAM_WATER, water)
         set(ASMR_PARAM_ORBIT, orbit)
+        set(ASMR_PARAM_FLIGHT, flying ? 1 : 0)
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
         if let s = lastHead {

@@ -117,6 +117,8 @@ private struct Transport: View {
         HStack(spacing: 0) {
             QuietButton(icon: audio.isPlaying ? .pause : .play, name: audio.isPlaying ? "Pause" : "Play",
                         emphasised: !audio.isPlaying, live: meters.live) { model.togglePlay() }
+            QuietButton(icon: .flight, name: audio.flying ? "Land" : "Fly through the landscape",
+                        emphasised: audio.flying, live: meters.live) { audio.flying.toggle() }
             QuietButton(icon: .recenter, name: "Recenter", live: meters.live) { head.recenter() }
             QuietButton(icon: .headphones, name: head.enabled ? "Turn head tracking off" : "Turn head tracking on",
                         struck: !head.enabled, live: meters.live) { head.enabled.toggle() }

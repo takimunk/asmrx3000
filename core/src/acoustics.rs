@@ -87,7 +87,8 @@ impl Environment {
         self.tree_density_per_ha = fix(self.tree_density_per_ha, 0.0, 3000.0, 400.0);
         self.foliage = fix(self.foliage, 0.0, 1.0, 0.6);
         self.reverb = fix(self.reverb, 0.0, 4.0, 1.0);
-        self.ear_height = fix(self.ear_height, 0.1, 3.0, 1.5);
+        // Up to 60 m: flight mode flies above the canopy.
+        self.ear_height = fix(self.ear_height, 0.1, 60.0, 1.5);
         self
     }
 }
@@ -388,6 +389,24 @@ impl Acoustics {
         self.env = None; // force a rebuild
         let env = Environment::default();
         self.set_environment(&env);
+    }
+
+    /// Real-time safe update for a streaming world (flight mode): replaces the explicit trunks
+    /// and the extra obstacles (both listener-relative, truncated to the reserved capacity)
+    /// without resetting the environment. With `refit` false the propagators keep their
+    /// spectral fits and refit on their own motion thresholds, so a forest that moves past the
+    /// listener does not force every emitter to refit at every update.
+    pub fn update_geometry(&mut self, trees: &[Trunk], obstacles: &[Obstacle], refit: bool) {
+        self.procedural = false;
+        self.trees.clear();
+        self.trees.extend_from_slice(&trees[..trees.len().min(MAX_TREES)]);
+        self.fixed_obstacles.clear();
+        self.fixed_obstacles.extend_from_slice(&obstacles[..obstacles.len().min(MAX_OBSTACLES / 2)]);
+        let epoch = self.ctx.epoch;
+        self.rebuild_geometry();
+        if !refit {
+            self.ctx.epoch = epoch;
+        }
     }
 
     /// Extra obstacles (boulders, ridges, logs) in addition to the trunks.

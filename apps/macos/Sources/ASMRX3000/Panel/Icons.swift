@@ -92,6 +92,7 @@ enum Icon: Hashable {
             case ASMR_GROUP_ENVIRONMENT: return daylight ? .sun : .moon
             case ASMR_GROUP_INSECTS: return .cricket
             case ASMR_GROUP_FIRE: return .flame
+            case ASMR_GROUP_FLIGHT: return .flight
             default: return .volume
             }
         }

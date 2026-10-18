@@ -14,6 +14,7 @@ mod engine;
 mod fft;
 mod delay;
 mod fftconv;
+pub mod flight;
 pub mod headpose;
 mod hrtf;
 pub mod math;
@@ -226,6 +227,20 @@ pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32
     dst[..n].copy_from_slice(&name.as_bytes()[..n]);
     dst[n] = 0;
     n as u32
+}
+
+/// Shape of a streamed (flight mode) object: river bed, lake shore or ridge line, as
+/// listener-relative (x, y, z) triples written to `out`; returns the number of points
+/// (0 for objects without a shape and outside flight mode).
+///
+/// # Safety
+/// `out` must point to `3 * max_points` writable floats.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_object_path(engine: *const Engine, id: u32, out: *mut f32, max_points: u32) -> u32 {
+    match (engine.as_ref(), out.is_null()) {
+        (Some(e), false) => e.object_path(id, slice::from_raw_parts_mut(out, 3 * max_points as usize)) as u32,
+        _ => 0,
+    }
 }
 
 /// Head orientation from a motion sensor (AirPods), any thread. Quaternion (w, x, y, z) rotating

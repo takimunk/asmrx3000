@@ -1,10 +1,12 @@
 import AppKit
+import CAsmr
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
 /// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--orbit 0..1]
-///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]`
+///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
+///  [--flight speed] [--seed n]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -35,6 +37,15 @@ enum Snapshot {
                 continue
             }
             model.audio.setControl(c.id, v)
+        }
+
+        // --flight <speed m/s>: fly through the streamed landscape.
+        if let seed = value("--seed").flatMap(Float.init) {
+            model.audio.setControl(UInt32(ASMR_CONTROL_FLIGHT_SEED), seed)
+        }
+        if let speed = value("--flight").flatMap(Float.init) {
+            model.audio.setControl(UInt32(ASMR_CONTROL_FLIGHT_SPEED), speed)
+            model.audio.flying = true
         }
 
         let fps = 30.0
