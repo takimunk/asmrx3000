@@ -507,6 +507,13 @@ fn describe(key: &str) -> &'static str {
         "fire.heat" => "Campfire heat release, kW, logarithmic (5 embers, 20 campfire, 100 big fire, 500 bonfire). Only audible if the scene has a fire.",
         "fire.moisture" => "Wood moisture 0.02..0.6: wet wood hisses and steams, dry wood cracks less often.",
         "fire.resin" => "Resin content 0..1: resinous pine pops and crackles.",
+        "flight.speed" => "Flight mode only (the user switches it on with the flight button): forward speed through an endless generated landscape, m/s. 0 hover, 1.5 walk, 5 run, 12 glide, 25 fast flight. Altitude follows unless set.",
+        "flight.altitude" => "Flight mode: ears above the ground, m, logarithmic (1.7 walking among trunks, 5 under the crowns, 20 just above the canopy, 40 high). Follows the speed unless set.",
+        "flight.curviness" => "Flight mode: how much the path bends, 0 straight .. 1 (turn radius 250 m). Takes effect ~200 m ahead.",
+        "flight.biome" => "Flight mode landscape: mixed, broadleaf (oak, birch, aspen), taiga (spruce and pine, lakes, rock), river_valley (many brooks, willows, alders), meadows (open parkland, crickets, camps), highlands (ridges, waterfalls). A change fades out and regenerates.",
+        "flight.density" => "Flight mode: forest density multiplier, 0 open .. 1 as generated .. 2 dense; applies at once.",
+        "flight.seed" => "Flight mode: which landscape, 0..999 (another number = another landscape; regenerates).",
+        "flight.airflow" => "Flight mode: wind noise of motion at the ears, 0 off, 1 physical (subtle below ~10 m/s), 3 strong.",
         _ => "",
     }
 }

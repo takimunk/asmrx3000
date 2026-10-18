@@ -37,7 +37,7 @@ enum {
     ASMR_PARAM_TREE_DENSITY = 36, /* trunks per hectare, 0..3000 [400]: scattering, occlusion, reverb */
     ASMR_PARAM_FOLIAGE = 37,      /* canopy foliage density, 0 (bare) .. 1 (dense summer) [0.6] */
     ASMR_PARAM_REVERB = 38,       /* late reverb level relative to the physical estimate, 0..4 [1] */
-    ASMR_PARAM_EAR_HEIGHT = 39,   /* listener ear height above the ground, m, 0.1..3 [1.5] */
+    ASMR_PARAM_EAR_HEIGHT = 39,   /* listener ear height above the ground, m, 0.1..60 [1.5] */
     ASMR_PARAM_HRTF = 40,         /* 0 = measured HRTF (SADIE II KU100), 1 = analytic spherical head [0] */
 
     /* Head tracking (41..43). See asmr_set_head_pose. */
@@ -45,6 +45,15 @@ enum {
                                         host-measured (output presentation latency + IO buffer, incl. Bluetooth) */
     ASMR_PARAM_HEAD_PREDICTION = 42, /* 0 = last measured pose, 1 = full latency compensation [1] */
     ASMR_PARAM_HEAD_PARALLAX = 43,   /* 1 = head turns about the neck: the ears translate (motion parallax) [1] */
+
+    /* Flight mode (docs/flight-mode.md): 1 = the listener travels forward through an endless,
+     * procedurally generated landscape; 0 = back to the scene. Cross-fades over 1.5 s. The first
+     * switch-on builds the landscape and its voices on the calling thread (tens of ms, allocates;
+     * call it from the UI thread, never from the audio thread). Speed, altitude, path and landscape
+     * are the ASMR_GROUP_FLIGHT controls. While flying, asmr_get_objects / asmr_get_sources report
+     * the streamed world instead of the scene (see ASMR_OBJECT_LAKE / ROCK, asmr_get_object_path),
+     * and ASMR_PARAM_EAR_HEIGHT is replaced by the flight altitude. */
+    ASMR_PARAM_FLIGHT = 44,       /* 0 or 1 [0] */
 };
 
 /* Values of ASMR_PARAM_GROUND (effective flow resistivity in brackets). */
@@ -71,6 +80,12 @@ enum {
     ASMR_TELEMETRY_DRIP = 11,        /* canopy drip rate, mm/h (keeps going after the rain) */
     ASMR_TELEMETRY_HEAD_HORIZON_MS = 12, /* head-pose prediction horizon used, ms */
     ASMR_TELEMETRY_HEAD_RATE = 13,       /* head-pose samples per second arriving */
+    /* Flight mode. */
+    ASMR_TELEMETRY_FLIGHT = 14,          /* cross-fade 0 (scene) .. 1 (flying); objects switch at 0.5 */
+    ASMR_TELEMETRY_FLIGHT_SPEED = 15,    /* current speed, m/s (ramps to flight.speed at 2.5 m/s^2) */
+    ASMR_TELEMETRY_FLIGHT_ALTITUDE = 16, /* ears above the ground, m (follows flight.altitude, gentle swells) */
+    ASMR_TELEMETRY_FLIGHT_ODOMETER = 17, /* distance flown along the path, m, wraps at 10 km (scroll the ground with it) */
+    ASMR_TELEMETRY_FLIGHT_TURN = 18,     /* turn rate of the path, rad/s, + = turning left */
 };
 
 enum {
@@ -98,6 +113,8 @@ enum {
     ASMR_OBJECT_RIVER = 1,
     ASMR_OBJECT_BIRD = 2,
     ASMR_OBJECT_SOURCE = 3, /* generic physical source: rain patch, campfire, crickets, waterfall, thunder */
+    ASMR_OBJECT_LAKE = 4,   /* flight mode: a lake; shape = shore outline (asmr_get_object_path) */
+    ASMR_OBJECT_ROCK = 5,   /* flight mode: a boulder or a ridge (shape = ridge line); z = its top */
 };
 
 enum {
@@ -106,9 +123,13 @@ enum {
     ASMR_OBJECT_FLAG_ABSENT = 1u << 2,  /* off stage: silent, do not draw */
 };
 
-/* Position: trees = trunk base, rivers = polyline centroid, birds = the bird. Same frame as above. */
+/* Position: trees = trunk base, rivers = polyline centroid, birds = the bird. Same frame as above.
+   Flight mode: everything is listener-relative and streams past (ground at z = -altitude); ids
+   (>= 0x40000000) are stable while an object exists; trees are the nearest ones that fit in
+   256 objects, after the rivers, lakes, rocks, sources and birds; a river's position is where it
+   crosses the flight path. */
 typedef struct AsmrObjectInfo {
-    uint32_t id;    /* stable for the lifetime of the scene */
+    uint32_t id;    /* stable for the lifetime of the scene (flight: while the object exists) */
     uint32_t kind;  /* ASMR_OBJECT_* */
     float x, y, z;
     uint32_t flags; /* ASMR_OBJECT_FLAG_* */
@@ -134,6 +155,7 @@ enum {
     ASMR_GROUP_ENVIRONMENT = 6, /* time of day, temperature, humidity, season */
     ASMR_GROUP_INSECTS = 7,
     ASMR_GROUP_FIRE = 8,
+    ASMR_GROUP_FLIGHT = 9,      /* flight mode: speed, altitude, path, landscape */
 };
 
 enum {
@@ -181,6 +203,14 @@ enum {
     ASMR_CONTROL_FIRE_HEAT = 900,        /* macro, kW */
     ASMR_CONTROL_FIRE_MOISTURE = 901,
     ASMR_CONTROL_FIRE_RESIN = 902,
+    /* Flight mode (ASMR_PARAM_FLIGHT). Applied while flying and kept for the next flight. */
+    ASMR_CONTROL_FLIGHT_SPEED = 1000,     /* macro, m/s 0..25 [6]: walk 1.5, run 5, glide 12, fast flight 25 */
+    ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
+    ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* 0 straight .. 1 (turn radius 250 m); bends the path laid down ~200 m ahead [0.35] */
+    ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands [mixed]; option names via asmr_get_control_option */
+    ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
+    ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
+    ASMR_CONTROL_FLIGHT_AIRFLOW = 1006,   /* wind noise of motion at the ears x 0..3 [1 = physical, subtle below ~10 m/s] */
 };
 
 typedef struct AsmrControlInfo {
@@ -233,6 +263,11 @@ uint32_t asmr_get_controls(const AsmrEngine *engine, AsmrControlInfo *out, uint3
 void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
 /* Name of option `index` of a discrete control into `out` (NUL-terminated); returns its length, 0 if none. */
 uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t index, char *out, uint32_t max);
+
+/* Flight mode: shape of a streamed object (river bed, lake shore, ridge line) as listener-relative
+   (x, y, z) triples, up to max_points (24 at most); returns the number of points, 0 for objects
+   without a shape and outside flight mode. `out` holds 3 * max_points floats. Any thread. */
+uint32_t asmr_get_object_path(const AsmrEngine *engine, uint32_t id, float *out, uint32_t max_points);
 
 /* Prompt control (docs/prompt-control.md). Any thread. JSON strings, UTF-8. Each call writes
    its NUL-terminated result into `out` only if `max` > its length, and returns the length in
