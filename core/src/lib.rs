@@ -22,6 +22,7 @@ pub mod mix;
 mod nearfield;
 mod num;
 mod physics;
+pub mod profile;
 mod prompt;
 mod propagation;
 mod reverb;
@@ -408,8 +409,25 @@ pub unsafe extern "C" fn asmr_apply_patch_json_alloc(engine: *const Engine, patc
     CString::new(result).expect("JSON escapes NUL bytes").into_raw()
 }
 
+/// Clears and starts the render-path CPU profile (profile.rs; process-wide, off by default).
+#[no_mangle]
+pub extern "C" fn asmr_profile_enable() {
+    profile::enable();
+}
+
+/// The profile since `asmr_profile_enable` as a text table. Free with `asmr_string_free`.
+///
 /// # Safety
-/// `text` must be NULL or an unfreed pointer returned by `asmr_apply_patch_json_alloc`.
+/// `title` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_profile_text_alloc(title: *const c_char) -> *mut c_char {
+    let title = if title.is_null() { "profile".into() } else { CStr::from_ptr(title).to_string_lossy() };
+    CString::new(profile::format(&title)).unwrap_or_default().into_raw()
+}
+
+/// # Safety
+/// `text` must be NULL or an unfreed pointer returned by `asmr_apply_patch_json_alloc`
+/// or `asmr_profile_text_alloc`.
 #[no_mangle]
 pub unsafe extern "C" fn asmr_string_free(text: *mut c_char) {
     if !text.is_null() { drop(CString::from_raw(text)); }

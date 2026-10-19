@@ -23,7 +23,7 @@
 
 use crate::acoustics::{Context, Emitter, Scratch};
 use crate::ambisonics::{self, order_of, CHANNELS, ORDER};
-use crate::delay::{DelayLine, MIN_DELAY};
+use crate::delay::{DelayLine, MIN_DELAY, TAPS};
 use crate::engine::BLOCK;
 use crate::math::Vec3;
 use crate::nearfield::NearField;
@@ -41,6 +41,9 @@ pub const MAX_DELAY_S: f32 = 0.7;
 const BARK_REFLECTION: f32 = 0.975; // sqrt(1 - alpha_bark), alpha_bark = 0.05
 /// Early-reflection taps rendered per emitter (the strongest of the ER_TRUNKS candidates).
 const ER_TAPS: usize = 4;
+/// Silence after the last sound has left the delay line before an emitter sleeps: the path
+/// filters' slowest pole (30 Hz, tau ~13 ms) decays ~80 dB in it.
+const SLEEP_TAIL_S: f32 = 0.15;
 
 struct Path {
     coeffs: CoeffRamp,
@@ -149,6 +152,9 @@ impl Propagator {
     fn sleep(&mut self, bank: &mut FilterBank, path: usize) {
         bank.reset(path);
         bank.reset(path + 1);
+        // Asleep, the bank skips this path's filter (no ramp advance), so land on the target.
+        self.direct.coeffs.settle();
+        self.ground.coeffs.settle();
         self.near.reset();
         self.sleeping = true;
         self.started = false;
@@ -179,18 +185,20 @@ impl Propagator {
         let fs = ctx.sample_rate;
         let dt = len as f32 / fs;
 
-        // Sleep once the delay line holds only silence: nothing left in flight.
+        // Sleep once nothing is left in flight: the input has been silent for longer than the
+        // longest path reads back, plus the filters' tail. Paths cannot outgrow the silence
+        // (a source recedes slower than sound), so the reads stay silent while asleep.
         if input.iter().all(|v| *v == 0.0) {
             self.idle += len;
         } else {
             self.idle = 0;
         }
-        if self.idle > self.delay.len() {
+        if self.idle > self.reach(fs) {
             if !self.sleeping {
                 self.sleep(bank, path);
             }
-            bank.silence(path, len);
-            bank.silence(path + 1, len);
+            // Asleep it leaves the bank alone: its lanes may be handed to an emitter that
+            // wakes (Acoustics::place), and nothing reads them back for this one.
             self.delay.skip(len);
             self.last_pos = em.position;
             return;
@@ -332,6 +340,23 @@ impl Propagator {
             }
         }
         self.started = true;
+    }
+
+    /// Samples of silent input after which every path reads silence and the filters have rung
+    /// out: the longest delay in use (direct, ground, early-reflection taps) plus the tail.
+    fn reach(&self, fs: f32) -> usize {
+        let mut d = if self.started { self.direct.delay.max(self.ground.delay) } else { 0.0 };
+        if self.started {
+            for t in self.er.iter().filter(|t| t.gain > 0.0) {
+                d = d.max(t.delay);
+            }
+        }
+        d.ceil() as usize + 2 * TAPS + (SLEEP_TAIL_S * fs) as usize
+    }
+
+    /// Nothing in flight and the path filters cleared: the bank need not run this emitter.
+    pub fn asleep(&self) -> bool {
+        self.sleeping
     }
 
     /// Coefficient ramps of the (direct, ground) path filters, for `FilterBank::process_group`.

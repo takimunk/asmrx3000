@@ -549,6 +549,7 @@ impl Engine {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let started = Instant::now();
+        crate::profile::start();
         // SAFETY: the render guard grants exclusive access to the DSP state.
         let dsp = unsafe { &mut *self.dsp.get() };
         let n = left.len().min(right.len());
@@ -565,6 +566,8 @@ impl Engine {
             off += len;
         }
         dsp.publish(&self.shared);
+        crate::profile::lap(crate::profile::Section::Publish);
+        crate::profile::rendered(n, dsp.sample_rate);
 
         // Instant::now() traps on wasm32-unknown-unknown; there the shell reports its own load.
         #[cfg(not(target_arch = "wasm32"))]
@@ -585,6 +588,7 @@ impl Engine {
             for channel in out { channel.fill(0.0); }
             return;
         };
+        crate::profile::start();
         // SAFETY: the render guard grants exclusive access to the DSP state.
         let dsp = unsafe { &mut *self.dsp.get() };
         dsp.bed_mode = if world_locked { 2 } else { 1 };
@@ -605,6 +609,8 @@ impl Engine {
         }
         dsp.bed_mode = 0;
         dsp.publish(&self.shared);
+        crate::profile::lap(crate::profile::Section::Publish);
+        crate::profile::rendered(n, dsp.sample_rate);
     }
 
     fn begin_render(&self) -> Option<RenderGuard<'_>> {
@@ -959,6 +965,7 @@ impl Dsp {
             _ => 0.0,
         };
         self.mix.set_listener(&head, travel);
+        crate::profile::lap(crate::profile::Section::Control);
         for (idx, em) in self.world.emitters[..scene_emitters].iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
             let mut controls = em.controls;
@@ -982,10 +989,13 @@ impl Dsp {
                 // Density throttle: hold the next phrase back until a slot frees.
                 controls.activity = 0.0;
             }
+            crate::profile::lap(crate::profile::Section::MixVoice);
             em.generator.render(tmp, &controls);
+            crate::profile::lap(crate::profile::Section::Generate(em.kind as usize));
             self.mix.feed(idx, tmp, kind_gain, em.generator.busy());
 
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
+            crate::profile::emitter(em.kind as usize, energy > 0.0);
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2;
             let peak = tmp.iter().fold(0.0f32, |m, v| m.max(v.abs())) * kind_gain;
             let track = match em.kind {
@@ -1011,7 +1021,9 @@ impl Dsp {
             if em.kind == SourceKind::Water {
                 emitter.ground = Some(GroundType::Water);
             }
+            crate::profile::lap(crate::profile::Section::MixVoice);
             self.acoustics.propagate(idx, &emitter, tmp, &mut self.bus);
+            crate::profile::lap(crate::profile::Section::Propagate(em.kind as usize));
         }
 
         if scene_emitters == 0 {
@@ -1075,7 +1087,9 @@ impl Dsp {
                 1 => Some((&mut self.bed, Some(&head))),
                 _ => Some((&mut self.bed, None)),
             };
+            crate::profile::lap(crate::profile::Section::Control);
             f.process(&inputs, self.flight_mix, &mut self.left[..len], &mut self.right[..len], bed, &mut peaks, &mut self.mix);
+            crate::profile::lap(crate::profile::Section::Flight);
         }
         self.mix.finish(len);
 
@@ -1107,6 +1121,7 @@ impl Dsp {
         push_scope(shared, &peaks);
         self.time += dt as f64;
         shared.clock.store(self.time.to_bits(), Ordering::Relaxed);
+        crate::profile::lap(crate::profile::Section::Master);
     }
 
     fn publish(&self, shared: &Shared) {
