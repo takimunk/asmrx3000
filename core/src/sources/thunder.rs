@@ -19,21 +19,24 @@
 //!   hang off it, and a horizontal in-cloud part (kilometres long) adds the long rumble.
 //! * Each segment's sudden heating radiates a weak shock, an N-wave whose initial length
 //!   follows Few's relaxation radius R₀ = √(E_l/(π·p₀)) (E_l = energy per metre of channel,
-//!   ~10⁵–10⁶ J/m, varying along the channel): the dominant frequency is ≈ 0.63·c/R₀.
-//!   Weak-shock propagation lengthens the N-wave slowly with distance (∝ r^¼ asymptotically).
+//!   ~10⁵–10⁶ J/m, varying moderately along the channel and falling with height as the
+//!   return-stroke current does): the dominant frequency is ≈ 0.63·c/R₀. Weak-shock
+//!   propagation lengthens the N-wave: ∝ r^¼ while a run looks like a line, then only
+//!   ∝ √(ln r) (spherical, weakening shock).
 //! * Every return stroke re-heats the main channel: the same arrival pattern again, shifted
 //!   by the stroke interval, weaker and with shorter N-waves (less energy). The crack of a
 //!   close strike is that tearing, overlapping sequence of near-channel N-waves.
 //! * Arrival time r/c spreads the pulses over seconds: the near part of the channel arrives
-//!   first, the far part later. Spherical spreading and air absorption (cut-off falling with
-//!   distance, ~5 dB/km at 1 kHz) darken far thunder; beyond ~20 km upward refraction puts
-//!   the listener in the acoustic shadow.
+//!   first, the far part later. Spherical spreading and air absorption (ISO 9613-1 over each
+//!   pulse's path, a four-pole fit) darken far thunder; within ~1 km the shock fronts
+//!   regenerate what absorption takes (the crack). Upward refraction shadows the low parts
+//!   of the channel first, the cloud beyond ~20 km.
 //! * Turbulence scatters each pulse into a coda of weaker, stretched copies of itself (micro
-//!   multipath, growing with range): the rumble keeps the spectrum of the N-waves instead of
+//!   multipath, growing faster than range): the rumble keeps the spectrum of the N-waves instead of
 //!   being a filtered noise. Slow refractive fading (a few dB at ~0.1–1 Hz, growing with
 //!   range) makes the level swell.
 //! * Echoes from hills, forest edges and the cloud base: a few smeared, darker delayed copies
-//!   of the whole thunder (0.3–4 s).
+//!   of the whole thunder (0.3–4 s near, up to ~10 s for a far strike).
 //!
 //! The emitter is a direction proxy (the director places it ~40 m away in the direction of
 //! the strike, so the spatialiser gives the right bearing); the long-range physics is done
@@ -53,9 +56,22 @@ const RING: usize = 1 << 17;
 const LOOKAHEAD: f32 = 0.25;
 /// Listener ear height above ground, m.
 const EAR: f32 = 1.7;
-/// Echo delay line (a power of two, ≥ 4.5 s at 48 kHz).
-const ECHO: usize = 1 << 18;
+/// Echo delay line (a power of two, ≥ 9.5 s at 48 kHz).
+const ECHO: usize = 1 << 19;
 const TAPS: usize = 7;
+/// Air-absorption table: path lengths from `ABS_R0` to `ABS_R1` m, log spaced.
+const ABS_N: usize = 48;
+const ABS_R0: f32 = 20.0;
+const ABS_R1: f32 = 60_000.0;
+/// Path attenuations (dB, ISO 9613-1) at which the four one-pole low-passes of the
+/// absorption filter take over (fitted: within ~2 dB of ISO up to 30–40 dB of loss).
+const ABS_POLES_DB: [f32; 4] = [4.0, 14.0, 20.0, 30.0];
+/// Radius of curvature of sound rays in the storm's temperature lapse, m (c / |dc/dz|,
+/// ~6.5 K/km): a source at height z is heard on the ground out to √(2·R·z) + √(2·R·ear).
+const RAY_RADIUS: f32 = 80_000.0;
+/// Below this the channel radiates as a line (cylindrical weak shock, period ∝ r^¼),
+/// beyond as a point (spherical, period ∝ √ln r), m: about one tortuosity run.
+const LINE_M: f32 = 120.0;
 /// Most return strokes in one flash.
 pub const MAX_STROKES: usize = 5;
 /// Output high-pass, Hz.
@@ -221,10 +237,52 @@ struct Pulse {
     amp: f32,
     /// N-wave length, s.
     period: f32,
-    /// Air-absorption cut-off, Hz.
-    fc: f32,
+    /// Path length over which air absorption acts (the shock part excluded), m.
+    r_abs: f32,
+    /// Extra darkening of the refraction shadow (scales the absorption poles, ≤ 1).
+    dark: f32,
     /// Time spread by turbulent scattering, s.
     spread: f32,
+}
+
+/// Atmospheric absorption coefficient, dB/m, ISO 9613-1 (pure tones; `f` Hz, `t_c` °C,
+/// `rh` relative humidity 0..1, sea-level pressure).
+pub fn iso9613_db_per_m(f: f32, t_c: f32, rh: f32) -> f32 {
+    let (f, tk) = (f as f64, t_c.clamp(-40.0, 50.0) as f64 + 273.15);
+    let (t0, t01) = (293.15, 273.16);
+    let psat = 10f64.powf(-6.8346 * (t01 / tk).powf(1.261) + 4.6151);
+    let h = (rh.clamp(0.01, 1.0) as f64 * 100.0) * psat;
+    let fro = 24.0 + 4.04e4 * h * (0.02 + h) / (0.391 + h);
+    let frn = (tk / t0).powf(-0.5) * (9.0 + 280.0 * h * (-4.170 * ((tk / t0).powf(-1.0 / 3.0) - 1.0)).exp());
+    let a = 8.686
+        * f
+        * f
+        * (1.84e-11 * (tk / t0).sqrt()
+            + (tk / t0).powf(-2.5) * (0.01275 * (-2239.1 / tk).exp() / (fro + f * f / fro) + 0.1068 * (-3352.0 / tk).exp() / (frn + f * f / frn)));
+    a as f32
+}
+
+/// Pole frequencies of the absorption filter for path length `r` m: each one-pole takes
+/// over where the ISO loss reaches its level in [`ABS_POLES_DB`].
+fn absorption_poles(r: f32, t_c: f32, rh: f32) -> [f32; 4] {
+    let mut out = [0.0; 4];
+    for (k, db) in ABS_POLES_DB.iter().enumerate() {
+        let (mut lo, mut hi) = (10.0f32.ln(), 40_000.0f32.ln());
+        if iso9613_db_per_m(40_000.0, t_c, rh) * r < *db {
+            out[k] = 40_000.0;
+            continue;
+        }
+        for _ in 0..28 {
+            let m = 0.5 * (lo + hi);
+            if iso9613_db_per_m(m.exp(), t_c, rh) * r < *db {
+                lo = m;
+            } else {
+                hi = m;
+            }
+        }
+        out[k] = (0.5 * (lo + hi)).exp();
+    }
+    out
 }
 
 #[derive(Clone, Copy, Default)]
@@ -306,6 +364,11 @@ pub struct Thunder {
     timer: f32,
     distance: f32,
     temperature: f32,
+    humidity: f32,
+    /// Absorption-filter poles per path length (see `ABS_*`), and the weather they were
+    /// computed for.
+    absorb: [[f32; 4]; ABS_N],
+    absorb_for: (f32, f32),
 }
 
 impl Thunder {
@@ -334,10 +397,39 @@ impl Thunder {
             timer,
             distance: 0.0,
             temperature: 15.0,
+            humidity: 0.75,
+            absorb: [[0.0; 4]; ABS_N],
+            absorb_for: (f32::NAN, f32::NAN),
             cfg,
         };
         t.new_echoes(2000.0);
+        t.update_absorption();
         t
+    }
+
+    /// Recomputes the absorption table when temperature or humidity have moved noticeably
+    /// (a few hundred ISO evaluations, only at a strike).
+    fn update_absorption(&mut self) {
+        let (t, h) = (self.temperature, self.humidity);
+        if (t - self.absorb_for.0).abs() < 1.0 && (h - self.absorb_for.1).abs() < 0.03 {
+            return;
+        }
+        self.absorb_for = (t, h);
+        for k in 0..ABS_N {
+            let r = ABS_R0 * (ABS_R1 / ABS_R0).powf(k as f32 / (ABS_N - 1) as f32);
+            self.absorb[k] = absorption_poles(r, t, h);
+        }
+    }
+
+    /// Absorption-filter poles for a path of `r` m (log-interpolated table).
+    fn poles(&self, r: f32) -> [f32; 4] {
+        if r <= ABS_R0 {
+            return [40_000.0; 4];
+        }
+        let x = ((r / ABS_R0).ln() / (ABS_R1 / ABS_R0).ln() * (ABS_N - 1) as f32).min((ABS_N - 1) as f32 - 1e-3);
+        let (i, u) = (x as usize, x.fract());
+        let (a, b) = (self.absorb[i], self.absorb[i + 1]);
+        core::array::from_fn(|k| a[k] * (b[k] / a[k]).powf(u))
     }
 
     pub fn config(&self) -> &ThunderConfig {
@@ -442,6 +534,7 @@ impl Thunder {
             self.new_echoes(distance);
         }
 
+        self.update_absorption();
         let c = sound_speed(self.temperature);
         let cfg = self.cfg;
         let sigma = cfg.tortuosity_deg.to_radians();
@@ -477,6 +570,10 @@ impl Thunder {
             while p.z < base && nseg < MAX_SEGS {
                 let len = cfg.segment_m * (0.5 * self.rng.gauss()).exp();
                 let (mid, dir, len, e) = self.walk_step(&mut w, &mut p, len, sigma, 0.5, 0.0);
+                // The return-stroke current dies away up the channel (MTLE, λ ≈ 2 km; Nucci
+                // et al. 1990), and the energy deposited per metre with it: the lowest,
+                // nearest stretch is the loudest — the crack — and the top rolls softer.
+                let e = e * (-mid.z.max(0.0) / 2000.0).exp();
                 self.segs[nseg] = Seg { mid, dir, len, e };
                 nseg += 1;
                 // The leader does not go underground.
@@ -504,7 +601,8 @@ impl Thunder {
             }
             // The in-cloud part: horizontal, kilometres long, weaker, spreading from the top
             // of the channel in two legs.
-            let length = (2000.0 + 10_000.0 * cfg.intracloud) * (0.4 * self.rng.gauss()).exp();
+            // (Lightning mapping arrays: the in-cloud part of a ground flash spreads 5–15 km.)
+            let length = (4000.0 + 15_000.0 * cfg.intracloud) * (0.4 * self.rng.gauss()).exp();
             let ang = self.rng.range(0.0, core::f32::consts::TAU);
             let seg_len = 2.0 * cfg.segment_m;
             for leg in 0..2 {
@@ -519,7 +617,8 @@ impl Thunder {
                     // the recoil streamers before each stroke re-light stretches of it.
                     let k = (i * 7 / 64 + leg) % flash.n;
                     let delay = flash.t[k] + i as f32 * seg_len / 1.5e5;
-                    self.emit(mid, dir, len, 0.8 * e, delay, c);
+                    // Weaker currents than the return strokes: less energy per metre.
+                    self.emit(mid, dir, len, 0.6 * e, delay, c);
                 }
             }
         }
@@ -527,24 +626,32 @@ impl Thunder {
     }
 
     fn walk_start(&mut self, dir: V) -> Walk {
-        Walk { dir, run: dir, left: 0.0, le: 0.5 * self.rng.gauss(), run_e: 1.0 }
+        Walk { dir, run: dir, left: 0.0, le: 0.25 * self.rng.gauss(), run_e: 1.0 }
     }
 
     /// One micro segment of a two-scale walk. `up` keeps the macro runs climbing; `flat`
     /// squashes their vertical part (in-cloud channels run horizontally).
     fn walk_step(&mut self, w: &mut Walk, p: &mut V, len: f32, sigma: f32, up: f32, flat: f32) -> (V, V, f32, f32) {
         if w.left <= 0.0 {
-            let g = if up > 0.0 { 0.5 } else { 0.7 };
+            // In-cloud channels follow the charge layer: they keep their heading for
+            // kilometres instead of wandering like a branch.
+            let g = if up > 0.0 {
+                0.5
+            } else if flat > 0.0 {
+                0.25
+            } else {
+                0.7
+            };
             let mut r = V { x: w.run.x + g * self.rng.gauss(), y: w.run.y + g * self.rng.gauss(), z: w.run.z + g * self.rng.gauss() + up };
             if flat > 0.0 {
                 r.z *= flat;
             }
             w.run = r.norm();
             w.left = 140.0 * (0.7 * self.rng.gauss()).exp();
-            w.run_e = (0.8 * self.rng.gauss()).exp();
+            w.run_e = (0.3 * self.rng.gauss()).exp();
         }
         w.dir = V { x: w.run.x + sigma * self.rng.gauss(), y: w.run.y + sigma * self.rng.gauss(), z: w.run.z + sigma * self.rng.gauss() }.norm();
-        w.le = 0.93 * w.le + 0.18 * self.rng.gauss();
+        w.le = 0.93 * w.le + 0.09 * self.rng.gauss();
         let mid = p.add(w.dir, 0.5 * len);
         *p = p.add(w.dir, len);
         w.left -= len;
@@ -578,32 +685,49 @@ impl Thunder {
         let e = self.cfg.energy_j_per_m * rel_energy;
         let r0 = (e / (core::f32::consts::PI * P0)).sqrt().max(0.05);
         let t0 = r0 / (0.63 * c);
-        // ... until the shock has become an ordinary sound wave (~1 km).
-        let stretch = (1.0 + r.min(1200.0) / (50.0 * r0)).powf(0.25);
+        // Weak-shock lengthening: as a line (cylindrical, ∝ r^¼) while the run still looks
+        // like a line, then as a point (spherical, ∝ √(ln r)), slowing as the shock weakens.
+        let near = r.min(LINE_M);
+        let stretch = (1.0 + near / (50.0 * r0)).powf(0.25) * (1.0 + 0.08 * (r / near).ln()).sqrt();
         let period = t0 * stretch;
+        // While the overpressure is still a shock (≳ a few Pa, within ~1000·R₀ ≈ 0.3–1 km)
+        // steepening regenerates the fronts faster than air absorbs them: the crack of a
+        // near strike keeps its high frequencies. Absorption acts on the rest of the path.
+        let rs = 2000.0 * r0;
+        let r_abs = (r * r + rs * rs).sqrt() - rs;
+        // Upward refraction: a source at height z reaches the ground only out to
+        // √(2Rz) + √(2R·ear); beyond, diffraction and turbulent scattering leak a weak, dark
+        // remnant into the shadow. Low parts of the channel go first, the cloud last (~20 km).
         let horizontal = (mid.x * mid.x + mid.y * mid.y).sqrt();
-        let shadow = 1.0 - smoothstep(15_000.0, 25_000.0, horizontal);
-        let fc = (1250.0 * (1200.0 / r).powf(0.625)).clamp(60.0, 12_000.0);
+        let edge = (2.0 * RAY_RADIUS * mid.z.max(0.0)).sqrt() + (2.0 * RAY_RADIUS * EAR).sqrt();
+        let depth_km = ((horizontal - edge) / 1000.0).max(0.0);
+        let shadow_db = (12.0 * depth_km.powf(0.7)).min(30.0) + 20.0 * smoothstep(25_000.0, 35_000.0, horizontal);
+        let shadow = 10f32.powf(-shadow_db / 20.0);
+        let dark = 10f32.powf(-shadow_db / 40.0);
         // A lengthening weak shock spreads its energy over a longer wave: the amplitude falls
         // a little faster than 1/r (energy ∝ amp²·period conserved).
         let amp = directivity * (len / 15.0).sqrt() * (e / 5e5).sqrt() * shadow * 600.0 / (r * stretch.sqrt()) * (0.3 * self.rng.gauss()).exp();
-        // Turbulence scatters part of each pulse into a coda that grows with range.
-        let spread = (0.012 + r / 30_000.0).min(0.3);
-        self.pulses[self.n] = Pulse { t: delay + r / c, amp, period, fc, spread };
+        // Turbulence scatters part of each pulse into a coda that grows with range, faster
+        // than linearly once the sound is scattered more than once (≳ 5 km).
+        let spread = (0.012 + r / 30_000.0 * (1.0 + r / 8000.0)).min(1.0);
+        self.pulses[self.n] = Pulse { t: delay + r / c, amp, period, r_abs, dark, spread };
         self.n += 1;
     }
 
-    /// New echo geometry for a strike `distance` m away: reflectors 0.3–4 s, darker and
-    /// weaker with delay.
+    /// New echo geometry for a strike `distance` m away: reflectors from 0.3 s up to 4 s
+    /// (near strike) or ~9 s (far strike), darker and weaker with delay.
     fn new_echoes(&mut self, distance: f32) {
         let sr = self.sample_rate;
-        let max = ((ECHO - 2) as f32 / sr).min(4.5);
+        let far = smoothstep(1000.0, 10_000.0, distance);
+        // Hills, forest edges and the cloud base anywhere around a path kilometres long:
+        // the farther the strike, the larger the region that reflects back to us.
+        let max = ((ECHO - 2) as f32 / sr).min(4.2 + 6.0 * far);
         // Far strikes come with more diffuse, relatively stronger echoes (the direct sound
         // is weak, the rumble long).
-        let wet = 0.22 + 0.12 * smoothstep(1000.0, 10_000.0, distance);
+        let wet = 0.22 + 0.35 * far;
         for k in 0..TAPS {
             let u = (k as f32 + self.rng.uniform()) / TAPS as f32;
-            let delay = (0.3 * (14.0f32).powf(u)).min(max - 0.2);
+            let delay = (0.3 * (max / 0.3).powf(u)).min(max - 0.2);
             let smear = (0.02 + 0.03 * delay) * self.rng.range(0.6, 1.4);
             let g = wet * (0.4f32 / delay.max(0.3)).powf(0.5) * self.rng.range(0.6, 1.0);
             self.taps[k] = Tap {
@@ -616,24 +740,29 @@ impl Thunder {
         }
     }
 
-    /// Writes one N-wave, low-passed by air absorption, into the ring at `offset` samples.
-    fn nwave(&mut self, offset: usize, amp: f32, period: f32, fc: f32) {
+    /// Writes one N-wave, low-passed by air absorption (four one-poles at `poles` Hz, scaled
+    /// by `dark`), into the ring at `offset` samples.
+    fn nwave(&mut self, offset: usize, amp: f32, period: f32, poles: [f32; 4], dark: f32) {
         let sr = self.sample_rate;
         let len = ((period * sr) as usize).max(2);
-        let a = one_pole_coef(fc, sr);
-        let tail = (4.0 * sr / (core::f32::consts::TAU * fc)) as usize;
         if offset + 2 >= RING {
             return;
         }
+        let a: [f32; 4] = core::array::from_fn(|k| one_pole_coef(poles[k] * dark, sr));
+        // Long enough for the slowest pole to settle (a truncated tail is a step: a click).
+        let tau = |k: usize| 1.0 / (core::f32::consts::TAU * (poles[k] * dark).min(0.49 * sr));
+        let tail = ((14.0 * tau(0) + 5.0 * (tau(1) + tau(2) + tau(3))) * sr) as usize + 4;
         let total = (len + tail).min(RING - offset - 1);
-        let (mut y1, mut y2) = (0.0f32, 0.0f32);
+        let mut y = [0.0f32; 4];
         let inv = 2.0 / len as f32;
         for i in 0..total {
             let x = if i < len { amp * (1.0 - inv * i as f32) } else { 0.0 };
-            y1 += (x - y1) * a;
-            y2 += (y1 - y2) * a;
+            y[0] += (x - y[0]) * a[0];
+            y[1] += (y[0] - y[1]) * a[1];
+            y[2] += (y[1] - y[2]) * a[2];
+            y[3] += (y[2] - y[3]) * a[3];
             let k = (self.read + offset + i) & (RING - 1);
-            self.ring[k] += y2;
+            self.ring[k] += y[3];
         }
     }
 
@@ -641,18 +770,20 @@ impl Thunder {
     fn write_pulse(&mut self, p: Pulse, offset: usize) {
         let sr = self.sample_rate;
         let coherent = (-p.spread * 4.0).exp();
-        self.nwave(offset, p.amp * coherent, p.period, p.fc);
+        let poles = self.poles(p.r_abs);
+        self.nwave(offset, p.amp * coherent, p.period, poles, p.dark);
         let copies = 3 + (12.0 * (p.spread / 0.1).min(1.0)) as usize;
         let rest = p.amp * (1.0 - coherent * coherent).sqrt() / (copies as f32).sqrt();
         let room = (RING as f32 / sr - LOOKAHEAD - 0.3).max(0.1);
         for _ in 0..copies {
             let d = (p.spread * exp1(&mut self.rng)).min(room);
-            let stretch = self.rng.range(1.0, 1.25);
+            // Slightly smeared, not darker: turbulence scatters high frequencies at least as
+            // well as low ones (what the coherent front loses, the coda carries).
+            let stretch = self.rng.range(1.0, 1.1);
             // Mostly the same polarity: a scattered shock is still a compression first.
             let sign = if self.rng.uniform() < 0.75 { 1.0 } else { -1.0 };
             let a = rest * sign * (0.4 * self.rng.gauss()).exp() * 0.8 / stretch.sqrt();
-            let fc = p.fc * self.rng.range(0.45, 1.0);
-            self.nwave(offset + (d * sr) as usize, a, p.period * stretch, fc);
+            self.nwave(offset + (d * sr) as usize, a, p.period * stretch, poles, p.dark);
         }
     }
 }
@@ -687,6 +818,7 @@ impl Generator for Thunder {
         let len = out.len();
         let dt = len as f32 / sr;
         self.temperature = c.env.temperature_c;
+        self.humidity = c.env.humidity;
         if self.cfg.distance_m < 0.0 {
             if c.env.strike != self.last_strike {
                 self.last_strike = c.env.strike;
@@ -759,23 +891,34 @@ mod tests {
     use super::*;
 
     fn render(distance: f32, seconds: f32) -> (Vec<f32>, f32) {
+        let (buf, first, _) = render_spread(distance, seconds);
+        (buf, first)
+    }
+
+    /// Also the energy-weighted arrival percentiles (`arrival_spread`).
+    fn render_spread(distance: f32, seconds: f32) -> (Vec<f32>, f32, [f32; 5]) {
         let mut t = Thunder::new(48_000.0, 4, ThunderConfig { distance_m: -1.0, ..Default::default() });
         t.strike(distance);
         let first = t.time_to_first_arrival();
+        let spread = t.arrival_spread();
         let mut buf = vec![0.0f32; (seconds * 48_000.0) as usize];
         for chunk in buf.chunks_mut(64) {
             t.render(chunk, &Controls::default());
         }
-        (buf, first)
+        (buf, first, spread)
     }
 
     #[test]
     fn thunder_arrives_after_flash_and_darkens_with_distance() {
         let (near, t_near) = render(1000.0, 16.0);
-        let (far, t_far) = render(8000.0, 34.0);
+        let (far, t_far, spread) = render_spread(8000.0, 40.0);
         // 3 s per km.
         assert!((t_near - 1000.0 / 341.0).abs() < 0.3, "{t_near}");
-        assert!((t_far - 8000.0 / 341.0).abs() < 1.0, "{t_far}");
+        // A far flash's in-cloud part (kilometres long) may run towards the listener and be
+        // heard first, but never later than the strike point, and the bulk of the energy
+        // still comes from around the strike.
+        assert!(t_far < 8000.0 / 341.0 + 0.3 && t_far > 8000.0 / 341.0 - 12.0, "{t_far}");
+        assert!((spread[2] - 8000.0 / 341.0).abs() < 3.0, "{spread:?}");
         let energy = |b: &[f32]| b.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
         assert!(energy(&near) > 10.0 * energy(&far), "{} vs {}", energy(&near), energy(&far));
         // High-frequency share (first difference) drops with distance.
