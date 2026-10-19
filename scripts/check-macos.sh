@@ -9,7 +9,7 @@ cargo build --locked --release --manifest-path "$ROOT/core/Cargo.toml"
 CHECK_DIR="$(mktemp -d -t asmr-checks)"
 trap 'rm -rf "$CHECK_DIR"' EXIT
 swiftc -parse-as-library -g \
-  -I "$ROOT/apps/macos/Sources/CAsmr" -L "$ROOT/core/target/release" \
+  -I "$ROOT/apps/macos/Sources/CAsmr" "$ROOT/core/target/release/libasmr_core.a" \
   "$ROOT/apps/macos/Sources/ASMRX3000/AudioEngine.swift" \
   "$ROOT/apps/macos/Sources/ASMRX3000/HeadTracker.swift" \
   "$ROOT/apps/macos/Tests/AudioStateCheck.swift" \
