@@ -73,7 +73,31 @@ Distance per model: brook_pebbles 0.80, rain on_leaves 0.67, forest_roar (wind_t
 thunder 1.2-1.3, frogs: common 1.0, marsh 1.4, tree 2.2; worst: foliage oak 2.95 / birch 2.56 (vs wind in trees),
 still_lake 2.5, woodpecker 2.35, lake_lapping 2.0, slow_river 2.1.
 
-**Water**
+**Water** (after the tuning of October 2026, `core/src/sources/water.rs`; earlier state in the table)
+
+| preset (vs category) | before | after, seed 1 | after, seed 2 | what changed |
+|---|---|---|---|---|
+| `brook_pebbles` (brook) | 0.80 | 0.46 | 0.58 | slow swell removed (wander σ 0.35 → 0.12; the old 0.6-4 Hz "surging spots" replaced by fast babble bursts): `am_0.1-1` -12 → -23 dB (ref -23), spread 10 → 5.5 dB (ref 5.2); bubble amplitude spread σ 0.5 → 0.3: events 90 → 120 ms (ref 170) |
+| `brook_rocks` (brook) | 1.72 | 0.72 | 0.78 | babble bursts at the Strouhal rate 3·0.2·U/d, ~0.3 d/U long, high-passed (flux fixed over a second): `am_4-16` -27 → -11 dB (ref -15), onsets 0 → 3.8/s (ref 3.3), ampeak 2.2 → 3.9 Hz (ref 4.4) |
+| `small_waterfall` (waterfall_small) | 1.61 | 0.55 | 0.54 | same bursts at the impact speed: `am_4-16` -31 → -17 dB (ref -19), ampeak 66 → 9.4 Hz (ref 11.7); low plunge band (110 Hz, grows with the fall height) and stronger cloud thrum: `band_100` -40 → -27 dB (ref -23) |
+| `slow_river` (slow_river) | 2.07 | 0.86 | 1.21 | new continuous surface-flow bed (∝ u^1.5·√area amplitude, 0.75/2.2 kHz bands, 3 kHz low-pass): `band_4032` -35 → -14 dB (ref -16), centroid 960 → 1760 Hz (ref 1600), crest 27 → 7 dB (ref 3.2); glugs (clusters, no single bloop) kept rare (~0.5/s) and soft |
+| `lake_lapping` (lake_lapping) | 2.01 | 0.55 | 0.51 | shore wash bed under the laps (following the wave groups), soft entrained bubbles (×0.12, was a loud burst), fizzier backwash: centroid 2.9 → 1.6 kHz (ref 1.1), `band_504`-`635` -17/-18 → -9/-8 dB (ref -10/-9), spread 32 → 15 dB (ref 14) |
+| `still_lake` (still_lake_ambience) | 2.48 | 1.61 | 1.62 | same lapping changes; still too bright against references dominated by wind/boat rumble (centroid 1.8 kHz vs 150 Hz), not tuned further |
+
+Seed 1 is what `render_ours.sh` uses. Remaining water mismatches:
+* `brook_pebbles`: 4.9 vs 3.3 onsets/s and events 120 vs 170 ms: still a few too many separate bubbles.
+* `brook_rocks`: 200-320 Hz 5-7 dB too strong (largest bubbles r ~ 1 cm, cloud thrum of the 15 cm step), 16-64 Hz
+  modulation 5 dB short, 1-4 Hz 5 dB too much.
+* `small_waterfall`: 4 kHz +4 dB, 16-64 Hz modulation 4 dB short; onsets 0.1 vs 0.34/s (refs vary 0.16-2.2).
+* `slow_river`: the glugs are short (event 40 ms vs 535 ms; the long "events" of the recordings are probably slow
+  slaps of the bank wavelets, not modelled) and still give crest 7 dB vs 3 dB; 8-12 kHz 2-3 dB weak. The seed-2 render
+  has more glugs (ioi irregular), hence 1.21.
+* `lake_lapping`: centroid 1.6 kHz vs 1.1 kHz, 1-64 Hz modulation 3-6 dB too strong, events 40 vs 110 ms.
+* Levels (model_wav, gain 1, seed 1): brook_pebbles, brook_rocks, small_waterfall unchanged (±0.2 dB, mix calibration
+  re-measured: raw 52.6 → 52.8 dB, updated in `core/src/mix/calibration.rs`); lake_lapping -8 dB, still_lake -14 dB (the
+  loud clicky bubble bursts are gone); slow_river about +10 dB (continuous bed instead of rare loud glugs).
+
+Before the tuning (for the record):
 * `brook_pebbles` is close overall. Too much very slow modulation (0.1-1 Hz: -12 dB vs -23 dB, a swell that
   real brooks do not have), a little too little 6 kHz, level spread p95-p10 10 dB vs 5 dB, events (bubbles) 90 ms vs
   170 ms and 5.4 vs 3.3 onsets/s: slightly too many, too short bubbles.

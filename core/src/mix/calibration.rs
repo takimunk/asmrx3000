@@ -178,7 +178,8 @@ pub static TABLE: [Entry; 18] = [
     e(C::Bird(Species::Skylark), LaFmax1m, 80.0, 76.8, "song (perched)", "skylark song ~75–85 dB at 1 m, heard from 50 m up"),
     e(C::Bird(Species::Gull), LaFmax1m, 90.0, 81.0, "long call", "herring gull long call ~85–95 dB at 1 m (estimate)"),
     e(C::Bird(Species::Raven), LaFmax1m, 86.0, 77.9, "croak", "raven croaks carry >1 km; ~80–90 dB at 1 m (estimate)"),
-    e(C::Water, LaEq1m, 57.0, 52.6, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
+    // Water raw_db re-measured 52.6 → 52.8 after the reference tuning of the water model (surface-flow bed, babble).
+    e(C::Water, LaEq1m, 57.0, 52.8, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
     e(C::Foliage, LaEqScene, 44.0, 69.5, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
     e(C::Wind, LaEqScene, 36.0, 34.7, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
     e(C::Rain, LaEqScene, 51.0, 63.0, "default scene, 4 mm/h steady rain", "rain 1 mm/h ~45, 4 mm/h ~50, 15 mm/h ~58, 50 mm/h ~65 dB(A) (in-forest measurements)"),

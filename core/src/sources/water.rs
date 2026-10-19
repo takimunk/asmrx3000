@@ -19,8 +19,9 @@
 //!   and bubble-cloud oscillations far below single-bubble frequencies (a cloud of radius R
 //!   and void fraction β rings near (1/2πR)·√(3γp₀/ρβ), tens of Hz): the waterfall's thrum.
 //! * **Lapping** on a lake shore: wind waves at the JONSWAP peak f_p = 3.5·(g/U)·(gF/U²)^−0.33
-//!   with height H ∝ U²/g·√(gF/U²) arrive and slosh against the stones, entrain a burst of
-//!   small bubbles and now and then gulp a big air pocket.
+//!   with height H ∝ U²/g·√(gF/U²) arrive and slosh against the stones (soft 250–700 Hz
+//!   slaps of ~0.1 s), entrain a burst of soft small bubbles, fizz back through the gravel
+//!   and now and then gulp an air pocket.
 //! * **Drips** into a pool: an impact plus one large chirping bubble (the "plink").
 //!   **Trickles**: a thin jet breaking into drops at the Rayleigh–Plateau rate U/(4.5·d).
 //! * Rain on the water surface (via [`RainLayer`]).
@@ -29,14 +30,22 @@
 //! energy and spectrum (Campbell's theorem); rapids are mostly bed, a brook mostly bubbles.
 //!
 //! What makes running water sound like water rather than like rain on a pond is that the
-//! bubbles are not a steady Poisson rain: each stone, lip and eddy entrains air in its own
-//! bursts as the flow over it surges (a few times a second), and some of them make bigger
-//! bubbles than others. Three such **babbling spots** per emitter modulate the entrainment
-//! (and, more gently, the bed) with their own surging, so a brook chatters. And bubbles big
-//! enough to sound like a "bloop" are pinched off right at the surface, where they wobble out
-//! of shape and break up: they ring several times shorter than a free spherical bubble
+//! bubbles are not a steady Poisson rain: each stone, lip and eddy entrains air in bursts as
+//! it sheds vortices (Strouhal rate 0.2·U/d), each burst lasting a fraction of an eddy
+//! turnover, and over a second the entrained flux is fixed by the hydraulics (`Babble`). So a
+//! rocky brook chatters at 4–16 Hz while it has almost no slow swell. Bubbles big enough to
+//! sound like a "bloop" are pinched off right at the surface, where they wobble out of shape
+//! and break up: they ring several times shorter than a free spherical bubble
 //! (`BubbleBank::spawn_damped`), and a gulp of air behind a snag is a short cluster of bubbles
 //! with a slosh, not one clean tone.
+//!
+//! Beds that are always there, even where nothing is entrained in bulk: the **surface-flow
+//! bed** (wavelets breaking at banks, snags and weed, ∝ u³ per area) is what a slow river
+//! sounds like, and the **shore wash** (the laps along the rest of the shore) keeps a lake
+//! from falling silent between the laps near the listener.
+//!
+//! Tuned against field recordings (`ml/asmr_ml/refcompare.py`, docs/references.md): each
+//! change below cites the feature it fixed (reference median vs ours before).
 
 use serde::{Deserialize, Serialize};
 
@@ -312,6 +321,16 @@ impl Surf {
     }
 }
 
+/// Plunge impact noise bands: (weight, centre Hz, Q). The lowest band grows with the fall
+/// height (see `update`).
+const PLUNGE_BANDS: [(f32, f32, f32); 4] = [(16.0, 110.0, 0.5), (0.6, 300.0, 0.7), (1.0, 1200.0, 0.7), (0.5, 4000.0, 0.8)];
+
+/// Surface-flow bed: (weight, centre Hz, Q), shaped after the slow-river references (flat
+/// 0.5–2 kHz third octaves, about −3 dB/octave above, falling off under 400 Hz).
+const RIPPLE_BANDS: [(f32, f32, f32); 3] = [(1.0, 750.0, 0.55), (0.4, 2200.0, 0.6), (0.05, 7000.0, 0.7)];
+/// Shore wash bed: (weight, centre Hz, Q).
+const WASH_BANDS: [(f32, f32, f32); 2] = [(1.0, 400.0, 0.5), (0.03, 3500.0, 0.5)];
+
 /// Surf crash bands: (weight, centre Hz, Q).
 const CRASH_BANDS: [(f32, f32, f32); 3] = [(1.0, 110.0, 0.5), (0.7, 650.0, 0.6), (0.35, 2800.0, 0.7)];
 
@@ -328,7 +347,7 @@ pub struct Water {
     bed_lo: NoiseBand,
     bed_hi: NoiseBand,
     splash: NoiseBand,
-    plunge: [NoiseBand; 3],
+    plunge: [NoiseBand; 4],
     cloud: [Mode; 2],
     ev_cloud: Events,
     cloud_rate: f32,
@@ -362,54 +381,87 @@ pub struct Water {
     bed_mod: Ramp,
     surf: Surf,
     babble: Babble,
+    /// Continuous surface-flow bed (see `update`).
+    ripple: [NoiseBand; 3],
+    /// Wash of the waves lapping along the rest of the shore.
+    wash: [NoiseBand; 2],
+    wash_mod: Ramp,
+    ripple_lp: f32,
 }
 
-/// Babbling spots: each surges at its own rate (0.6..4 Hz), entraining more air and bigger
-/// bubbles while it does. The mean entrainment stays that of the hydraulics.
-#[derive(Clone, Copy)]
+/// Babbling spots (clustered entrainment). Air is not entrained at a steady rate: a stone
+/// sheds a vortex, the standing wave behind it tumbles, a packet of the falling sheet hits
+/// the pool, and each such breaking event entrains a cluster of bubbles within a few tens of
+/// ms. Shedding behind a stone of size d in a flow U runs at the Strouhal rate St·U/d
+/// (St ≈ 0.2); the few stones nearest the listener (`FEATURES`) dominate a segment, and each
+/// burst lasts about a third of an eddy turnover d/U. Shedding is quasi-periodic (intervals
+/// jittered ±60 %), and over a second the entrained air flux is fixed by the hydraulics: the
+/// bursts redistribute it in time rather than add to it. So the modulator is the burst train
+/// minus its own running mean (τ ≈ 0.3 s): `gate = 1 + depth·(g − ⟨g⟩)`, mean 1.
+///
+/// (The first version let three spots surge at 0.6–4 Hz with slow, 0.1–0.6 s glides: that put
+/// the brook's modulation at 0.1–1 Hz, −12 dB against −23 dB in the references, and left the
+/// rocky brook with no fast chatter at all: 4–16 Hz 12 dB, 16–64 Hz 9 dB short. The
+/// references rise with rate: −23, −20, −15, −12 dB at 0.1–1, 1–4, 4–16, 16–64 Hz.)
 struct Babble {
-    level: [f32; 3],
-    target: [f32; 3],
-    next: [f32; 3],
-    rate: [f32; 3],
-    size: [f32; 3],
-    /// Combined entrainment factor (mean ~1) and bubble size factor this block.
+    next: f32,
+    rng: Rng,
+    fast: f32,
+    slow: f32,
+    avg: f32,
+    /// Bursts per second, decay time (s) and modulation depth (0..1).
+    rate: f32,
+    tau: f32,
+    depth: f32,
+    /// Entrainment factor (mean 1) and bubble size factor of this block: a strong burst
+    /// tears off slightly bigger bubbles (a deeper gurgle).
     gate: f32,
     grow: f32,
 }
 
+/// Breaking features (stones, packets of the falling sheet) heard individually.
+const FEATURES: f32 = 3.0;
+/// Rise time of one entrainment burst, s.
+const BURST_RISE: f32 = 0.008;
+
 impl Babble {
     fn new(rng: &mut Rng) -> Self {
-        let mut b = Self { level: [1.0; 3], target: [1.0; 3], next: [0.0; 3], rate: [1.0; 3], size: [1.0; 3], gate: 1.0, grow: 1.0 };
-        for k in 0..3 {
-            b.rate[k] = rng.range(0.6, 4.0);
-            b.size[k] = rng.range(0.85, 1.35);
-            b.next[k] = rng.range(0.0, 1.0 / b.rate[k]);
-        }
-        b
+        let mut rng = Rng::new(rng.next_u32() as u64 ^ 0xB0BB_1E55);
+        Self { next: rng.uniform(), rng, fast: 0.0, slow: 0.0, avg: 1.0, rate: 1.0, tau: 0.08, depth: 0.0, gate: 1.0, grow: 1.0 }
     }
 
-    /// `depth` 0..1: how much the flow chatters (calm water barely, a brook a lot).
-    fn step(&mut self, dt: f32, depth: f32, rng: &mut Rng) {
-        let (mut g, mut w) = (0.0f32, 0.0f32);
-        let mean_size = (self.size[0] + self.size[1] + self.size[2]) / 3.0;
-        for k in 0..3 {
-            self.next[k] -= dt;
-            if self.next[k] <= 0.0 {
-                // A surge (or a lull) of this spot: log-normal strength, then the next one.
-                self.target[k] = (1.1 * rng.gauss()).clamp(-2.5, 2.0).exp();
-                self.next[k] = rng.range(0.4, 1.6) / self.rate[k];
-            }
-            let tau = 0.35 / self.rate[k];
-            self.level[k] += (self.target[k] - self.level[k]) * (dt / tau).min(1.0);
-            g += self.level[k];
-            w += self.level[k] * self.size[k];
+    /// Burst statistics for breaking features of size `d` (m) in a flow `u` (m/s); `depth`
+    /// 0..1 is how much the flow chatters (calm water not at all, a brook a lot).
+    fn tune(&mut self, u: f32, d: f32, depth: f32) {
+        let d = d.max(0.01);
+        self.rate = (FEATURES * 0.2 * u / d).clamp(0.5, 15.0);
+        self.tau = (0.3 * d / u.max(0.05)).clamp(0.025, 0.12);
+        self.depth = depth.clamp(0.0, 1.0);
+    }
+
+    /// Advances one block.
+    fn step(&mut self, dt: f32) {
+        if self.depth <= 0.0 {
+            self.gate = 1.0;
+            self.grow = 1.0;
+            return;
         }
-        // Mean of the clamped log-normal (σ = 1.1, clamped to e^-2.5..e^2) is ≈ 1.655: normalise to 1.
-        let raw = g / (3.0 * 1.655);
-        self.gate = 1.0 + (raw - 1.0) * depth;
-        // The spot surging hardest sets the bubble sizes a little (a deeper gurgle).
-        self.grow = 1.0 + (w / g.max(1e-3) - mean_size) * depth;
+        self.next -= dt;
+        if self.next <= 0.0 {
+            self.next += self.rng.range(0.4, 1.6) / self.rate;
+            let a = (0.3 * self.rng.gauss()).exp();
+            self.slow += a;
+            self.fast += a;
+        }
+        self.slow = flush(self.slow * (-dt / self.tau).exp());
+        self.fast = flush(self.fast * (-dt / BURST_RISE).exp());
+        // Mean of the burst train = rate·E[a]·(τ − τ_rise), E[a] = e^{σ²/2}.
+        let mean = self.rate * 1.046 * (self.tau - BURST_RISE).max(1e-3);
+        let g = (self.slow - self.fast).max(0.0) / mean;
+        self.avg += (g - self.avg) * (dt / 0.3).min(1.0);
+        let x = g - self.avg;
+        self.gate = (1.0 + self.depth * x).max(0.05);
+        self.grow = (1.0 + 0.12 * self.depth * x).clamp(0.8, 1.3);
     }
 }
 
@@ -435,7 +487,7 @@ impl Water {
             bed_lo: NoiseBand::new(800.0, 1.0, sr),
             bed_hi: NoiseBand::new(3000.0, 1.0, sr),
             splash: NoiseBand::new(4500.0, 0.7, sr),
-            plunge: [NoiseBand::new(300.0, 0.7, sr), NoiseBand::new(1200.0, 0.7, sr), NoiseBand::new(4000.0, 0.8, sr)],
+            plunge: PLUNGE_BANDS.map(|(_, f, q)| NoiseBand::new(f, q, sr)),
             cloud: [Mode::default(); 2],
             ev_cloud: Events::new(&mut rng),
             cloud_rate: 0.0,
@@ -465,6 +517,10 @@ impl Water {
             bed_mod: Ramp::new(1.0),
             surf: Surf::new(sr, &mut rng),
             babble: Babble::new(&mut rng),
+            ripple: RIPPLE_BANDS.map(|(_, f, q)| NoiseBand::new(f, q, sr)),
+            wash: WASH_BANDS.map(|(_, f, q)| NoiseBand::new(f, q, sr)),
+            wash_mod: Ramp::new(1.0),
+            ripple_lp: 0.0,
             rng,
             cfg,
         }
@@ -564,7 +620,9 @@ impl Water {
         let cfg = self.cfg.clone();
         // Slow, independent wandering of the local entrainment (eddies come and go), so the
         // river is not one uniform wall.
-        self.wander = self.wander_ou.step(dt, 8.0, 0.35, &mut self.wander_rng).clamp(-1.0, 1.0).exp();
+        // Kept shallow (σ 0.12, was 0.35): real brooks have almost no swell at 0.1–1 Hz; their
+        // movement is the faster babble (`Babble`).
+        self.wander = self.wander_ou.step(dt, 6.0, 0.12, &mut self.wander_rng).clamp(-0.5, 0.5).exp();
         if self.key_u < 0.0 {
             self.flow = Smooth::new(cfg.flow_ms);
         }
@@ -576,7 +634,7 @@ impl Water {
                 let t = b.gain.cur;
                 b.gain.to(t, len);
             }
-            for b in self.plunge.iter_mut() {
+            for b in self.plunge.iter_mut().chain(self.ripple.iter_mut()).chain(self.wash.iter_mut()) {
                 let t = b.gain.cur;
                 b.gain.to(t, len);
             }
@@ -596,7 +654,7 @@ impl Water {
         // Slow, deep water: eddies and snags gulp now and then.
         // (Far rarer than one would think: a smooth river is mostly silent, with a soft
         // glug now and then.)
-        self.snag_rate = (cfg.width_m * cfg.length_m * 0.012 * u * (1.0 - smoothstep(0.05, 0.2, hyd.u_turb))).min(0.7);
+        self.snag_rate = (cfg.width_m * cfg.length_m * 0.025 * u * (1.0 - smoothstep(0.05, 0.2, hyd.u_turb))).min(0.7);
         let total = hyd.bubbles_per_s;
         self.resolved = total.min(self.resolved_per_s) / sr;
         let bed_rate = (total - self.resolved_per_s).max(0.0) / sr;
@@ -618,8 +676,8 @@ impl Water {
                 lf_sum += e * minnaert_hz(rj).ln();
             }
         }
-        // Rendered bubbles carry amp × 0.6 × e^{0.5·N(0,1)}: E[(0.6·e^{0.5g})²] = 0.36·e^{0.5}.
-        let e_mean = e_sum / 12.0 * 0.36 * 0.5f32.exp();
+        // Rendered bubbles carry amp × 0.7 × e^{0.3·N(0,1)}: E[(0.7·e^{0.3g})²] = 0.49·e^{0.18}.
+        let e_mean = e_sum / 12.0 * 0.49 * 0.18f32.exp();
         let fc = (lf_sum / e_sum.max(1e-12)).exp().clamp(300.0, 8000.0);
         // A bubble's band-limited energy, rendered as noise: unit-noise energy = amp²·τ/2.
         // Split over two bands around the population's spectral centre.
@@ -634,14 +692,36 @@ impl Water {
         // Turbulent murmur of moving water (very quiet unless fast).
         let murmur = 0.00015 * u.powi(2) * (cfg.width_m * cfg.length_m).sqrt();
         self.murmur.gain.to(murmur * band_norm(250.0, 0.6, sr), len);
+        // Surface-flow bed. Even a "smooth" river surface is never acoustically still: the
+        // flow is sheared at the banks, at snags, weed and emergent stones, where capillary
+        // wavelets break and entrain myriads of sub-millimetre to millimetre bubbles (2–10 kHz)
+        // and the surface slaps softly (0.5–1 kHz). Too many and too small to resolve: a
+        // Campbell bed whose power follows the turbulent dissipation reaching the surface,
+        // ∝ u³ per unit area. In a brook it sits far under the bubbles; on a slow river it is
+        // what one hears (the references are a continuous hiss whose 3–8 kHz were 20–25 dB
+        // above our former near-silence between glugs).
+        let ripple = 0.0044 * u.powf(1.5) * (cfg.width_m * cfg.length_m).sqrt();
+        for (b, (w, f, q)) in self.ripple.iter_mut().zip(RIPPLE_BANDS) {
+            b.gain.to(ripple * w * band_norm(f, q, sr), len);
+        }
 
-        // Plunge: impact noise and bubble-cloud thrum.
+        // Plunge: impact noise and bubble-cloud thrum. A tall fall carries big air cavities and
+        // the slug of water hitting the pool: the small-waterfall references have about as
+        // much energy per Hz at 100 Hz as at 1 kHz (our spectrum used to start at 300 Hz and
+        // was 10–15 dB short at 50–250 Hz), so a low band grows in with the fall height.
         let p = hyd.plunge_w;
         let amp = 0.0006 * p.sqrt();
-        for (k, w) in [0.6f32, 1.0, 0.5].iter().enumerate() {
-            let f = [300.0, 1200.0, 4000.0][k];
-            self.plunge[k].gain.to(amp * w * band_norm(f, 0.7, sr) * 0.3, len);
+        let low = smoothstep(0.3, 2.0, cfg.drop_height_m);
+        for (k, (b, (w, f, q))) in self.plunge.iter_mut().zip(PLUNGE_BANDS).enumerate() {
+            let w = if k == 0 { w * low } else { w };
+            b.gain.to(amp * w * band_norm(f, q, sr) * 0.3, len);
         }
+        // Breaking events: vortices shed by the stones, or packets of the falling sheet (whose
+        // speed is the impact speed). Calm water does not chatter; rapids, mostly bed, a bit
+        // less than a brook.
+        let v_imp = if p > 0.0 { (2.0 * G * cfg.drop_height_m + u * u).sqrt() } else { u };
+        let chatter = (0.3 * smoothstep(0.03, 0.15, hyd.u_turb) + 0.7 * smoothstep(0.1, 0.5, hyd.u_turb)) * (1.0 - 0.3 * smoothstep(0.6, 1.4, hyd.u_turb));
+        self.babble.tune(v_imp, cfg.rock_d50_m, 0.6 * chatter);
         let q = u * cfg.depth_m * cfg.width_m;
         let r_cloud = (0.12 + 0.25 * q.sqrt()).clamp(0.08, 1.5);
         let beta = 0.05;
@@ -649,7 +729,7 @@ impl Water {
         self.cloud[0].tune(f_cloud, f_cloud / 3.0, sr);
         self.cloud[1].tune(f_cloud * 1.9, f_cloud * 1.9 / 3.0, sr);
         self.cloud_rate = if p > 0.0 { (4.0 + 0.5 * p.sqrt()).min(20.0) } else { 0.0 };
-        self.cloud_amp = amp * 1.5;
+        self.cloud_amp = amp * 1.5 * (1.0 + 2.0 * low);
 
         // Wind waves on a lake shore.
         if cfg.waves > 0.0 {
@@ -661,6 +741,13 @@ impl Water {
             self.wave_h = cfg.waves * (0.008 + hs).min(0.5);
         } else {
             self.wave_h = 0.0;
+        }
+        // The laps along the rest of the shore, each too far or too small to stand out: an
+        // incoherent wash under the near laps (lake recordings never fall silent between laps:
+        // p95−p10 of the level is 14 dB, ours was 32 dB). Power ∝ wave height × shore length.
+        let wash = 0.0035 * EVENT_LEVEL * (self.wave_h / 0.03).sqrt() * (cfg.length_m / 6.0).sqrt();
+        for (b, (w, f, q)) in self.wash.iter_mut().zip(WASH_BANDS) {
+            b.gain.to(wash * w * band_norm(f, q, sr), len);
         }
 
         // Trickle: jet breaks into drops, a share entrains bubbles.
@@ -693,7 +780,7 @@ impl Water {
             self.grains.spawn(
                 &GrainSpec {
                     amp: 0.024 * EVENT_LEVEL * a * w,
-                    fc: rng.range(250.0, 900.0),
+                    fc: rng.range(250.0, 700.0),
                     q: rng.range(0.5, 0.9),
                     attack: rng.range(0.008, 0.04),
                     decay: rng.range(0.06, 0.22),
@@ -704,12 +791,14 @@ impl Water {
             );
             t += rng.range(0.04, 0.16);
         }
-        // Backwash through the gravel.
+        // Backwash through the gravel: a fizz of bursting foam and trickling water.
         self.grains.spawn(
-            &GrainSpec { amp: 0.006 * EVENT_LEVEL * a, fc: rng.range(2500.0, 4000.0), q: 0.7, attack: 0.05, decay: 0.2, delay: at + (rng.range(0.15, 0.35) * sr) as u32, ..Default::default() },
+            &GrainSpec { amp: 0.005 * EVENT_LEVEL * a, fc: rng.range(3000.0, 6000.0), q: 0.5, attack: 0.06, decay: 0.25, delay: at + (rng.range(0.1, 0.3) * sr) as u32, ..Default::default() },
             sr,
         );
-        self.burst += 150.0 * a;
+        // Small bubbles entrained by the fold: many and soft, spread over the slosh (a louder
+        // burst made the laps clicky: 20 ms events, 1.2–1.6 kHz 6 dB over the references).
+        self.burst += 120.0 * a;
         // Now and then a pocket of air trapped under a stone: a short wobbling gulp.
         if rng.uniform() < (2.0 * h).min(0.15) {
             let r = rng.range(0.004, 0.01);
@@ -758,15 +847,14 @@ impl Water {
         let dt = len as f32 / sr;
         self.update(c, len);
         // Chatter: brooks over stones a lot, rapids (mostly bed) and calm water little.
-        let chatter = smoothstep(0.03, 0.15, self.hyd.u_turb) * (1.0 - 0.5 * smoothstep(0.5, 1.2, self.hyd.u_turb));
-        self.babble.step(dt, chatter, &mut self.wander_rng);
-        let gate = self.babble.gate.max(0.05);
-        let grow = self.babble.grow.clamp(0.7, 1.5);
+        self.babble.step(dt);
+        let gate = self.babble.gate;
+        let grow = self.babble.grow;
         let law = self.law;
         let drip_inc = if self.cfg.drips_hz > 0.0 { self.cfg.drips_hz / sr } else { 0.0 };
         let wave_inc = if self.wave_h > 0.0 { 1.0 / (self.wave_period * sr) } else { 0.0 };
         self.group = (self.group + dt / (8.0 * self.wave_period)) % 1.0;
-        let burst_decay = (-1.0 / (0.08 * sr)).exp();
+        let burst_decay = (-1.0 / (0.12 * sr)).exp();
         let mut white = [0.0f32; BLOCK];
         for w in white[..len].iter_mut() {
             *w = self.rng.bipolar();
@@ -787,8 +875,10 @@ impl Water {
             for _ in 0..n {
                 let small_burst = self.burst > 1.0 && self.rng.uniform() < 0.5;
                 // Log-normal jitter softens the hard edges of the size law (no spectral ridge).
-                let r = if small_burst { self.rng.range(0.0005, 0.003) } else { (law.draw(&mut self.rng) * grow * (0.2 * self.rng.gauss()).exp()).min(law.r1 * 1.3) };
-                let amp = bubble_amp(r) * (0.5 * self.rng.gauss()).exp() * 0.6 * if small_burst { EVENT_LEVEL } else { 1.0 };
+                let r = if small_burst { self.rng.range(0.0005, 0.0025) } else { (law.draw(&mut self.rng) * grow * (0.2 * self.rng.gauss()).exp()).min(law.r1 * 1.3) };
+                // (Amplitude spread σ 0.3, was 0.5, same mean energy: fewer loud outliers. It
+                // lengthened the brook's events, 90 → 110 ms, but barely moved its onset rate.)
+                let amp = bubble_amp(r) * (0.3 * self.rng.gauss()).exp() * 0.7 * if small_burst { 0.12 * EVENT_LEVEL } else { 1.0 };
                 // Turbulent flow drags bubbles to the surface faster: stronger chirp.
                 let xi = self.rng.range(0.0, 0.1 + 0.25 * (self.hyd.u_turb / 0.5).min(1.0));
                 self.bubbles.spawn_damped(r, amp, xi, at, sr, surface_damping(r));
@@ -801,13 +891,13 @@ impl Water {
                 let rng = &mut self.rng;
                 let strength = rng.range(0.4, 1.0);
                 let r = rng.range(0.003, 0.007);
-                self.bubbles.spawn_damped(r, bubble_amp(r) * 0.1 * EVENT_LEVEL * strength, rng.range(0.1, 0.3), at, sr, surface_damping(r));
+                self.bubbles.spawn_damped(r, bubble_amp(r) * 0.06 * EVENT_LEVEL * strength, rng.range(0.1, 0.3), at, sr, surface_damping(r));
                 for _ in 0..2 + rng.next_u32() % 3 {
                     let rs = rng.range(0.0012, 0.003);
                     let d = at + (rng.range(0.005, 0.07) * sr) as u32;
-                    self.bubbles.spawn_damped(rs, bubble_amp(rs) * 0.12 * EVENT_LEVEL * strength * rng.range(0.4, 1.0), rng.range(0.1, 0.4), d, sr, surface_damping(rs));
+                    self.bubbles.spawn_damped(rs, bubble_amp(rs) * 0.08 * EVENT_LEVEL * strength * rng.range(0.4, 1.0), rng.range(0.1, 0.4), d, sr, surface_damping(rs));
                 }
-                let spec = GrainSpec { amp: 0.004 * EVENT_LEVEL * strength, fc: rng.range(250.0, 600.0), q: 0.7, attack: 0.006, decay: rng.range(0.03, 0.08), delay: at, ..Default::default() };
+                let spec = GrainSpec { amp: 0.012 * EVENT_LEVEL * strength, fc: rng.range(250.0, 600.0), q: 0.7, attack: 0.02, decay: rng.range(0.1, 0.3), delay: at, ..Default::default() };
                 self.grains.spawn(&spec, sr);
             }
             if wave_inc > 0.0 {
@@ -835,7 +925,7 @@ impl Water {
                 self.bubbles.spawn(r, bubble_amp(r) * 1.5 * EVENT_LEVEL, self.rng.range(0.05, 0.2), at, sr);
             }
             if clouds {
-                if self.ev_cloud.tick(self.cloud_rate / sr, &mut self.rng) > 0 {
+                if self.ev_cloud.tick(self.cloud_rate * gate / sr, &mut self.rng) > 0 {
                     let a = self.cloud_amp * self.rng.range(0.4, 1.0);
                     self.cloud[0].strike(a);
                     self.cloud[1].strike(a * 0.4);
@@ -850,14 +940,40 @@ impl Water {
         for b in [&mut self.bed_lo, &mut self.bed_hi, &mut self.splash, &mut self.murmur] {
             b.render_add(white, bed);
         }
-        self.bed_mod.to(self.wander.sqrt() * (1.0 + 0.35 * (gate - 1.0)).max(0.3), len);
+        // The unresolved bubbles and the plunge follow the entrainment bursts (power ∝ rate).
+        for b in self.plunge.iter_mut() {
+            b.render_add(white, bed);
+        }
+        self.bed_mod.to((self.wander * gate).sqrt(), len);
         for (o, b) in out.iter_mut().zip(bed.iter()) {
             *o += b * self.bed_mod.next();
         }
         self.bed_mod.finish();
-        for b in self.plunge.iter_mut() {
-            b.render_add(white, out);
+        // The ripple bed through a gentle 3 kHz low-pass: the smallest bubbles are damped by
+        // the wavelets that make them (the references fall ~−3 dB/octave above 2 kHz, the
+        // band skirts alone left 4–12 kHz 3–4 dB too strong).
+        let mut rip = [0.0f32; BLOCK];
+        let rip = &mut rip[..len];
+        for b in self.ripple.iter_mut() {
+            b.render_add(white, rip);
         }
+        let a = one_pole_coef(3000.0, sr);
+        for (o, r) in out.iter_mut().zip(rip.iter()) {
+            self.ripple_lp += a * (r - self.ripple_lp);
+            *o += self.ripple_lp;
+        }
+        self.ripple_lp = flush(self.ripple_lp);
+        // The wash swells and fades with the wave groups (sets of bigger waves), like the laps.
+        let mut wash = [0.0f32; BLOCK];
+        let wash = &mut wash[..len];
+        for b in self.wash.iter_mut() {
+            b.render_add(white, wash);
+        }
+        self.wash_mod.to(0.35 + 1.1 * (core::f32::consts::TAU * self.group).sin().abs(), len);
+        for (o, w) in out.iter_mut().zip(wash.iter()) {
+            *o += w * self.wash_mod.next();
+        }
+        self.wash_mod.finish();
         if surfing {
             for b in self.surf.crash.iter_mut() {
                 b.render_add(white, out);
