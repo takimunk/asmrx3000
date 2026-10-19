@@ -38,6 +38,13 @@ use crate::sources::ModelKind;
 /// Distance of the thunder direction proxy from the listener, m (see `sources::thunder`).
 pub const THUNDER_PROXY_M: f32 = 40.0;
 
+/// Unit direction to a strike at `bearing` (rad) and `distance` m, raised a little towards
+/// the channel (less for far strikes): where the thunder proxies point.
+pub fn thunder_direction(bearing: f32, distance: f32) -> Vec3 {
+    let elev = (2000.0 / distance.max(1.0)).atan().min(0.9) * 0.6;
+    Vec3::new(bearing.cos() * elev.cos(), bearing.sin() * elev.cos(), elev.sin())
+}
+
 /// Environment the director reacts to. Sliders feed it every block.
 #[derive(Clone, Copy, Debug)]
 pub struct Environment {
@@ -317,8 +324,7 @@ impl Director {
         if self.weather.struck() {
             // Point the thunder proxies at the strike (elevation shrinks with distance).
             let (bearing, distance) = self.weather.strike_position();
-            let elev = (2000.0 / distance.max(1.0)).atan().min(0.9) * 0.6;
-            let dir = Vec3::new(bearing.cos() * elev.cos(), bearing.sin() * elev.cos(), elev.sin());
+            let dir = thunder_direction(bearing, distance);
             for &i in &self.thunder {
                 world.entities[i].position = dir * THUNDER_PROXY_M;
             }

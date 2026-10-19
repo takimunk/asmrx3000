@@ -78,7 +78,7 @@ enum {
     ASMR_TELEMETRY_OUTPUT_LEVEL = 5, /* RMS of the output */
     ASMR_TELEMETRY_RAIN_RATE = 8,    /* actual rain rate (smoothed, fluctuating), mm/h */
     ASMR_TELEMETRY_WETNESS = 9,      /* leaf wetness 0..1 */
-    ASMR_TELEMETRY_LIGHTNING = 10,   /* flash 0..1: jumps to 1 on a strike, thunder arrives distance/343 s later */
+    ASMR_TELEMETRY_LIGHTNING = 10,   /* flash 0..1: flicker of the return strokes, dimmer with distance; thunder arrives distance/343 s later */
     ASMR_TELEMETRY_DRIP = 11,        /* canopy drip rate, mm/h (keeps going after the rain) */
     ASMR_TELEMETRY_HEAD_HORIZON_MS = 12, /* head-pose prediction horizon used, ms */
     ASMR_TELEMETRY_HEAD_RATE = 13,       /* head-pose samples per second arriving */

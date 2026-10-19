@@ -52,7 +52,7 @@ struct Telemetry {
     var sampleRate: Float = 0
     var bubbleRate: Float = 0
     var outputLevel: Float = 0
-    /// Lightning flash 0..1 (jumps to 1 on a strike).
+    /// Lightning flash 0..1: the flicker of the leader and return strokes, dimmer with distance.
     var lightning: Float = 0
     /// Leaf and ground wetness 0..1.
     var wetness: Float = 0

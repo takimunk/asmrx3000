@@ -1,7 +1,7 @@
 //! The render path of flight mode must not allocate: a counting global allocator watches the
 //! thread that calls `Engine::render` while the listener flies through streamed landscape
 //! (tiles generated and retired while steering by head through two U-turns, slots changing
-//! hands, birds flushed, a reseed).
+//! hands, birds flushed, a reseed, thunder from a storm overhead).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -51,6 +51,9 @@ fn flight_render_does_not_allocate() {
     engine.set_param(param::PLAYING, 1.0);
     engine.set_param(param::BIRDS, 1.0);
     engine.set_param(param::RAIN, 4.0);
+    // A storm overhead: lightning strikes during the watch, the flight's thunder voice
+    // lays out its channel and pulses in fixed buffers.
+    engine.set_param(param::STORM, 1.0);
     let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
     // Warm-up: the flight pack is handed over on the first block.
     for _ in 0..20 {

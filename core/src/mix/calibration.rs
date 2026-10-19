@@ -137,7 +137,7 @@ pub enum Metric {
     LaEq1m,
     /// A-weighted equivalent level at the listener in the default scene (distributed sources).
     LaEqScene,
-    /// Mean LAFmax at the listener per thunder clap (storm 1, strikes ~0.5–3 km).
+    /// Loudest LAFmax at the listener among the thunder claps of a storm (storm 1).
     LaFmaxScene,
 }
 
@@ -186,18 +186,20 @@ pub static TABLE: [Entry; 18] = [
     e(C::Fire, LaEq1m, 62.0, 62.8, "campfire 20 kW", "campfire crackle ~55–65 dB(A) at 1 m"),
 ];
 
-/// Thunder: loudest clap LAFmax at the listener in 4 minutes at storm 1 (~10 strikes,
-/// 0.5–3 km).
+/// Thunder: loudest clap LAFmax at the listener in 4 minutes at storm 1 (~10 flashes,
+/// ~0.3–2 km: the storm is overhead).
+/// 80 dB(A), below the ~90 a strike a few hundred metres away really makes: the comfort
+/// compressor would hold that moment anyway (`mix::tests::storm_stays_comfortable`).
 /// Kept separate: the generator includes the long-range physics and its emitter is a
 /// direction proxy at `director::THUNDER_PROXY_M`, whose 1/r the gain undoes.
 pub static THUNDER: Entry = Entry {
     class: C::Thunder,
     metric: LaFmaxScene,
-    target_db: 84.0,
-    raw_db: 71.5,
+    target_db: 80.0,
+    raw_db: 83.1,
     post: crate::director::THUNDER_PROXY_M,
-    condition: "storm 1, loudest clap in 4 min",
-    source: "thunder 1–3 km: 80–100 dB peak, ~75–90 dB(A) Fmax (Few 1969; Bass 1980)",
+    condition: "storm 1, loudest clap in 4 min (strikes ~0.3–2 km)",
+    source: "thunder 0.3–3 km: 80–110 dB peak, ~75–95 dB(A) Fmax (Few 1969; Bass 1980)",
 };
 
 pub fn entry(class: SoundClass) -> &'static Entry {

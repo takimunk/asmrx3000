@@ -37,7 +37,7 @@ use crate::rng::Rng;
 use crate::scene::{object_flags, vary_water, Emitter, Entity, Geometry, ObjectInfo, ObjectKind, World};
 use crate::shaping::NF;
 use crate::sources::{
-    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Water, Wind, Wings,
+    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Thunder, Water, Wind, Wings,
 };
 use crate::windfield::WindField;
 
@@ -90,10 +90,19 @@ enum Pool {
     Rain,
     /// Wind over exposed ground: dune sand, ridge howl, blowing snow, grass on open crests.
     Air,
+    /// Thunder of the director's lightning, from the strike's bearing in the landscape.
+    Sky,
+}
+
+impl Pool {
+    /// Pools that follow the listener (not the landscape): kept through a regeneration.
+    fn persistent(self) -> bool {
+        matches!(self, Pool::Rain | Pool::Sky)
+    }
 }
 
 /// (pool, slots, voiced at once). Spare slots let outgoing voices fade while new ones fade in.
-const POOLS: [(Pool, usize, usize); 8] = [
+const POOLS: [(Pool, usize, usize); 9] = [
     (Pool::Near, 14, 10),
     (Pool::Cell, 8, 6),
     (Pool::Bird, 14, 8),
@@ -102,11 +111,12 @@ const POOLS: [(Pool, usize, usize); 8] = [
     (Pool::Fire, 2, 1),
     (Pool::Rain, 4, 4),
     (Pool::Air, 4, 3),
+    (Pool::Sky, 1, 1),
 ];
 
-/// Emitters in flight mode (fixed: the level-of-detail bound). At most 41 sound at once
+/// Emitters in flight mode (fixed: the level-of-detail bound). At most 42 sound at once
 /// (the voiced counts above); the rest are spares that fade out while others fade in.
-pub const EMITTERS: usize = 58;
+pub const EMITTERS: usize = 59;
 
 /// Species of the bird slots (a streamed bird takes a slot of its species when one is free).
 const BIRD_SLOTS: [Species; 14] = [
@@ -134,6 +144,8 @@ enum Target {
     Bird { idx: u16, id: u32 },
     Site { idx: u16, id: u32 },
     Rain(u8),
+    /// The thunder proxy (direction of the latest strike).
+    Sky,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,6 +179,7 @@ fn target_key(t: &Target) -> u64 {
         Target::Bird { idx, id } => 3 << 60 | (idx as u64) << 32 | id as u64,
         Target::Site { idx, id } => 4 << 60 | (idx as u64) << 32 | id as u64,
         Target::Rain(i) => 5 << 60 | i as u64,
+        Target::Sky => 6 << 60,
     }
 }
 
@@ -308,6 +321,9 @@ pub struct Flight {
     generation: u32,
     /// Smoothed ground the flight level follows (looks ahead over rises).
     terrain_follow: f32,
+    /// Direction of the latest lightning strike in the landscape frame (unit), and the
+    /// strike counter it belongs to.
+    sky: (Vec3, u32),
 }
 
 /// Stops and slow-downs at places worth lingering (a lake shore, a waterfall, the surf, the
@@ -411,6 +427,7 @@ impl Flight {
                     Pool::Fire => (SourceKind::Fire, Fire::preset("campfire").map(ModelConfig::Fire)),
                     Pool::Rain => (SourceKind::Rain, Some(rain(Surface::Forest, false))),
                     Pool::Air => (SourceKind::Wind, Some(air(0))),
+                    Pool::Sky => (SourceKind::Thunder, Some(ModelConfig::Thunder(Thunder::storm()))),
                     Pool::Bird => (SourceKind::Bird, None),
                 };
                 let generator: Box<dyn crate::sources::Generator> = match cfg {
@@ -446,8 +463,12 @@ impl Flight {
                         None => SoundClass::Bird(species),
                     },
                 });
-                let target = if pool == Pool::Rain { Target::Rain(j as u8) } else { Target::None };
-                slots.push(Slot { pool, target, want: pool == Pool::Rain, fade: 0.0, gain: 1.0, ref_area: 1.0, extent: 5.0, species, vel: Vec3::default() });
+                let target = match pool {
+                    Pool::Rain => Target::Rain(j as u8),
+                    Pool::Sky => Target::Sky,
+                    _ => Target::None,
+                };
+                slots.push(Slot { pool, target, want: pool.persistent(), fade: 0.0, gain: 1.0, ref_area: 1.0, extent: 5.0, species, vel: Vec3::default() });
             }
         }
         debug_assert_eq!(emitters.len(), EMITTERS);
@@ -498,6 +519,7 @@ impl Flight {
             snowing: false,
             generation: 0,
             terrain_follow: f32::NAN,
+            sky: (crate::director::thunder_direction(0.0, 3000.0), 0),
         };
         f.locate();
         f
@@ -604,6 +626,9 @@ impl Flight {
         }
         self.environment(inp);
         let (amb_rain, amb) = self.ambient(inp);
+        if amb.strike != self.sky.1 {
+            self.sky = (crate::director::thunder_direction(amb.strike_bearing, amb.strike_distance_m), amb.strike);
+        }
         let c_air = crate::physics::air::speed_of_sound(amb.temperature_c as f64) as f32;
 
         for ch in self.bus.iter_mut() {
@@ -756,7 +781,7 @@ impl Flight {
         if (seed != self.seed_ctl || biome != self.biome_ctl || relief != self.relief_ctl) && self.regen == 0.0 {
             self.regen = REGEN_S;
             for s in self.slots.iter_mut() {
-                if s.pool != Pool::Rain {
+                if !s.pool.persistent() {
                     s.want = false;
                 }
             }
@@ -769,7 +794,7 @@ impl Flight {
                 self.biome_ctl = biome;
                 self.relief_ctl = relief;
                 for s in self.slots.iter_mut() {
-                    if s.pool != Pool::Rain {
+                    if !s.pool.persistent() {
                         *s = Slot { target: Target::None, want: false, fade: 0.0, ..*s };
                     }
                 }
@@ -1080,6 +1105,12 @@ impl Flight {
                 let (sx, sy) = (if k & 1 == 0 { 7.0 } else { -7.0 }, if k & 2 == 0 { 7.0 } else { -7.0 });
                 Some((Vec3::new(sx, sy, -self.pose.height), Vec3::new(0.0, 0.0, -self.pose.climb), false))
             }
+            Target::Sky => {
+                // A direction proxy fixed in the landscape frame: it stays put as you turn.
+                let (s, c) = (self.pose.sin as f32, self.pose.cos as f32);
+                let d = self.sky.0 * crate::director::THUNDER_PROXY_M;
+                Some((Vec3::new(c * d.x + s * d.y, -s * d.x + c * d.y, d.z), Vec3::default(), false))
+            }
         }
     }
 
@@ -1227,7 +1258,7 @@ impl Flight {
         let c = self.acoustics.context().speed_of_sound;
         for i in 0..self.slots.len() {
             let slot = self.slots[i];
-            if slot.target == Target::None || slot.pool == Pool::Rain {
+            if slot.target == Target::None || slot.pool.persistent() {
                 self.paths[i] = PathTerrain { ground: self.pose.ground, surface: self.land.surface_at(self.pose.x, self.pose.y), ..PathTerrain::NONE };
                 self.path_db[i] = [0.0; NF];
                 continue;
@@ -1323,7 +1354,7 @@ impl Flight {
                 }
                 None
             }
-            Target::Rain(_) | Target::None => None,
+            Target::Rain(_) | Target::Sky | Target::None => None,
         };
         if cfg.is_some() {
             self.world.emitters[i].base = cfg;
