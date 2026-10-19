@@ -646,6 +646,7 @@ impl Flight {
                 em.controls.activity = activity;
                 em.controls.calling = calling;
                 em.controls.flap = flap;
+                em.controls.wings_driven = true;
             }
             let tmp = &mut self.scratch[..len];
             let mut c = em.controls;
@@ -1617,13 +1618,10 @@ fn bird_voice(b: &land::Bird, inp: &Inputs, density: f32) -> (f32, bool, f32) {
         BirdState::Flying => {
             let awake = sp.flight_activity(inp.hour) * (1.0 - 0.9 * rain);
             let activity = (def.call_rate.max(0.3) * awake.max(0.3) * density).min(1.0);
-            let flap = if b.t < 0.6 {
-                1.0
-            } else if b.dur - b.t < 0.5 {
-                0.85
-            } else {
-                0.5
-            };
+            // The species' own rhythm (bounding finches, rowing gulls, …), varying beat to
+            // beat and bout to bout; take-off and landing efforts come with it.
+            let phase = land::unit(land::hash(0, b.id as i64, 0, 0xF1A9));
+            let (_, flap) = crate::director::flight_motion(def.flight, b.t, b.dur, [0.0, 1.0, 0.0], phase);
             (activity, !def.sings_in_flight, flap)
         }
     }

@@ -163,6 +163,12 @@ pub struct Agent {
     /// Hawking loop to start once the bird reaches its entry point.
     pending_hawk: Option<State>,
     last: Output,
+    /// A perched bird now and then shifts its wings (one to four beats): seconds left of the
+    /// flick, seconds to the next one, and its own little generator (so flicks never change
+    /// the bird's other decisions).
+    flick: f32,
+    next_flick: f32,
+    flick_rng: u64,
 }
 
 fn v3(a: [f32; 3]) -> Vec3 {
@@ -278,6 +284,9 @@ impl Agent {
             takeoff: false,
             pending_hawk: None,
             last: Output::default(),
+            flick: 0.0,
+            next_flick: 8.0 + 40.0 * phase,
+            flick_rng: seed ^ 0xF11C_F11C,
         };
         if let Some(h) = home {
             let at = a.perch_in(h, entities, false);
@@ -1021,6 +1030,20 @@ impl Agent {
                         out.wait = self.hold && !performer;
                         out.activity = a.min(1.0);
                     }
+                }
+                // Shifting on the branch, settling the feathers: a few soft beats.
+                self.next_flick -= dt;
+                if self.next_flick <= 0.0 {
+                    let u = |r: &mut u64| {
+                        *r = r.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                        (*r >> 40) as f32 / 16_777_216.0
+                    };
+                    self.flick = 0.05 + 0.2 * u(&mut self.flick_rng);
+                    self.next_flick = 12.0 + 50.0 * u(&mut self.flick_rng);
+                }
+                if self.flick > 0.0 {
+                    self.flick -= dt;
+                    out.flap = 0.3;
                 }
                 let left = left - dt;
                 if let State::Perched { left: l, .. } = &mut self.state {

@@ -353,11 +353,18 @@ impl<const N: usize> BubbleBank<N> {
     /// larger for bubbles pinched off right at the surface), start `delay` in samples from
     /// the start of the next rendered block.
     pub fn spawn(&mut self, r: f32, amp: f32, xi: f32, delay: u32, sr: f32) -> bool {
+        self.spawn_damped(r, amp, xi, delay, sr, 1.0)
+    }
+
+    /// As `spawn`, with the damping multiplied by `damp`: large bubbles pinched off right at
+    /// the surface wobble out of shape and break up, so they ring far shorter than a free
+    /// spherical bubble would.
+    pub fn spawn_damped(&mut self, r: f32, amp: f32, xi: f32, delay: u32, sr: f32, damp: f32) -> bool {
         let f = minnaert_hz(r);
         if self.n >= N || f > 0.45 * sr || f < 20.0 {
             return false;
         }
-        let d = bubble_damping(f);
+        let d = bubble_damping(f) * damp.max(0.1);
         let mut b = Bubble { mode: Mode::default(), freq: f, dfreq: f * xi * d * BUBBLE_UPDATE as f32 / sr, damping: d, delay, sub: BUBBLE_UPDATE };
         b.mode.tune(f, d, sr);
         b.mode.strike(amp);

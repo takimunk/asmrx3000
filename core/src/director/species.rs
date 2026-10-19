@@ -430,10 +430,14 @@ pub fn flight_motion(style: FlightStyle, t: f32, dur: f32, side: [f32; 3], phase
     let (mut dz, mut lat, mut flap);
     match style {
         FlightStyle::Bounding => {
-            // ~0.3 s of beats rising, ~0.2 s closed-wing glide falling: 1.9 bounds/s.
-            let (burst, glide) = (0.30 + 0.06 * phase, 0.20 + 0.04 * (1.0 - phase));
-            let c = (t + phase * 0.5) % (burst + glide);
-            let a = 0.35;
+            // Bursts of beats rising, closed-wing glides falling: ~1.9 bounds/s, but every
+            // bound its own: one to seven beats, a short or a long glide, now and then a
+            // bound with no beats at all.
+            let cycle = 0.5 + 0.1 * phase;
+            let (c, u, v) = cycles(t + phase * 0.5, cycle, phase);
+            let burst = if v < 0.12 { 0.0 } else { cycle * (0.25 + 0.6 * u) };
+            let glide = cycle - burst;
+            let a = 0.35 * (0.6 + 0.8 * u);
             dz = if c < burst {
                 a * c / burst
             } else {
@@ -441,12 +445,14 @@ pub fn flight_motion(style: FlightStyle, t: f32, dur: f32, side: [f32; 3], phase
                 a * (1.0 - g * g)
             } - 0.5 * a;
             lat = 0.0;
-            flap = if c < burst { 0.65 } else { 0.0 };
+            flap = if c < burst { 0.5 + 0.3 * v } else { 0.0 };
         }
         FlightStyle::Direct => {
-            // Steady fast beats, a short glide every ~1.2 s, slight bobbing.
-            let c = (t + phase) % 1.2;
-            flap = if c > 1.06 { 0.0 } else { 0.65 };
+            // Steady fast beats, a short glide every second or so (sometimes longer, sometimes
+            // none), slight bobbing.
+            let (c, u, v) = cycles(t + phase, 1.2, phase);
+            let glide = if v < 0.2 { 0.0 } else { 0.08 + 0.3 * u };
+            flap = if c > 1.2 - glide { 0.0 } else { 0.55 + 0.2 * v };
             dz = 0.05 * (TAU * 1.6 * t + phase * TAU).sin();
             lat = 0.0;
         }
@@ -456,34 +462,36 @@ pub fn flight_motion(style: FlightStyle, t: f32, dur: f32, side: [f32; 3], phase
             let s = (w * t + phase * TAU).sin();
             lat = 2.2 * s;
             dz = -0.9 * (0.5 * w * t + phase * TAU).sin().abs() + 0.45;
-            flap = if s.abs() > 0.7 { 0.0 } else { 0.45 };
+            let (_, u, _) = cycles(t, 0.5 * TAU / w, phase);
+            flap = if s.abs() > 0.55 + 0.3 * u { 0.0 } else { 0.4 + 0.15 * u };
         }
         FlightStyle::Clatter => {
-            // Strong steady beats with glides on bowed wings every ~2 s.
-            let c = (t + 2.0 * phase) % 2.2;
-            flap = if c > 1.6 { 0.0 } else { 0.7 };
+            // Strong beats with glides on bowed wings every ~2 s, each run its own length.
+            let (c, u, v) = cycles(t + 2.0 * phase, 2.2, phase);
+            flap = if c > 0.9 + 1.0 * u { 0.0 } else { 0.6 + 0.2 * v };
             dz = 0.15 * (TAU * t / 2.2 + phase * TAU).sin();
             lat = 0.0;
         }
         FlightStyle::Silent => {
-            let c = (t + phase) % 2.3;
-            flap = if c < 0.8 { 0.5 } else { 0.0 };
+            let (c, u, _) = cycles(t + phase, 2.3, phase);
+            flap = if c < 0.4 + 0.8 * u { 0.5 } else { 0.0 };
             dz = -0.1 * (TAU * t / 2.3).sin();
             lat = 0.3 * (TAU * t / 4.0 + phase * TAU).sin();
         }
         FlightStyle::Soaring => {
-            // A few slow rowing beats, then a long glide; gentle banking.
-            let c = (t + 5.0 * phase) % 6.0;
-            flap = if c < 1.6 { 0.6 } else { 0.0 };
+            // A few slow rowing beats (one to six), then a long glide; gentle banking.
+            let (c, u, v) = cycles(t + 5.0 * phase, 6.0, phase);
+            flap = if c < 0.35 + 1.8 * u { 0.5 + 0.2 * v } else { 0.0 };
             dz = 0.4 * (TAU * t / 6.0 + phase * TAU).sin();
             lat = 0.8 * (TAU * t / 9.0 + phase * TAU).sin();
         }
         FlightStyle::Hovering => {
-            let c = (t + phase * 0.4) % 0.42;
+            let (c, u, _) = cycles(t + phase * 0.4, 0.42, phase);
+            let beat = 0.22 + 0.12 * u;
             let a = 0.25;
-            dz = if c < 0.28 { a * c / 0.28 } else { a * (1.0 - ((c - 0.28) / 0.14).powi(2)) } - 0.5 * a;
+            dz = if c < beat { a * c / beat } else { a * (1.0 - ((c - beat) / (0.42 - beat)).powi(2)) } - 0.5 * a;
             lat = 0.0;
-            flap = if c < 0.28 { 0.55 } else { 0.0 };
+            flap = if c < beat { 0.55 } else { 0.0 };
         }
     }
     dz *= env;
@@ -497,6 +505,20 @@ pub fn flight_motion(style: FlightStyle, t: f32, dur: f32, side: [f32; 3], phase
         flap = 0.0;
     }
     ([side[0] * lat, side[1] * lat, side[2] * lat + dz], flap)
+}
+
+/// Splits `t` into cycles of `period`: (time into the current cycle, two per-cycle uniform
+/// numbers 0..1). Pure: the same cycle of the same individual (`phase`) always draws the same.
+fn cycles(t: f32, period: f32, phase: f32) -> (f32, f32, f32) {
+    let k = (t / period).floor();
+    let c = t - k * period;
+    let mut h = (k as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((phase * 1.0e6) as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 29;
+    let u = (h >> 40) as f32 / 16_777_216.0;
+    let v = ((h >> 16) & 0xFF_FFFF) as f32 / 16_777_216.0;
+    (c, u, v)
 }
 
 // ---------------------------------------------------------------------------------------
