@@ -558,6 +558,13 @@ impl Generator for Bird {
             self.timer = self.timer.min(soon);
         }
         let idle_dec = if self.timer_scaled { 1.0 / (1.0 + 4.0 * (1.0 - c.activity.clamp(0.0, 1.0))) } else { 1.0 };
+        // A pause that outlasts the block: no sample would sound, so skip the loop.
+        if self.mode == Mode::Idle && self.timer > idle_dec * out.len() as f32 {
+            self.timer -= idle_dec * out.len() as f32;
+            self.counter = self.counter.wrapping_add(out.len() as _);
+            out.fill(0.0);
+            return;
+        }
         for o in out.iter_mut() {
             let mut s = 0.0;
             match self.mode {

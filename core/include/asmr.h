@@ -430,6 +430,10 @@ uint32_t asmr_apply_patch_json(const AsmrEngine *engine, const char *patch, char
 /* Applies once; returns NULL on NULL inputs. Free the returned JSON with asmr_string_free.
    These allocation APIs belong on the control thread. */
 char *asmr_apply_patch_json_alloc(const AsmrEngine *engine, const char *patch);
+/* Render-path CPU profile (core/src/profile.rs), off by default. enable clears and starts it for
+   every engine in the process; text_alloc returns the table so far (free with asmr_string_free). */
+void asmr_profile_enable(void);
+char *asmr_profile_text_alloc(const char *title);
 void asmr_string_free(char *text);
 uint32_t asmr_get_prompt_json(const AsmrEngine *engine, char *out, uint32_t max);
 

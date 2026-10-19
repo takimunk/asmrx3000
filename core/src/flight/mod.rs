@@ -605,6 +605,7 @@ impl Flight {
         self.environment(inp);
         let (amb_rain, amb) = self.ambient(inp);
         let c_air = crate::physics::air::speed_of_sound(amb.temperature_c as f64) as f32;
+        crate::profile::lap(crate::profile::Section::Flight);
 
         for ch in self.bus.iter_mut() {
             ch[..len].fill(0.0);
@@ -668,8 +669,11 @@ impl Flight {
             if !voice.permit {
                 c.activity = 0.0;
             }
+            crate::profile::lap(crate::profile::Section::MixVoice);
             em.generator.render(tmp, &c);
+            crate::profile::lap(crate::profile::Section::Generate(em.kind as usize));
             let energy: f32 = tmp.iter().map(|v| v * v).sum();
+            crate::profile::emitter(em.kind as usize, energy > 0.0);
             em.level = em.level * 0.8 + (energy * inv_len).sqrt() * 0.2 * slot.fade * slot.gain;
             let peak = tmp.iter().fold(0.0f32, |m, v| m.max(v.abs())) * gain * slot.fade * slot.gain;
             let track = scope_track(em.kind);
@@ -697,9 +701,12 @@ impl Flight {
             src.ground = Some(if em.kind == SourceKind::Water { GroundType::Water } else { path.surface.ground() });
             // Its share of the field at the listener, for the slope echoes.
             self.echoes.add(tmp, g * hidden / (d + 4.0));
+            crate::profile::lap(crate::profile::Section::MixVoice);
             self.acoustics.propagate(idx, &src, tmp, &mut self.bus);
+            crate::profile::lap(crate::profile::Section::Propagate(em.kind as usize));
         }
         self.echoes.render(&mut self.bus, len, c_air);
+        crate::profile::lap(crate::profile::Section::Flight);
         match bed.as_mut() {
             None => self.acoustics.render(&mut self.bus, &inp.head, len, &mut self.left[..len], &mut self.right[..len]),
             Some((_, head)) => {

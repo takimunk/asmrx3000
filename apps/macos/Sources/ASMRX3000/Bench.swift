@@ -1,9 +1,11 @@
 import AppKit
+import CAsmr
 import SwiftUI
 
 /// `ASMRX3000 --bench`: shows the popover in an ordinary window for 20 s with audio playing,
 /// then hides it for 10 s, printing the process CPU for each phase. Measures what the UI costs
 /// without having to click the menu bar item. The audio engine's own share is reported too.
+/// With `ASMR_PROFILE=1` each phase also prints the engine's per-section profile (profile.rs).
 enum Bench {
     private static var window: NSWindow?
     private static var model: AppModel?
@@ -42,12 +44,18 @@ enum Bench {
 
         func measure(_ label: String, seconds: Double, then: @escaping () -> Void) {
             let c0 = cpuSeconds(), s0 = systemSeconds(), t0 = Date(), f0 = model.stage.frames
+            let profiling = ProcessInfo.processInfo.environment["ASMR_PROFILE"] != nil
+            if profiling { asmr_profile_enable() }
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
                 let cpu = (cpuSeconds() - c0) / Date().timeIntervalSince(t0) * 100
                 let dsp = Double(model.stage.telemetry.dspLoad) * 100
                 let fps = Double(model.stage.frames - f0) / Date().timeIntervalSince(t0)
                 let sys = (systemSeconds() - s0) / Date().timeIntervalSince(t0) * 100
                 print(String(format: "%@: process %.1f %% of one core (system %.1f %%), %.0f fps (audio engine ≈ %.1f %%)", label, cpu, sys, fps, dsp))
+                if profiling, let text = asmr_profile_text_alloc(label) {
+                    print(String(cString: text))
+                    asmr_string_free(text)
+                }
                 then()
             }
         }

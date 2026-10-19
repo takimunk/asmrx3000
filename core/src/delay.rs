@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use crate::simd::F4;
 
-const TAPS: usize = 8;
+pub const TAPS: usize = 8;
 const HALF: i64 = 3; // taps cover n = -3..=4 around floor(position)
 const PHASES: usize = 256;
 const CUTOFF: f64 = 0.92; // fraction of Nyquist
@@ -81,10 +81,6 @@ impl DelayLine {
     /// Largest delay (samples) a read may ask for.
     pub fn max_delay(&self) -> f64 {
         (self.buf.len() - 2 * TAPS - 512) as f64
-    }
-
-    pub fn len(&self) -> usize {
-        self.buf.len()
     }
 
     /// Appends a block. Returns the absolute index of its first sample.
