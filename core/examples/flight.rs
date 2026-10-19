@@ -99,13 +99,14 @@ fn main() -> std::io::Result<()> {
                 let sounding = engine.sources(&mut src);
                 let frame = engine.flight_frame().unwrap_or_default();
                 log += &format!(
-                    "    t {:>4.0} s  flown {:>6.0} m  heading {:>4.0}°  v {:>4.1} m/s  h {:>4.1} m  ground {:>6.1} m  valley {:.2}  stop {:.1}  emitters {:>2}  objects {:>3} (trees {}, rivers {}, birds {}, sources {}, lakes {}, rocks {})\n",
+                    "    t {:>4.0} s  flown {:>6.0} m  heading {:>4.0}°  v {:>4.1} m/s  h {:>4.1} m  ground {:>6.1} m  {:<15}  valley {:.2}  stop {:.1}  emitters {:>2}  objects {:>3} (trees {}, rivers {}, birds {}, sources {}, lakes {}, rocks {})\n",
                     t,
                     engine.telemetry(telemetry::FLIGHT_ODOMETER),
                     engine.telemetry(telemetry::FLIGHT_HEADING).to_degrees(),
                     engine.telemetry(telemetry::FLIGHT_SPEED),
                     engine.telemetry(telemetry::FLIGHT_ALTITUDE),
                     frame.ground_z,
+                    asmr_core::flight::land::BIOMES.get(frame.local_biome as usize).map_or("?", |b| b.name),
                     frame.enclosure,
                     frame.linger,
                     sounding,

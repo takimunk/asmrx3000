@@ -139,18 +139,28 @@ struct LeverPanel: View {
 
     // MARK: World
 
-    /// Russian name of the current flight landscape (flight.biome preset).
-    static func biomeName(_ all: [Control]) -> String {
+    /// Russian name of the current flight landscape (flight.biome preset). In a journey the
+    /// biome changes with the place: the frame says which one is under the listener
+    /// ("путешествие · луга").
+    static func biomeName(_ all: [Control], frame: AsmrFlightFrame? = nil) -> String {
         guard let c = all.first(where: { $0.key == "flight.biome" }) else { return "лес" }
         let i = Int(c.value.rounded())
-        return i >= 0 && i < c.options.count ? ControlText.option(c.options[i]) : "лес"
+        guard i >= 0 && i < c.options.count else { return "лес" }
+        let name = ControlText.option(c.options[i])
+        if c.options[i] == "journey", let f = frame, Int(f.biome) == i, Int(f.local_biome) < c.options.count, Int(f.local_biome) != i {
+            return name + " · " + ControlText.option(c.options[Int(f.local_biome)])
+        }
+        return name
     }
 
     private func world(hour: Float?) -> some View {
         let split = Self.split(controls.macros, flying: audio.flying)
         let shown = showAll ? split.shown + split.more : split.shown
         return VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(title: "Мир", note: audio.flying ? "полёт: " + Self.biomeName(controls.controls) : "что происходит в лесу")
+            // Polled once a second: in a journey the biome under the listener changes as it flies.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                SectionHeader(title: "Мир", note: audio.flying ? "полёт: " + Self.biomeName(controls.controls, frame: audio.readFlightFrame()) : "что происходит в лесу")
+            }
             ZStack(alignment: .topLeading) {
                 Group {
                     if let stills {
@@ -301,6 +311,7 @@ enum ControlText {
         "mixed": "смешанный лес", "broadleaf": "дубрава", "taiga": "тайга", "river_valley": "речная долина",
         "meadows": "луга", "highlands": "нагорье", "desert": "пустыня", "snowy_mountains": "снежные горы",
         "lake_shore": "берег озера", "sea_coast": "морской берег", "big_river": "большая река",
+        "journey": "путешествие",
         // flight.steer_by_head
         "off": "нет", "yaw": "поворотом", "yaw_pitch": "поворотом и наклоном",
     ]

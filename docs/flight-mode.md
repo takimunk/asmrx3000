@@ -46,7 +46,7 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 | 1000 | `flight.speed` (macro) | 0..25 m/s | 6 | walk 1.5, run 5, glide 12, fast flight 25; the actual speed ramps at 2.5 m/s² |
 | 1001 | `flight.altitude` | 1.2..40 m (log) | follows speed | ears above the ground. Follows the speed: 1.7 m walking, under the crowns at a run, about 20 m (above the canopy) in fast flight. Gentle swells of up to ±12 % above walking height |
 | 1002 | `flight.curviness` | 0..1 | 0.35 | how much the course wanders when not steered by head; 1 = turn radius 250 m |
-| 1003 | `flight.biome` | preset | mixed | mixed, broadleaf, taiga, river_valley, meadows, highlands, desert, snowy_mountains, lake_shore, sea_coast, big_river (docs/world.md) |
+| 1003 | `flight.biome` | preset | journey | mixed, broadleaf, taiga, river_valley, meadows, highlands, desert, snowy_mountains, lake_shore, sea_coast, big_river, journey (the biome changes with the place, regions of ~800 m; docs/world.md, "Journey") |
 | 1004 | `flight.density` | 0..2 | 1 | trees and stands; takes effect immediately (thins or fills the generated forest) |
 | 1005 | `flight.seed` | 0..999 | 0 | another landscape |
 | 1006 | `flight.airflow` | 0..3 | 1 | wind noise of motion at the ears (1 = physical, subtle) |
@@ -137,6 +137,9 @@ It is streamed **in 2D around the listener**, whichever way it flies:
 * Eleven **biomes** differ in relief, ground, forest share, stand density and scale,
   species, and how often water, rock, falls and camps appear (`land::BIOMES`). The relief,
   water bodies, surfaces, the sea, the big river and the new biomes are in **docs/world.md**.
+  The twelfth preset, **`journey`** (the default), makes the biome a function of place:
+  regions of ~800 m with plausible neighbours, blended over ~180 m, so a flight goes from a
+  quiet lake meadow into the forest, the taiga, the hills (docs/world.md, "Journey").
 * Tiles also carry the **terrain** on a 5 m grid, surf on the shoreline and wind over the most
   exposed crest.
 
@@ -298,6 +301,11 @@ Apple Silicon, release build, 48 kHz, 512-frame callbacks, single thread, 60 s e
 | tour (walk → 25 m/s → 6 m/s) | 8.4 | -28.8 | 0.42 |
 | steer (10 m/s, head left / right / over the shoulder) | 9.9 | -26.2 | 0.53 |
 
+A journey (`journey`, seed 1, 12 m/s: meadows into broadleaf woods) costs 11.0 % against
+9.6 % for `mixed` and `meadows` on the same run (`-- 60 build/flight 12 journey 1`); the
+difference is the content (a meadow full of crickets, then a denser wood), not the region
+lookups, which are cached per tile.
+
 For comparison, the scene alone (forest by the river, 30 s, `--example render`):
 RMS −31.7 dBFS, peak −12.6 dBFS, DSP load 4.1 %. Flight is a few dB louder (it is a whole
 forest, not eight trees in a clearing) and costs more because ~40 voices are awake instead
@@ -324,7 +332,10 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
   reached; sounding emitters ≤ 50; objects ≤ 256 and streamed.
 * `objects_enter_and_leave`: ids appear and disappear; trees move 2.5 m per 0.25 s at 10 m/s,
   towards the listener.
-* `audio_is_deterministic`: two engines render bit-identical audio.
+* `audio_is_deterministic`: two engines render bit-identical audio (`mixed`; a journey in
+  `journey_audio_is_deterministic_and_the_frame_names_the_place`).
+* `journey_crosses_biomes`, `journey_heights_are_continuous_across_borders`,
+  `journey_sampler_sees_the_same_relief`, `journey::tests`: see docs/world.md, "Journey".
 * `controls_and_toggle`: altitude follows speed unless set; biome names; scene objects,
   then streamed ones, then scene objects again; shapes readable.
 * `new_seed_new_landscape`: a reseed replaces every object.

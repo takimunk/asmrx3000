@@ -196,6 +196,7 @@ pub struct Frame {
     pub relief: f32,
     /// The landscape: pass to `asmr_terrain_new`.
     pub seed: u64,
+    /// The preset (`flight.biome`): pass it to the terrain sampler.
     pub biome: u32,
     /// Changes whenever the landscape is regenerated.
     pub generation: u32,
@@ -210,7 +211,9 @@ pub struct Frame {
     pub sea: f32,
     /// Mean elevation (sine) of the skyline all around: 0 open .. ~0.5 deep valley.
     pub enclosure: f32,
-    pub _pad: f32,
+    /// The biome under the listener (index into `land::BIOMES`): the preset itself, or in a
+    /// `journey` the dominant biome of the region it is crossing.
+    pub local_biome: u32,
 }
 
 const _: () = assert!(core::mem::size_of::<Frame>() == 80);

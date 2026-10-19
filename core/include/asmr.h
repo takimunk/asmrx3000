@@ -290,7 +290,8 @@ enum {
     ASMR_CONTROL_FLIGHT_ALTITUDE = 1001,  /* ears above the ground, m 1.2..40 (log); follows speed: 1.7 walking .. ~20 above the canopy */
     ASMR_CONTROL_FLIGHT_CURVINESS = 1002, /* wandering of the course when not steered by head: 0 straight .. 1 (turn radius 250 m) [0.35] */
     ASMR_CONTROL_FLIGHT_BIOME = 1003,     /* preset: mixed, broadleaf, taiga, river_valley, meadows, highlands, desert,
-                                             snowy_mountains, lake_shore, sea_coast, big_river [mixed]; option names via
+                                             snowy_mountains, lake_shore, sea_coast, big_river, journey (the biome changes
+                                             with the place: regions of ~800 m) [journey]; option names via
                                              asmr_get_control_option (docs/world.md) */
     ASMR_CONTROL_FLIGHT_DENSITY = 1004,   /* trees and stands x 0..2 [1]; thins or fills the forest at once */
     ASMR_CONTROL_FLIGHT_SEED = 1005,      /* landscape 0..999 [0]; a new seed or biome fades out and regenerates around the listener */
@@ -404,7 +405,8 @@ typedef struct {
     float rock_slope;     /* bare rock above this slope (rise per metre), */
     float sea;            /* 1 when the landscape has a sea */
     float enclosure;      /* skyline elevation all around (sine), 0 open .. ~0.5 deep valley */
-    float pad;
+    uint32_t local_biome; /* the biome under the listener: `biome` itself, or in a journey the
+                             region being crossed (index into the flight.biome options) */
 } AsmrFlightFrame;
 
 /* Fills `out` and returns 1 once flight mode has been built (else 0). Any thread. */

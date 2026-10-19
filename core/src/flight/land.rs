@@ -20,6 +20,7 @@
 use crate::director::Species;
 use crate::scene::TreeSpecies;
 
+use super::journey::{self, Blend};
 use super::terrain::{Params, Relief, Sample, Surface, DRY};
 
 /// Side of a streamed tile, m.
@@ -246,7 +247,7 @@ const H_FOREST: Habitat = Habitat { forest: 1.0, open: 0.3, water: 0.2, coast: 0
 const NO_SNOW: f32 = f32::INFINITY;
 
 #[rustfmt::skip]
-pub const BIOMES: [Biome; 11] = [
+pub const BIOMES: [Biome; 12] = [
     Biome { name: "mixed",        forest: 0.62, density_ha: 480.0, species: [0.20, 0.15, 0.20, 0.08, 0.10, 0.12, 0.15], river_every: 340.0, lake: 0.28, lake_size: [20.0, 45.0], ridge: 0.20, rocks: 0.30, waterfall: 0.25, campfire: 0.12, birds: 0.030, patch: 170.0,
             relief: Relief { hills: 12.0, hills_scale: 380.0, valley: 0.4, ..R0 }, snow: 0.0, sand: 0.0, beaches: false, snowline: NO_SNOW, treeline: NO_SNOW, rock_slope: 0.9, temperature: 0.0, wind: 1.0, air: Air::Breeze, habitat: H_FOREST },
     Biome { name: "broadleaf",    forest: 0.68, density_ha: 420.0, species: [0.25, 0.35, 0.00, 0.10, 0.10, 0.20, 0.00], river_every: 400.0, lake: 0.20, lake_size: [20.0, 45.0], ridge: 0.12, rocks: 0.20, waterfall: 0.15, campfire: 0.10, birds: 0.036, patch: 190.0,
@@ -269,6 +270,10 @@ pub const BIOMES: [Biome; 11] = [
             relief: Relief { hills: 12.0, hills_scale: 420.0, sea: 0.45, valley: 0.4, ..R0 }, snow: 0.0, sand: 0.0, beaches: true, snowline: NO_SNOW, treeline: NO_SNOW, rock_slope: 0.8, temperature: 1.0, wind: 1.3, air: Air::Breeze, habitat: Habitat { forest: 0.4, open: 0.7, water: 0.3, coast: 1.0, ..H_FOREST } },
     Biome { name: "big_river",    forest: 0.48, density_ha: 400.0, species: [0.20, 0.15, 0.05, 0.25, 0.25, 0.10, 0.00], river_every: 600.0, lake: 0.20, lake_size: [20.0, 50.0], ridge: 0.08, rocks: 0.15, waterfall: 0.05, campfire: 0.15, birds: 0.038, patch: 160.0,
             relief: Relief { hills: 14.0, hills_scale: 420.0, valley: 0.7, big_river: 90.0, ..R0 }, snow: 0.0, sand: 0.0, beaches: true, snowline: NO_SNOW, treeline: NO_SNOW, rock_slope: 0.9, temperature: 1.0, wind: 1.0, air: Air::Breeze, habitat: Habitat { forest: 0.6, open: 0.5, water: 1.0, ..H_FOREST } },
+    // The biome is a function of place (journey.rs): these values only stand in where a
+    // single preset is asked for (descriptions, tests); the land itself uses the regions.
+    Biome { name: "journey",      forest: 0.55, density_ha: 440.0, species: [0.20, 0.15, 0.20, 0.08, 0.10, 0.12, 0.15], river_every: 380.0, lake: 0.30, lake_size: [20.0, 60.0], ridge: 0.20, rocks: 0.30, waterfall: 0.25, campfire: 0.12, birds: 0.030, patch: 170.0,
+            relief: Relief { hills: 12.0, hills_scale: 380.0, valley: 0.5, ..R0 }, snow: 0.0, sand: 0.0, beaches: false, snowline: NO_SNOW, treeline: NO_SNOW, rock_slope: 0.9, temperature: 0.0, wind: 1.0, air: Air::Breeze, habitat: H_FOREST },
 ];
 
 pub fn biome(index: u32) -> &'static Biome {
@@ -422,6 +427,10 @@ pub struct Tile {
     /// Individual trees (and their birds) are generated.
     pub trees: bool,
     pub n_trees: u16,
+    /// Journey: the biome at the tile's centre (dominant), and whether it is the only one
+    /// anywhere on the tile (then lookups on the tile skip the region field).
+    pub region: u8,
+    pub uniform: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -760,6 +769,65 @@ impl Land {
         biome(self.biome)
     }
 
+    /// The `journey` preset: the biome is a function of place.
+    pub fn journey(&self) -> bool {
+        self.params.journey
+    }
+
+    /// Journey: the biomes at (x, y) (from the tile when the whole tile is one biome).
+    pub fn blend_at(&self, x: f64, y: f64) -> Blend {
+        if let Some(t) = self.tile((x / TILE).floor() as i32, (y / TILE).floor() as i32) {
+            if self.tiles[t].uniform {
+                return Blend::single(self.tiles[t].region as u32);
+            }
+        }
+        self.params.blend(x, y, 0.0)
+    }
+
+    /// The biome at (x, y): the preset, or in a journey the blend there, its discrete traits
+    /// dithered (an ecotone: per place) or of the dominant biome.
+    pub fn biome_at(&self, x: f64, y: f64, dither: bool) -> Biome {
+        if !self.params.journey {
+            return *self.biome_def();
+        }
+        let bl = self.blend_at(x, y);
+        let pick = if dither { bl.pick(journey::dither(self.seed, x, y)) } else { bl.dominant() };
+        journey::mix(&bl, pick)
+    }
+
+    /// The biome around the listener at (x, y) (discrete traits of the dominant one) and the
+    /// index of the dominant biome.
+    pub fn local(&self, x: f64, y: f64) -> (Biome, u32) {
+        if !self.params.journey {
+            return (*self.biome_def(), self.biome);
+        }
+        let bl = self.blend_at(x, y);
+        (journey::mix(&bl, bl.dominant()), bl.dominant())
+    }
+
+    /// A numeric trait at (x, y), weighted across a journey's borders (snow and sand cover
+    /// for the picture).
+    pub fn share(&self, x: f64, y: f64, f: impl Fn(&Biome) -> f32) -> f32 {
+        if !self.params.journey {
+            return f(self.biome_def());
+        }
+        self.blend_at(x, y).lerp(f)
+    }
+
+    /// The biome a tile is made with (tile-wide choices: boulders, meadows, air, birds of the
+    /// open, the aggregate's species).
+    fn tile_biome(&self, tile: &Tile) -> Biome {
+        if !self.params.journey {
+            return *self.biome_def();
+        }
+        if tile.uniform {
+            return *biome(tile.region as u32);
+        }
+        let (cx, cy) = tile_centre(tile.i, tile.j);
+        let bl = self.params.blend(cx, cy, 0.0);
+        journey::mix(&bl, bl.pick(journey::tile_dither(self.seed, tile.i, tile.j)))
+    }
+
     /// Clears the content (ids keep counting) and switches seed / biome / relief. Real-time
     /// safe.
     pub fn reset(&mut self, seed: u64, biome: u32, relief: f32) {
@@ -867,7 +935,7 @@ impl Land {
 
     /// Habitat around (x, y) for the birds: the biome's, with water and coast nearby.
     pub fn habitat_at(&self, x: f64, y: f64) -> Habitat {
-        let mut h = self.biome_def().habitat;
+        let mut h = self.biome_at(x, y, false).habitat;
         let (g, w, s) = self.nearest(x, y);
         if w != DRY || s == Surface::Water {
             h.water = h.water.max(1.0);
@@ -888,7 +956,21 @@ impl Land {
 
     /// Forest cover in [0, 1] at a world point, before carving.
     pub fn base_cover(&self, x: f64, y: f64) -> f32 {
-        let b = self.biome_def();
+        if self.params.journey {
+            return self.cover_in(&self.blend_at(x, y), x, y);
+        }
+        self.cover_of(self.biome_def(), x, y)
+    }
+
+    /// Journey: the forest cover of each biome there, weighted.
+    fn cover_in(&self, bl: &Blend, x: f64, y: f64) -> f32 {
+        if bl.n <= 1 {
+            return self.cover_of(biome(bl.dominant()), x, y);
+        }
+        bl.parts().map(|(b, w)| w * self.cover_of(b, x, y)).sum()
+    }
+
+    fn cover_of(&self, b: &Biome, x: f64, y: f64) -> f32 {
         if b.forest <= 0.0 {
             return 0.0;
         }
@@ -899,8 +981,7 @@ impl Land {
 
     /// How much the terrain allows trees: none in water, on rock, on sand away from water,
     /// above the treeline.
-    fn terrain_cover(&self, ground: f32, water: f32, surface: Surface, shore: f32) -> f32 {
-        let b = self.biome_def();
+    fn terrain_cover(b: &Biome, ground: f32, water: f32, surface: Surface, shore: f32) -> f32 {
         if water > ground {
             return 0.0;
         }
@@ -919,7 +1000,7 @@ impl Land {
             return 0.0;
         }
         let (g, w, s) = self.nearest(x, y);
-        self.base_cover(x, y) * self.terrain_cover(g, w, s, 10.0)
+        self.base_cover(x, y) * Self::terrain_cover(&self.biome_at(x, y, true), g, w, s, 10.0)
     }
 
     /// `cover` using only the features in `near` (from `local_features`).
@@ -928,7 +1009,7 @@ impl Land {
             return 0.0;
         }
         let (g, w, s) = self.nearest(x, y);
-        self.base_cover(x, y) * self.terrain_cover(g, w, s, 10.0)
+        self.base_cover(x, y) * Self::terrain_cover(&self.biome_at(x, y, true), g, w, s, 10.0)
     }
 
     /// Streams content around (x, y): macro cells, tiles within KEEP, trees within TREE_R;
@@ -1079,14 +1160,18 @@ impl Land {
     fn make_macro(&mut self, i: i32, j: i32) {
         let m = macro_slot(i, j);
         self.macros[m] = Macro { i, j, alive: true };
-        let b = *self.biome_def();
+        // Journey: the macro cell's features follow the biome at its centre.
+        let b = if self.params.journey { self.local((i as f64 + 0.5) * MACRO, (j as f64 + 0.5) * MACRO).0 } else { *self.biome_def() };
+        // (A journey's valleys widen and narrow across borders: pad for the widest.)
+        let pad_valley = if self.params.journey { 1.0 } else { b.relief.valley };
         let p = self.params;
         let mut r = Stream::new(hash(self.seed, i as i64, j as i64, 0x3AC0 ^ self.biome as u64));
         let (x0, y0) = (i as f64 * MACRO, j as f64 * MACRO);
         let f0 = m * FEATURES_PER_MACRO;
         let s0 = m * SITES_PER_MACRO;
         let at = |r: &mut Stream| (x0 + r.uniform() as f64 * MACRO, y0 + r.uniform() as f64 * MACRO);
-        let in_sea = |x: f64, y: f64| p.base(x, y).coast < 15.0;
+        // (Without a sea the coast is infinitely far: no need to evaluate the relief.)
+        let in_sea = |x: f64, y: f64| p.biome.relief.sea > 0.0 && p.base(x, y).coast < 15.0;
 
         // Brooks and rivers: on average one crossing per `river_every` m of travel.
         let q = 0.9 * MACRO as f32 / b.river_every;
@@ -1125,7 +1210,7 @@ impl Land {
                 }
             }
             f.levels = lv;
-            if self.put_feature(f0, FEATURES_PER_MACRO, f, river_pad(width, b.relief.valley)).is_none() {
+            if self.put_feature(f0, FEATURES_PER_MACRO, f, river_pad(width, pad_valley)).is_none() {
                 break;
             }
             // Sound sites every 15 m along the bed, riffles and pools alternating.
@@ -1166,7 +1251,8 @@ impl Land {
                     f.path[k] = ell(core::f64::consts::TAU * k as f64 / PATH_POINTS as f64, 0.0);
                 }
                 f.path_len = PATH_POINTS as u8;
-                if self.put_feature(f0, FEATURES_PER_MACRO, f, 0.8 * a.max(bb) as f64 + 4.0).is_some() && b.snow < 0.5 {
+                let open_water = if self.params.journey { self.biome_at(cx, cy, false).snow < 0.5 } else { b.snow < 0.5 };
+                if self.put_feature(f0, FEATURES_PER_MACRO, f, 0.8 * a.max(bb) as f64 + 4.0).is_some() && open_water {
                     // Waves lap the shore every ~16 m (none on a frozen lake).
                     let n = ((core::f32::consts::TAU * 0.5 * (a + bb)) / 16.0).ceil().clamp(6.0, 40.0) as usize;
                     for k in 0..n {
@@ -1269,10 +1355,19 @@ impl Land {
 
     fn make_tile(&mut self, i: i32, j: i32) {
         let t = tile_slot(i, j);
-        let b = *self.biome_def();
         let (x0, y0) = (i as f64 * TILE, j as f64 * TILE);
         let mut r = Stream::new(hash(self.seed, i as i64, j as i64, 0x711E ^ self.biome as u64));
-        self.tiles[t] = Tile { i, j, alive: true, cell: Cell::default(), trees: false, n_trees: 0 };
+        let journey = self.params.journey;
+        // Journey: one biome over the whole tile, or a border tile (per-sample lookups).
+        let (region, uniform) = if journey {
+            let bl = self.params.blend(x0 + 0.5 * TILE, y0 + 0.5 * TILE, journey::TILE_MARGIN);
+            (bl.dominant() as u8, bl.margin >= journey::BLEND + journey::TILE_MARGIN)
+        } else {
+            (self.biome as u8, true)
+        };
+        self.tiles[t] = Tile { i, j, alive: true, cell: Cell::default(), trees: false, n_trees: 0, region, uniform };
+        let b = self.tile_biome(&self.tiles[t]);
+        let mut blends = [Blend::single(region as u32); GRID_LEN];
         let f0 = MACROS * FEATURES_PER_MACRO + t * FEATURES_PER_TILE;
         let s0 = MACROS * SITES_PER_MACRO + t * SITES_PER_TILE;
         let mut local = [0usize; LOCAL];
@@ -1283,7 +1378,14 @@ impl Land {
         for a in 0..GRID_N {
             for c in 0..GRID_N {
                 let (x, y) = (x0 + a as f64 * GRID_STEP, y0 + c as f64 * GRID_STEP);
-                let s = self.params.sample(&self.features, &local[..nl], x, y);
+                let s = if journey {
+                    if !uniform {
+                        blends[a * GRID_N + c] = self.params.blend(x, y, 0.0);
+                    }
+                    self.params.sample_in(&blends[a * GRID_N + c], &self.features, &local[..nl], x, y)
+                } else {
+                    self.params.sample(&self.features, &local[..nl], x, y)
+                };
                 let k = t * GRID_LEN + a * GRID_N + c;
                 self.ground[k] = s.ground;
                 self.water[k] = s.water;
@@ -1301,8 +1403,15 @@ impl Land {
                 let slope = (gx * gx + gy * gy).sqrt();
                 let (x, y) = (x0 + a as f64 * GRID_STEP, y0 + c as f64 * GRID_STEP);
                 let s = Sample { ground: self.ground[k], water: self.water[k], flow: [0.0; 2], shore: shore[a * GRID_N + c], kind: if self.water[k] > self.ground[k] { 1 } else { 0 } };
-                let cover = self.base_cover(x, y);
-                self.surface[k] = self.params.surface(&s, slope, cover) as u8;
+                self.surface[k] = if journey {
+                    // The ground of the biome here, an ecotone dithered across borders.
+                    let bl = &blends[a * GRID_N + c];
+                    let lb = journey::ground(bl, bl.pick(journey::dither(self.seed, x, y)));
+                    Params::surface_of(&lb, &s, slope, self.cover_in(bl, x, y)) as u8
+                } else {
+                    let cover = self.base_cover(x, y);
+                    self.params.surface(&s, slope, cover) as u8
+                };
             }
         }
         let carved = |land: &Land, x: f64, y: f64, m: f32| local[..nl].iter().any(|&k| land.features[k].carves(x, y, m));
@@ -1407,7 +1516,7 @@ impl Land {
                 let (x, y) = (x0 + (a as f64 + 0.5) * TILE / 4.0, y0 + (c as f64 + 0.5) * TILE / 4.0);
                 let (g, w, s) = self.nearest(x, y);
                 gsum += g;
-                cov += if carved(self, x, y, 1.5) { 0.0 } else { self.base_cover(x, y) * self.terrain_cover(g, w, s, 10.0) };
+                cov += if carved(self, x, y, 1.5) { 0.0 } else { self.base_cover(x, y) * Self::terrain_cover(&self.biome_at(x, y, true), g, w, s, 10.0) };
             }
         }
         let area1 = cov / 16.0 * (TILE * TILE) as f32 * 0.65;
@@ -1427,7 +1536,9 @@ impl Land {
     /// `rank < density / 2`) and the birds living in them.
     fn make_trees(&mut self, t: usize) {
         let tile = self.tiles[t];
-        let b = *self.biome_def();
+        let b = self.tile_biome(&tile);
+        // A journey's border tile: each tree takes the biome where it stands (dithered).
+        let border = self.params.journey && !tile.uniform;
         let (x0, y0) = (tile.i as f64 * TILE, tile.j as f64 * TILE);
         let mut local = [0usize; LOCAL];
         let nl = self.local_features(x0 + 0.5 * TILE, y0 + 0.5 * TILE, 0.5 * TILE + 20.0, &mut local);
@@ -1435,6 +1546,17 @@ impl Land {
         let p_cell = (2.0 * b.density_ha * (GRID * GRID) as f32 / 10_000.0).min(1.0);
         let n_grid = (TILE / GRID).round() as i64;
         let habitat = self.habitat_at(x0 + 0.5 * TILE, y0 + 0.5 * TILE);
+        // A border tile looks its biomes up on a 10 m grid (the blend there, numeric traits
+        // mixed), each tree then dithers the discrete ones where it stands.
+        const SUB: usize = 4;
+        let mut subs = [(Blend::single(tile.region as u32), b); SUB * SUB];
+        if border {
+            for (k, sub) in subs.iter_mut().enumerate() {
+                let (x, y) = (x0 + ((k / SUB) as f64 + 0.5) * TILE / SUB as f64, y0 + ((k % SUB) as f64 + 0.5) * TILE / SUB as f64);
+                let bl = self.params.blend(x, y, 0.0);
+                *sub = (bl, journey::mix(&bl, bl.dominant()));
+            }
+        }
         let (mut n, mut nb) = (0usize, 0usize);
         for gi in 0..n_grid {
             for gj in 0..n_grid {
@@ -1444,17 +1566,29 @@ impl Land {
                 let y = (aj as f64 + r.uniform() as f64) * GRID;
                 let accept = r.uniform();
                 let (g, w, s) = self.nearest(x, y);
+                let (bt, p_cell, base) = if border {
+                    let sub = |v: f64| ((v / (TILE / SUB as f64)).floor() as usize).min(SUB - 1);
+                    let (bl, mixed) = &subs[sub(x - x0) * SUB + sub(y - y0)];
+                    let mut bt = *mixed;
+                    let d = biome(bl.pick(journey::dither(self.seed, x, y)));
+                    (bt.name, bt.sand) = (d.name, d.sand);
+                    let p = (2.0 * bt.density_ha * (GRID * GRID) as f32 / 10_000.0).min(1.0);
+                    (bt, p, self.cover_in(bl, x, y))
+                } else {
+                    (b, p_cell, -1.0)
+                };
                 // In the desert, trees only ring the oases.
-                let c = if b.sand > 0.5 {
+                let c = if bt.sand > 0.5 {
                     if w > g || s == Surface::Rock { 0.0 } else { 0.5 * smoothstep(9.0, 2.0, self.oasis(x, y)) }
                 } else {
-                    self.base_cover(x, y) * self.terrain_cover(g, w, s, 10.0)
+                    let cover = if border { base } else { self.base_cover(x, y) };
+                    cover * Self::terrain_cover(&bt, g, w, s, 10.0)
                 };
                 if accept >= c * p_cell || n >= TREES_PER_TILE || carved(self, x, y, 1.5) {
                     continue;
                 }
                 // Species: biome weights tilted by local groves; willow and alder by water.
-                let mut wt = b.species;
+                let mut wt = bt.species;
                 for (k, v) in wt.iter_mut().enumerate() {
                     *v *= 0.3 + 1.4 * noise2(self.seed, 0x5EC0 + k as u64, x / 90.0, y / 90.0);
                 }
@@ -1470,8 +1604,8 @@ impl Land {
                 self.trees[t * TREES_PER_TILE + n] = Tree { id, x, y, ground, species: sp as u8, crown_z, crown_r, trunk_r, rank };
                 n += 1;
                 // Birds live in the trees.
-                if r.uniform() < b.birds * 2.0 && nb < BIRDS_PER_TILE {
-                    let species = match director_biome(&b) {
+                if r.uniform() < bt.birds * 2.0 && nb < BIRDS_PER_TILE {
+                    let species = match director_biome(&bt) {
                         // Tree birds of the open biomes from the director's table (gulls and
                         // ravens get their own, in the air, below).
                         Some(name) => {
