@@ -48,9 +48,10 @@ use crate::rng::Rng;
 const R_MIN: f32 = 0.0003;
 /// Individually rendered bubbles per second (the rest goes into the bed).
 const RESOLVED: f32 = 500.0;
-/// Overall level: a pebble brook at 4 m sits ~10 dB under the birds (all regimes keep
+/// Overall level: a pebble brook segment at 1 m is LAeq ≈ 57 dB (mix calibration table), at 4 m
+/// ~10 dB under the birds (all regimes keep
 /// their physical ratios).
-const WATER_LEVEL: f32 = 0.03;
+const WATER_LEVEL: f32 = 0.048;
 /// Discrete events (laps, drips, trickle, snag gulps) keep their own calibration.
 const EVENT_LEVEL: f32 = 0.2 / WATER_LEVEL;
 
@@ -226,7 +227,7 @@ fn bubble_amp(r: f32) -> f32 {
 
 fn bubble_energy(r: f32, sr: f32) -> f32 {
     let a = bubble_amp(r);
-    a * a * 0.25 * sr / bubble_damping(minnaert_hz(r))
+    a * a * 0.25 * sr / (bubble_damping(minnaert_hz(r)) * surface_damping(r))
 }
 
 /// One breaking wave: plunge, swash up the beach, backwash.
@@ -404,8 +405,8 @@ impl Babble {
             g += self.level[k];
             w += self.level[k] * self.size[k];
         }
-        // Mean of a log-normal with σ = 1.1 is e^0.6 ≈ 1.83: normalise to 1.
-        let raw = g / (3.0 * 1.83);
+        // Mean of the clamped log-normal (σ = 1.1, clamped to e^-2.5..e^2) is ≈ 1.655: normalise to 1.
+        let raw = g / (3.0 * 1.655);
         self.gate = 1.0 + (raw - 1.0) * depth;
         // The spot surging hardest sets the bubble sizes a little (a deeper gurgle).
         self.grow = 1.0 + (w / g.max(1e-3) - mean_size) * depth;
@@ -608,11 +609,17 @@ impl Water {
             } else {
                 power_draw(self.law.a, self.law.r1, P_LARGE, (q - self.law.share_small) / (1.0 - self.law.share_small))
             };
-            let e = bubble_energy(r, sr);
-            e_sum += e;
-            lf_sum += e * minnaert_hz(r).ln();
+            // With the same log-normal size jitter the rendered bubbles get (3-point
+            // Gauss–Hermite in log r): with surface damping the energy is far from linear in r.
+            for (w, z) in [(1.0 / 6.0, -1.732f32), (2.0 / 3.0, 0.0), (1.0 / 6.0, 1.732)] {
+                let rj = r * (0.2 * z).exp();
+                let e = bubble_energy(rj, sr) * w;
+                e_sum += e;
+                lf_sum += e * minnaert_hz(rj).ln();
+            }
         }
-        let e_mean = e_sum / 12.0;
+        // Rendered bubbles carry amp × 0.6 × e^{0.5·N(0,1)}: E[(0.6·e^{0.5g})²] = 0.36·e^{0.5}.
+        let e_mean = e_sum / 12.0 * 0.36 * 0.5f32.exp();
         let fc = (lf_sum / e_sum.max(1e-12)).exp().clamp(300.0, 8000.0);
         // A bubble's band-limited energy, rendered as noise: unit-noise energy = amp²·τ/2.
         // Split over two bands around the population's spectral centre.

@@ -45,6 +45,9 @@
       "behaviour": { "type": "circle", "center": [4.0, 0.0, -1.7], "radius": 6, "height": 3.0, "first": 60, "interval": [60, 150] } },
     { "kind": "bird", "id": 110, "species": "blackbird",   "behaviour": { "type": "resident", "home": 3 } },
     { "kind": "bird", "id": 111, "species": "blackbird",   "behaviour": { "type": "resident", "home": 8, "roam": 0.8 } },
-    { "kind": "bird", "id": 112, "species": "robin",       "behaviour": { "type": "resident", "home": 7, "roam": 0.7 } }
+    { "kind": "bird", "id": 112, "species": "robin",       "behaviour": { "type": "resident", "home": 7, "roam": 0.7 } },
+
+    { "kind": "source", "id": 403, "position": [ 5.5, -9.0, -1.4], "sound": { "model": "insects", "preset": "common_frogs", "params": { "count": 3 } } },
+    { "kind": "source", "id": 404, "position": [ 13.2, -15.2, 3.5], "sound": { "model": "insects", "preset": "woodpecker" } }
   ]
 }

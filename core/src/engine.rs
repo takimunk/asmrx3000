@@ -1275,7 +1275,7 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 46);
+        assert_eq!(engine.sources(&mut src), 48);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
@@ -1318,7 +1318,7 @@ mod tests {
         assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
         let mut objs = [ObjectInfo::default(); 64];
         let n = engine.objects(&mut objs);
-        assert_eq!(n, 34);
+        assert_eq!(n, 36);
         let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
         assert_eq!(tree.kind, ObjectKind::Tree as u32);
         assert_ne!(tree.flags & object_flags::MOVABLE, 0);

@@ -219,7 +219,7 @@ fn controls_and_toggle() {
     // Scene objects until flight mode is on, streamed ones after the cross-fade.
     let mut objs = [ObjectInfo::default(); 512];
     let scene = e.objects(&mut objs);
-    assert_eq!(scene, 34);
+    assert_eq!(scene, 36);
     e.set_param(param::FLIGHT, 1.0);
     run(&e, 2.0);
     assert_eq!(e.telemetry(telemetry::FLIGHT), 1.0);
