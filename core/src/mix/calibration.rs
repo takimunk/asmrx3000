@@ -199,7 +199,7 @@ pub static THUNDER: Entry = Entry {
     class: C::Thunder,
     metric: LaFmaxScene,
     target_db: 80.0,
-    raw_db: 83.1,
+    raw_db: 74.7,
     post: crate::director::THUNDER_PROXY_M,
     condition: "storm 1, loudest clap in 4 min (strikes ~0.3–2 km)",
     source: "thunder 0.3–3 km: 80–110 dB peak, ~75–95 dB(A) Fmax (Few 1969; Bass 1980)",

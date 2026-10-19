@@ -139,14 +139,15 @@ Before the tuning (for the record):
 * `on_leaves` 0.67 and `under_canopy` 0.85: good. `under_canopy` is too bright (centroid 3.6 kHz vs 1.8 kHz, 2.5-6 kHz
   +6-8 dB) and has `ampeak` 44 Hz vs 4 Hz; `on_leaves` lacks 1-1.3 kHz (-7 to -10 dB). Only 3 references.
 
-**Thunder**
-* Close (1.5 km), `close_strike` / `storm` 1.2-1.3: too boomy and no crack. 50-100 Hz are 8 dB too strong and
-  everything above 400 Hz is too weak, growing to 10 dB by 1-2 kHz (`band_1270` -29 vs -19 dB): centroid 150 Hz vs
-  294 Hz (p90 207 vs 529 Hz), dominant 100 Hz vs 184 Hz. Add the sharp N-wave crack at 1-4 kHz.
-  Level spread of ours matches; 0.1-1 Hz modulation +8 dB too deep (single rolling swell without the second/third
-  sub-strokes recorded).
-* Distant (8 km), 1.2: good spectrum (0.6-0.7), but 400-1000 Hz 4-6 dB too weak, and tails too short (-20 dB decay
-  2.3 s vs 8 s median), attack 1.8 s vs 7 s: real distant rolls last longer and swell slowly.
+**Thunder** (after the physical rework of the crack and the rolls, `docs/physical-models.md` thunder section; 3 seeds x 150 s)
+* Close: no longer boomy. 0.7 km matches the close references in spectrum (63 Hz -19.8 vs -17.4, 400 Hz -11.2 vs -10.7,
+  1 kHz -16.9 vs -16.0, 2.5 kHz -25.1 vs -27.9; dominant 223 vs 184 Hz; centroid 245 vs 294 Hz), distance 1.24 -> 1.13.
+  At 1.5 km 1-2.5 kHz stay 5-6 dB under the references: ISO 9613-1 absorption over 1.5 km (the recordings are probably
+  closer than ~1 km). Previously 50-100 Hz +8 dB, above 400 Hz up to -10 dB (energy-weighted N-waves twice too long).
+* Distant (8 km): rolls 10-20 s (was ~5 s), decay to -20 dB 5.8 s (was 2.7; references 8.0 median, 3-10 s in the clean
+  ones), attack 2.4 s (1.5; references 7.2 inflated by multi-flash files and the rain floor). Above ~500 Hz darker than
+  the references by ISO 9613-1 physics; the distant references look like 3-5 km (3 km render matches 300-600 Hz) and have
+  rain above 2 kHz. Distance 1.23 -> 1.15.
 * The interval-regularity feature (`ioi_cv` 5-7 vs 0.8) is meaningless for thunder (our isolated strikes against
   rumble in recordings).
 
