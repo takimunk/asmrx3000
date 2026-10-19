@@ -560,6 +560,7 @@ impl Acoustics {
         self.complete_world_bus(bus, len);
         self.rotate_to_head(bus, head, len);
         self.decode_binaural(bus, len, left, right);
+        crate::profile::lap(crate::profile::Section::Decode);
         self.block = self.block.wrapping_add(1);
     }
 
@@ -573,11 +574,14 @@ impl Acoustics {
             self.rotate_to_head(bus, h, len);
         }
         self.bed.decode(bus, len, out);
+        crate::profile::lap(crate::profile::Section::Decode);
         self.block = self.block.wrapping_add(1);
     }
 
     /// Path filters (batched), near field, encode, reverb: the full world-frame bus.
     fn complete_world_bus(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], len: usize) {
+        use crate::profile::{lap, Section};
+        crate::profile::census(self.staged.iter().filter(|s| **s).count(), self.props.len());
         // Path filters for all emitters, four paths per SIMD group, then near field + encode.
         for (id, staged) in self.staged.iter().enumerate() {
             if !*staged {
@@ -597,15 +601,18 @@ impl Acoustics {
             };
             self.bank.process_group(g, len, ramps);
         }
+        lap(Section::PathFilters);
         for (id, p) in self.props.iter_mut().enumerate() {
             p.finish(&self.ctx, &self.bank, 2 * id, bus, &mut self.scratch);
             self.staged[id] = false;
         }
+        lap(Section::Encode);
 
         if self.ctx.features.reverb || self.ctx.features.early_reflections {
             self.reverb.render(&self.sends, bus, len);
         }
         self.sends.clear(len);
+        lap(Section::Reverb);
 
     }
 
@@ -614,6 +621,7 @@ impl Acoustics {
         let world_to_head = Mat3 { m: [[m[0][0], m[1][0], m[2][0]], [m[0][1], m[1][1], m[2][1]], [m[0][2], m[1][2], m[2][2]]] };
         let rot = self.rotator.matrix(&world_to_head);
         self.rotator.apply(bus, len, rot);
+        crate::profile::lap(crate::profile::Section::Rotate);
 
     }
 
