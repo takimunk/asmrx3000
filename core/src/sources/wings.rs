@@ -45,13 +45,21 @@ pub enum WingStyle {
     Lark,
 }
 
-/// How a style beats: nominal rate, level at 1 m, spectral centre of the pushed air, period
-/// jitter (σ of log period), force jitter (σ of log amplitude), feather hiss share, and the
-/// mean number of beats per self-driven bout (0 = flaps continuously).
+/// How a style beats: nominal rate, level at 1 m, spectral centre of the pushed air, the
+/// low "thump" of the downstroke (centre and share), period jitter (σ of log period), force
+/// jitter (σ of log amplitude), feather hiss share, and the mean number of beats per
+/// self-driven bout (0 = flaps continuously).
+///
+/// Recordings of close wingbeats have their energy at 200..1000 Hz (centroid 0.5..1 kHz): the
+/// downstroke is a pressure pulse of air, a thump of tens to a few hundred Hz, with a broad
+/// body around the wing's chord frequency; the feathers' rustle above 2 kHz is 15..20 dB
+/// weaker. Only a pigeon's clap is sharp.
 struct Style {
     rate: (f32, f32),
     gain: f32,
     fc: f32,
+    thump_fc: f32,
+    thump: f32,
     period_jitter: f32,
     force_jitter: f32,
     feathers: f32,
@@ -60,12 +68,12 @@ struct Style {
 
 fn style(s: WingStyle) -> Style {
     match s {
-        WingStyle::Passerine => Style { rate: (14.0, 18.0), gain: 0.15, fc: 1700.0, period_jitter: 0.07, force_jitter: 0.35, feathers: 0.45, bout: 3.0 },
-        WingStyle::Pigeon => Style { rate: (6.0, 8.0), gain: 0.55, fc: 1050.0, period_jitter: 0.09, force_jitter: 0.3, feathers: 0.6, bout: 0.0 },
-        WingStyle::Owl => Style { rate: (4.0, 4.0), gain: 0.0, fc: 600.0, period_jitter: 0.1, force_jitter: 0.3, feathers: 0.0, bout: 0.0 },
-        WingStyle::Swallow => Style { rate: (8.0, 10.0), gain: 0.07, fc: 2100.0, period_jitter: 0.1, force_jitter: 0.4, feathers: 0.5, bout: 4.0 },
-        WingStyle::Large => Style { rate: (2.8, 3.6), gain: 0.38, fc: 620.0, period_jitter: 0.06, force_jitter: 0.25, feathers: 0.35, bout: 0.0 },
-        WingStyle::Lark => Style { rate: (20.0, 24.0), gain: 0.06, fc: 2500.0, period_jitter: 0.08, force_jitter: 0.35, feathers: 0.5, bout: 0.0 },
+        WingStyle::Passerine => Style { rate: (14.0, 18.0), gain: 0.15, fc: 1250.0, thump_fc: 170.0, thump: 1.0, period_jitter: 0.07, force_jitter: 0.35, feathers: 0.3, bout: 4.0 },
+        WingStyle::Pigeon => Style { rate: (6.0, 8.0), gain: 0.55, fc: 950.0, thump_fc: 130.0, thump: 1.5, period_jitter: 0.09, force_jitter: 0.3, feathers: 0.3, bout: 0.0 },
+        WingStyle::Owl => Style { rate: (4.0, 4.0), gain: 0.0, fc: 400.0, thump_fc: 100.0, thump: 0.0, period_jitter: 0.1, force_jitter: 0.3, feathers: 0.0, bout: 0.0 },
+        WingStyle::Swallow => Style { rate: (8.0, 10.0), gain: 0.07, fc: 1350.0, thump_fc: 180.0, thump: 0.8, period_jitter: 0.1, force_jitter: 0.4, feathers: 0.3, bout: 5.0 },
+        WingStyle::Large => Style { rate: (2.8, 3.6), gain: 0.38, fc: 750.0, thump_fc: 100.0, thump: 1.8, period_jitter: 0.06, force_jitter: 0.25, feathers: 0.2, bout: 0.0 },
+        WingStyle::Lark => Style { rate: (20.0, 24.0), gain: 0.06, fc: 1450.0, thump_fc: 190.0, thump: 0.7, period_jitter: 0.08, force_jitter: 0.35, feathers: 0.3, bout: 0.0 },
     }
 }
 
@@ -76,11 +84,14 @@ pub struct Wings {
     rate: f32,
     gain: f32,
     fc: f32,
+    thump_fc: f32,
+    thump: f32,
     period_jitter: f32,
     force_jitter: f32,
     feathers: f32,
     bout_mean: f32,
-    /// The air pushed by the wing, and the feathers' hiss.
+    /// The thump of the downstroke, the air pushed by the wing, and the feathers' hiss.
+    thumper: Svf,
     body: Svf,
     feather: Svf,
     flap: f32,
@@ -88,6 +99,9 @@ pub struct Wings {
     phase: f32,
     inc: f32,
     force: f32,
+    bn: f32,
+    tn: f32,
+    hn: f32,
     down: f32,
     beating: bool,
     /// Feather flutter: low-passed noise modulating the hiss.
@@ -113,16 +127,22 @@ impl Wings {
             rate,
             gain: s.gain,
             fc,
+            thump_fc: s.thump_fc * rng.range(0.85, 1.2),
+            thump: s.thump,
             period_jitter: s.period_jitter,
             force_jitter: s.force_jitter,
             feathers: s.feathers,
             bout_mean: s.bout,
             body: Svf::new(fc, 0.8, sample_rate),
-            feather: Svf::new((fc * 2.6).min(0.4 * sample_rate), 1.2, sample_rate),
+            feather: Svf::new((fc * 4.0).min(0.4 * sample_rate), 1.2, sample_rate),
+            thumper: Svf::new(s.thump_fc, 0.7, sample_rate),
             flap: 0.0,
             phase: 0.0,
             inc: 0.0,
             force: 0.0,
+            bn: 1.0,
+            tn: 1.0,
+            hn: 1.0,
             down: 0.5,
             beating: false,
             flutter: 0.0,
@@ -148,14 +168,14 @@ impl Wings {
         if !driven && self.bout_mean > 0.0 && self.flap < 0.8 {
             if self.beats_left == 0 {
                 if self.beating || self.nth > 0 {
-                    self.glide = rng.range(0.08, 0.2) + rng.range(0.0, 0.45) * (1.0 - self.flap);
+                    self.glide = rng.range(0.08, 0.18) + rng.range(0.0, 0.3) * (1.0 - self.flap);
                     self.beating = false;
                     self.nth = 0;
                 }
-                // Geometric number of beats around the style's mean: often 1..4, now and then 8.
+                // Geometric number of beats around the style's mean: runs of a few beats, now and then ten.
                 let p = 1.0 / self.bout_mean;
                 let mut n = 1;
-                while n < 10 && rng.uniform() > p {
+                while n < 14 && rng.uniform() > p {
                     n += 1;
                 }
                 self.beats_left = n;
@@ -175,7 +195,14 @@ impl Wings {
         let fc = self.fc * self.force.powf(0.35) * (0.15 * rng.gauss()).exp();
         let nyq = 0.42 * self.sample_rate;
         self.body.set(fc.clamp(150.0, nyq), rng.range(0.6, 1.1), self.sample_rate);
-        self.feather.set((fc * rng.range(2.2, 3.2)).clamp(800.0, nyq), rng.range(0.9, 1.6), self.sample_rate);
+        self.feather.set((fc * rng.range(3.0, 5.0)).clamp(1200.0, nyq), rng.range(0.9, 1.6), self.sample_rate);
+        let tfc = self.thump_fc * self.force.powf(0.2) * (0.12 * rng.gauss()).exp();
+        self.thumper.set(tfc, rng.range(0.6, 0.9), self.sample_rate);
+        // Equal turbulence power per Hz whatever the centre: the filters' bandwidth grows with
+        // their centre, so normalise to a 1 kHz reference.
+        self.bn = (1000.0 / fc.clamp(150.0, nyq)).sqrt();
+        self.tn = (1000.0 / tfc).sqrt();
+        self.hn = (1000.0 / (fc * 3.5).clamp(1200.0, nyq)).sqrt();
         self.down = rng.range(0.42, 0.6);
         self.beating = true;
         self.nth += 1;
@@ -241,26 +268,31 @@ impl Wings {
                 if large {
                     0.15 + s
                 } else {
-                    s * s.sqrt()
+                    s
                 }
             } else {
                 let s = (PI * (p - d) / (1.0 - d)).sin();
                 if large {
                     0.15 + 0.35 * s
                 } else {
-                    0.12 * s
+                    0.4 * s
                 }
             };
-            let (_, bp, _) = self.body.process(self.rng.bipolar());
+            let (bp, _, _) = self.body.process(self.rng.bipolar());
+            let (thump, _, _) = self.thumper.process(self.rng.bipolar());
             self.flutter += (self.rng.bipolar() - self.flutter) * self.flutter_coef;
             let (_, fb, _) = self.feather.process(self.rng.bipolar());
-            let hiss = fb * self.feathers * (1.0 + 2.5 * self.flutter).max(0.0);
+            let hiss = fb * self.feathers * self.hn * (1.0 + 2.5 * self.flutter).max(0.0);
             let click = self.clap * self.rng.bipolar();
             self.clap *= clap_decay;
-            *o = amp * (self.force * env * (bp * 2.0 + hiss) + click * 0.5);
+            // The thump is the pressure pulse itself (smooth, one lobe); the body and the hiss
+            // are turbulence on top of it.
+            let push = self.thump * self.tn * thump * env.sqrt();
+            *o = amp * (self.force * env * (bp * 2.0 * self.bn + hiss) + self.force * push + click * 0.5);
         }
         self.body.flush();
         self.feather.flush();
+        self.thumper.flush();
     }
 }
 

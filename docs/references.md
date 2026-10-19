@@ -121,16 +121,19 @@ still_lake 2.5, woodpecker 2.35, lake_lapping 2.0, slow_river 2.1.
 * The interval-regularity feature (`ioi_cv` 5-7 vs 0.8) is meaningless for thunder (our isolated strikes against
   rumble in recordings).
 
-**Wings**
-* All wing styles (rendered in isolation) are much brighter than recordings: centroid 2.4-3.8 kHz vs 0.5-0.6 kHz,
-  2-8 kHz +10-20 dB, 125-250 Hz 12-20 dB too weak, flatness -5 dB vs -15 to -23 dB (hiss instead of the thump/clap), and
-  tonality 4-5 dB lower. Recordings have most energy at 200-1000 Hz. (References contain ambient low-frequency rumble.)
-* `wood_pigeon` wings: pause/flight structure leaves long silences: `ioi_cv` 2.4 vs 0.84.
-* Small birds (chaffinch, robin, swallow): beat rate dominant envelope modulation 15 Hz vs 4.6 Hz in the recordings
-  (the recordings are short take-off bursts, so the comparison is only indicative), events 20 ms vs 50 ms (flaps
-  too short), `ioi_cv` 2.2-2.8 vs 0.84.
-* Large birds (gull/raven): onsets 0.8/s vs 5.3/s (references are mostly flocks/ cormorant nests: many more
-  wingbeats), event length 140 vs 75 ms; HF +10 dB.
+**Wings** (after the thump/low-body rewrite of `sources/wings.rs`)
+* Was: every style far too bright (centroid 2.4-3.8 kHz vs 0.5-0.6 kHz, 2-8 kHz +10-20 dB, flatness -5 dB: hiss
+  instead of the air thump). Now each beat is a low "thump" (pressure pulse of the downstroke, 100-190 Hz), a broad
+  low-passed body (0.75-1.45 kHz corner) and a weak feather rustle (3-5 x the body corner, 20-30 % share). Clean
+  recordings (e.g. fs543110, fs479605, fs717900) have their energy at 250 Hz-2 kHz and fall 5-8 dB per octave above.
+* Distance (pause=3 harness): wood_pigeon 1.45 -> 1.01, chaffinch 1.58 -> 0.81, robin 1.62 -> 0.74, swallow 1.35 -> 0.72,
+  gull/raven 1.51 -> 1.35. Centroid 2418/3251/3193/3824/1526 Hz -> 524/838/792/919/383 Hz (refs 465-622 Hz); flatness
+  -6.6/-5.3/-5.4/-4.7/-9.0 dB -> -17.7/-14.7/-15.0/-14.0/-21.7 dB (refs -14.7 to -23); `event_ms` small birds 20 -> 40-50
+  (the upstroke whisper now carries to the next beat), pigeon 60 -> 50.
+* Remaining: `ioi_cv` 2.1-2.6 vs 0.84 comes from the harness (`pause=3` silences) and the flight patterns in
+  `director/species.rs`, not from the beat model (with `pause=0.5`: chaffinch 1.0, robin 0.8, swallow 1.2, pigeon 1.6,
+  gull 1.7). Gull/raven onsets 1.1/s vs 5.3/s (references are flocks / cormorant nests with many birds); the 126 Hz
+  band is still high against most references (their <150 Hz is mic rumble, the cleanest ones are as high as ours).
 
 **Frogs and woodpecker** (hour 23 / 8, 18 degrees C)
 * `common_frogs` 1.0: onsets 18/s vs 4.7/s, pulses 10 ms vs 60 ms (clicks, not purrs), flatness -28 dB vs -18 dB
