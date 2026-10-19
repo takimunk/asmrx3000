@@ -877,6 +877,56 @@ fn unwrap_patch(root: Value) -> Value {
 /// `{"ok", "applied": [{"key", "value" | "reset", "clamped"?, "from"?}], "switched": {..},
 ///   "moved": [ids], "errors": [..], "errors_ru": [..], "undo": <patch>}`.
 /// Valid entries are applied even when others are rejected.
+/// How much louder a group gets when its physical macro goes from `from` to `to`, dB:
+/// water ∝ Q^~0.65 in level (measured on the brook, WATER 0.6 → 1.0 is +5.2 dB), rain ∝ the
+/// drop count (power ∝ rate), wind and leaves ∝ U^~4.5 in power (dipole shedding with
+/// reconfiguring foliage).
+fn loudness_rise_db(key: &str, from: f32, to: f32) -> Option<f32> {
+    Some(match key {
+        "water.flow" => 23.0 * ((to.max(0.05)) / from.max(0.05)).log10(),
+        "rain.rate" => 10.0 * ((to.max(0.0) + 0.3) / (from.max(0.0) + 0.3)).log10(),
+        "wind.speed" => 45.0 * ((to.max(0.0) + 1.0) / (from.max(0.0) + 1.0)).log10(),
+        _ => return None,
+    })
+}
+
+/// Keeps the scene balanced when a patch makes one group much louder by its physics (a
+/// swollen river, a downpour, a gale): that group's loudness (`<group>.level`, the ЗВУК
+/// faders) comes back by half the rise, at most 6 dB, so it is clearly louder but does not
+/// bury the rest. Skipped for a group whose level the patch sets itself (an explicit
+/// "louder / quieter …", or a model that balanced on its own). Returns the trims added.
+fn balance(list: &mut Vec<Change>, before: &[f32]) -> Vec<(usize, f32)> {
+    let mut trims: Vec<(usize, f32)> = Vec::new();
+    for k in 0..list.len() {
+        let (i, glide) = (list[k].i, list[k].glide);
+        let m = controls::meta(i);
+        let b = before[i];
+        let to = match list[k].op {
+            Op::Abs(x) => x,
+            Op::Add(x) => b + x,
+            Op::Mul(x) => b * x,
+            Op::Reset => continue,
+        }
+        .clamp(m.min, m.max);
+        let Some(rise) = loudness_rise_db(m.key, b, to) else { continue };
+        if rise <= 3.0 {
+            continue;
+        }
+        // Wind is heard in the wind sources and in the leaves.
+        let groups: &[&str] = if m.key == "wind.speed" { &["wind", "foliage"] } else { &[m.key.split('.').next().unwrap_or("")] };
+        for g in groups {
+            let Some(l) = controls::index_of_key(&format!("{g}.level")) else { continue };
+            if list.iter().any(|c| c.i == l) || trims.iter().any(|t| t.0 == l) {
+                continue;
+            }
+            let trim = -(0.5 * rise).min(6.0);
+            trims.push((l, trim));
+            list.push(Change { i: l, op: Op::Add(trim), glide });
+        }
+    }
+    trims
+}
+
 pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
     let mut errs = Errs::default();
     let Some(root) = extract_json(patch) else {
@@ -979,6 +1029,7 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
     // Undo restores what is there now.
     v.glides.tick_locked(v.bank, v.params);
     let before = v.values();
+    let balanced = balance(&mut list, &before);
     let mut undo = Vec::new();
     for c in &list {
         let m = controls::meta(c.i);
@@ -1102,6 +1153,10 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
     }
     if !notes.is_empty() {
         out["notes"] = json!(notes);
+    }
+    if !balanced.is_empty() {
+        // The trims the balance added (also in `applied` and `undo`), for the user's line.
+        out["balanced"] = json!(balanced.iter().map(|(i, db)| json!({"key": controls::meta(*i).key, "db": r3(*db)})).collect::<Vec<_>>());
     }
     (out.to_string(), params)
 }
@@ -1654,8 +1709,14 @@ character (storm, night, dawn chorus), set a fitting focus too (storm: rain +0.5
 Leave mix.loudness and mix.dynamics alone unless asked about overall level or calm. The sound \
 director does the real-time levelling itself. \"Less noise / hiss / mush\" → lower mix.texture_budget \
 (0.1–0.2); \"listen where I look\" → mix.front_focus 0.8; \"stay with the brook\", \"meditative\" → \
-mix.refocus 0.8–1; more or less depth → mix.distance. <group>.level (dB) are plain faders: only for \
-explicit \"quieter/louder/mute the …\" about one group.
+mix.refocus 0.8–1; more or less depth → mix.distance.
+- BALANCE. Every change leaves a balanced scene: no group masks all the others, and what the request \
+is about is clearly heard. The engine already pulls back a group your physical change makes much \
+louder (a swollen river, a downpour, a gale: its `<group>.level` comes back by half the rise, ≤ 6 dB) \
+unless your patch sets that level itself. You add what it cannot know: lift by 3–6 dB what the request \
+brings forward when it would be buried (birds in a storm, frogs at a loud river). \"Scene now\" says what is loudest. An \
+explicit \"quieter/louder/mute the …\" about one group sets its level as asked; levels already moved \
+stay unless the new request changes the balance.
 - Questions about the scene (\"что вокруг?\", \"где птицы?\", \"what is that sound?\") change nothing: \
 answer in `explanation`, in the user's language, from \"Scene now\" (up to ~200 characters, plain \
 prose, directions relative to the head).
@@ -1725,7 +1786,8 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 «гроза» →
 {{\"explanation\":\"Гроза: ливень, порывистый ветер, гром рядом.\",\"glide_s\":8,\"changes\":[\
 {{\"key\":\"rain.rate\",\"value\":25}},{{\"key\":\"rain.storm\",\"value\":0.8}},{{\"key\":\"wind.speed\",\"value\":11}},\
-{{\"key\":\"wind.gustiness\",\"value\":1.5}},{{\"key\":\"birds.activity\",\"value\":0.1}},{{\"key\":\"mix.focus.rain\",\"value\":0.5}}]}}
+{{\"key\":\"wind.gustiness\",\"value\":1.5}},{{\"key\":\"birds.activity\",\"value\":0.1}},{{\"key\":\"mix.focus.rain\",\"value\":0.5}},\
+{storm_wind}]}}
 
 «ночь, лёгкий дождь стихает» →
 {{\"explanation\":\"Ночь, редкий дождь медленно стихает.\",\"glide_s\":30,\"changes\":[\
@@ -1735,7 +1797,11 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 «как будто у водопада» →
 {{\"explanation\":\"Рядом шумит небольшой водопад.\",\"changes\":[\
 {{\"key\":\"water.regime\",\"value\":\"small_waterfall\"}},{{\"key\":\"water.flow\",\"value\":0.9}},\
-{{\"key\":\"water.aeration\",\"value\":1.3}}]}}
+{{\"key\":\"water.aeration\",\"value\":1.3}},{falls_birds}]}}
+
+«река разлилась» →
+{{\"explanation\":\"Река полноводная, но не заглушает остальное.\",\"glide_s\":10,\"changes\":[\
+{{\"key\":\"water.flow\",\"value\":1}},{flood_water}]}}
 
 «полетели» →
 {{\"explanation\":\"Летим над лесом.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"on\"}},\
@@ -1791,6 +1857,9 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 {{\"explanation\":\"I can only change the sound scene: water, weather, time, birds, flight.\",\"changes\":[]}}",
         quieter = level_change("water", -8.0),
         louder = level_change("water", 6.0),
+        storm_wind = level_change("wind", -3.0),
+        falls_birds = level_change("birds", 4.0),
+        flood_water = level_change("water", -4.0),
     )
 }
 
@@ -2009,7 +2078,9 @@ mod tests {
         assert_eq!(e.control(id::RAIN_RATE), 100.0);
         assert_eq!(e.control(id::WATER_REGIME), 6.0);
         let applied = r["applied"].as_array().unwrap();
-        assert_eq!(applied.len(), 3);
+        // The three asked for, plus the balance trim of the downpour (rain.level).
+        assert_eq!(applied.len(), 4);
+        assert_eq!(r["balanced"][0]["key"], "rain.level");
         assert!(applied.iter().any(|a| a["key"] == "rain.rate" && a["clamped"] == true));
         assert!(applied.iter().any(|a| a["value"] == "rapids"));
     }
@@ -2343,5 +2414,26 @@ mod tests {
         }
         assert!(sys.contains("LOUDNESS vs PHYSICS"));
         assert!(sys.contains("- flight.on"));
+    }
+
+    #[test]
+    fn patches_keep_the_scene_balanced() {
+        let e = crate::Engine::new(48_000.0);
+        let get = |k: &str| e.control(crate::controls::meta(crate::controls::index_of_key(k).unwrap()).id);
+        let apply = |p: &str| -> Value { serde_json::from_str(&e.apply_patch_json(p)).unwrap() };
+        // A swollen river comes back a little in the mix; the rest is untouched.
+        let r = apply(r#"{"glide_s":0,"changes":[{"key":"water.flow","value":1.0}]}"#);
+        let w = get("water.level");
+        assert!((-4.0..-1.0).contains(&w), "water.level {w}: {r}");
+        assert_eq!(r["balanced"][0]["key"], "water.level");
+        assert_eq!(get("birds.level"), 0.0);
+        // A gale trims wind and leaves (at most 6 dB); an explicit level is respected.
+        apply(r#"{"glide_s":0,"changes":[{"key":"wind.speed","value":16},{"key":"foliage.level","value":2}]}"#);
+        assert!((-6.01..-3.0).contains(&get("wind.level")), "wind {}", get("wind.level"));
+        assert_eq!(get("foliage.level"), 2.0);
+        // Quieter physics is not compensated; undo restores the faders.
+        let r = apply(r#"{"glide_s":0,"changes":[{"key":"rain.rate","value":0}]}"#);
+        assert!(r.get("balanced").is_none());
+        assert_eq!(get("rain.level"), 0.0);
     }
 }

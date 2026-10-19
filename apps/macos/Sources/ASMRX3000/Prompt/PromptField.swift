@@ -127,7 +127,13 @@ final class PromptController: ObservableObject {
             if applied == 0 {
                 return errors.isEmpty ? .hint("Ничего не изменилось.") : .failed(PromptError.rejected(errors).errorDescription ?? "")
             }
-            let said = reply.explanation.isEmpty ? "Готово." : reply.explanation
+            var said = reply.explanation.isEmpty ? "Готово." : reply.explanation
+            // The core's balance pulled back a group the change made much louder.
+            let names = ["water": "реку", "rain": "дождь", "wind": "ветер", "foliage": "листву"]
+            let pulled = (result["balanced"] as? [[String: Any]] ?? []).compactMap { ($0["key"] as? String)?.split(separator: ".").first.map(String.init) }.compactMap { names[$0] }
+            if !pulled.isEmpty {
+                said += " Баланс: чуть отвёл " + pulled.joined(separator: " и ") + "."
+            }
             return errors.isEmpty ? .said(said) : .said(said + " Не вышло: " + errors[0] + ".")
         }
     }
