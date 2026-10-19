@@ -103,6 +103,11 @@ still_lake 2.5, woodpecker 2.35, lake_lapping 2.0, slow_river 2.1.
   weak, 2-8 kHz 15-35 dB too strong, a tonal peak at 540 Hz (10-12 dB above its neighbours vs 1.7 dB in recordings:
   audible "whistling pitch"), flatness -5 dB vs -23 dB (too hissy), 0.1-1 Hz AM 12-15 dB too deep. Foliage should
   carry rustle on top of a wind bed, not stand in for the wind.
+  *Addressed:* the foliage model now has the crown's aeolian roar (twig/branch shedding), broad low leaf
+  slaps, canopy sweeps and creak only above 8 m/s. Against `wind_canopy` (wind_trees without the contact-mic
+  oak `fs261005`, plus 6 close wind-in-leaves recordings in `wind_leaves`) birch/oak/aspen/spruce go from
+  1.6-2.5 to 0.66-0.77, against `wind_trees` from 2.0-2.8 to 1.2-1.3; grass vs `wind_open` 1.9 -> 1.1
+  (see docs/physical-models.md, Листва).
 * `foliage grass` / `dune_sand` as wind over open land: `grass` centroid 7.2 kHz vs 1.5 kHz and nothing below 500 Hz
   (-30 dB); `dune_sand` dominant peak 2.75 kHz.
 

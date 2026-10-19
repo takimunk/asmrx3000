@@ -1,9 +1,27 @@
 //! Foliage: the sound of a tree crown, a grass patch or a reed bed in the wind and rain.
 //!
+//! A crown in the wind is a broad roar with its body in the low mids (≈ 100 Hz – 1 kHz) and
+//! the leaf rustle on top, falling ~3 dB/octave above 1–2 kHz — not a bright hiss (field
+//! recordings, `docs/references.md`; Fégeant 1999).
+//!
+//! * **Crown roar** (the body): aeolian vortex shedding from the woody skeleton. Limbs, branches,
+//!   twigs, shoots and petioles from 4 cm down to 1.2 mm each shed at St·U/d (St 0.2), from
+//!   ~20 Hz to ~800 Hz at 6 m/s. Six diameter classes, broad bands (Q 1.2: 30–50 % turbulence
+//!   in a crown, a spread of diameters and angles), class power ∝ (d/d_max)^0.3 (between
+//!   coherent shedding, ∝ d, and shedding limited by the inflow turbulence scale, ≈ const;
+//!   the exponent is fitted to recordings). Intensity ∝ U⁵ (U⁶ for a coherent dipole, less in
+//!   a crown); above ~15 m/s the crown streamlines (Vogel reconfiguration). Bare winter
+//!   crowns roar too. Grass and reeds use the same mechanism for their stems (blade to 6×
+//!   blade diameter), weakly.
+//! * **Canopy sweeps** (Finnigan 2000): coherent gusts of canopy turbulence break into the
+//!   crown with a sharp front and die away in ~0.5 s, at a rate U/(4·h); they speed the local
+//!   flow up by ~10 % in a crown and ~35 % in low grass (honami), so the rustle comes in
+//!   flurries. Each part of the crown meets the front at its own moment.
 //! * **Broad leaves** flutter at f ≈ St_leaf·U/c (c = leaf chord, St_leaf ≈ 0.12) once the
 //!   wind exceeds a species-specific onset; neighbouring leaves collide, and each collision
 //!   is a short noise burst whose band and length follow leaf size and state: fresh leaves
-//!   swish (soft, 2–4 kHz), dry autumn leaves are stiff and crackle (bright, short,
+//!   slap and swish softly (a broad band around 0.8 kHz·(6 cm/c)^0.4: a lamina radiating up to
+//!   ka ≈ 1), dry autumn leaves are stiff and crackle (bright, short,
 //!   multi-click), wet leaves are heavy and stick together (fewer, duller, longer taps).
 //!   Collision rate ∝ leaf count × flutter frequency × engagement(U); collision speed ∝ U.
 //!   Aspen's flattened petioles make it flutter in the faintest breeze, in coherent groups,
@@ -11,12 +29,14 @@
 //! * **Needles** do not collide; a conifer "sighs" by aeolian shedding from a cloud of
 //!   needles, each at St·U/d (d ≈ 1–2 mm): a soft hiss centred around 0.2·U/d that rises
 //!   with the wind (≈ 800 Hz at 5 m/s for spruce).
-//! * **Grass** is blade-on-blade friction: a high, dense hiss modulated by the waves gusts
+//! * **Grass** is blade-on-blade friction: a dense hiss (broad, around 3.5 kHz) modulated by the waves gusts
 //!   draw across the field (honami, wavelength ~2 m). **Reeds** add hollow-stalk clacks and
 //!   low aeolian tones from the stalks.
 //! * **Branch creak**: the trunk sways as a damped oscillator at its natural frequency,
 //!   driven by the gusts; when two branches rub at high sway velocity they stick-slip, a
-//!   pulse train whose rate follows the sliding speed, filtered by wood resonances.
+//!   pulse train whose rate follows the sliding speed, filtered by wood resonances. Only in
+//!   strong wind (above 8 m/s at the trunk): creaking modes ringing at moderate wind were heard
+//!   as a constant whistle at ~540 Hz.
 //! * **Rain on the crown** (via [`RainLayer`]): the intercepted share of the rain taps on the
 //!   leaves; wet leaves change the timbre of both rain and rustle.
 //!
@@ -39,9 +59,85 @@ use super::{Controls, Generator, BLOCK};
 use crate::rng::Rng;
 
 const NEEDLE_BANDS: usize = 5;
+/// Diameter classes of the woody skeleton (twigs .. limbs) for the crown roar.
+const BODY_BANDS: usize = 6;
+/// Twig and branch diameters that shed in the audible range, m (log-spaced between).
+const TWIG_D: f32 = 0.0012;
+const LIMB_D: f32 = 0.04;
+/// Band power of a diameter class ∝ (d / LIMB_D)^BODY_TILT (see the module notes).
+const BODY_TILT: f32 = 0.3;
+/// Wind (at the sway) above which branches start to rub and creak, m/s.
+const CREAK_ONSET: f32 = 8.0;
+/// Crown roar level (per √m² of crown at U_REF).
+const BODY_LEVEL: f32 = 0.012;
+/// Intensity growth of the roar, I ∝ U^n: 6 for coherent aeolian dipoles, less in a crown,
+/// where twigs bend and streamline and fewer of them shed coherently as the wind rises.
+const BODY_N: f32 = 5.0;
+/// Centre of a fresh leaf-on-leaf slap for a 6 cm leaf, Hz.
+const LEAF_FC: f32 = 800.0;
+/// Grass blade friction centre, Hz.
+const GRASS_FC: f32 = 3500.0;
+/// Level of the needle-cloud shedding bands.
+const NEEDLE_LEVEL: f32 = 0.0007;
+
+/// The diameter range that sheds: twigs .. limbs for a tree; for grass and reeds the stems,
+/// from the blade/stalk diameter to the thick bases, seed heads and tussocks (6×).
+fn body_range(cfg: &FoliageConfig) -> (f32, f32) {
+    match cfg.kind {
+        FoliageKind::Broadleaf | FoliageKind::Needles => (TWIG_D, LIMB_D),
+        FoliageKind::Grass | FoliageKind::Reeds => (cfg.needle_diameter_m, 6.0 * cfg.needle_diameter_m),
+    }
+}
+
+/// Crowns streamline in strong wind (Vogel's reconfiguration: drag grows as U^1.3 rather
+/// than U^2 for trees above ~10–15 m/s), so the roar's growth slows beyond what the knee of
+/// [`flow_level`] already allows.
+fn reconfigure(u: f32) -> f32 {
+    1.0 / (1.0 + (u / 15.0).powi(2)).sqrt()
+}
+
+fn body_diameter(k: usize, (lo, hi): (f32, f32)) -> f32 {
+    hi * (lo / hi).powf(k as f32 / (BODY_BANDS - 1) as f32)
+}
+
+fn body_weight(k: usize, r: (f32, f32)) -> f32 {
+    (body_diameter(k, r) / r.1).powf(BODY_TILT)
+}
+
+/// Canopy sweeps: the coherent gusts of canopy turbulence (Finnigan 2000). Fast air from
+/// above breaks into the crown or the grass in a sharp ramp front (~0.1 s) and dies away over
+/// about a second, at intervals of a few canopy heights of fetch; the leaves "light up" in
+/// flurries. A Poisson stream of ramps, recorded in a trail so each part of the crown meets
+/// the sweep at its own moment.
+#[derive(Clone, Copy, Default)]
+struct Sweeps {
+    s: f32,
+    pending: f32,
+    trail: GustTrail,
+}
+
+impl Sweeps {
+    /// `scale_m`: canopy length scale (crown height / grass height); `u` mean wind, m/s.
+    /// `strength`: mean relative speed-up of a sweep.
+    fn step(&mut self, u: f32, scale_m: f32, strength: f32, dt: f32, rng: &mut Rng) {
+        let rate = u / (4.0 * scale_m);
+        if rng.uniform() < rate * dt {
+            self.pending = (self.pending + strength * exp1(rng)).min(3.0 * strength);
+        }
+        let take = self.pending * (1.0 - (-dt / 0.03).exp());
+        self.pending -= take;
+        self.s = ((self.s + take) * (-dt / 0.45).exp()).min(3.0 * strength);
+        self.trail.push(self.s, dt);
+    }
+
+    /// Relative wind-speed boost `delay_s` after the front passed the windward edge.
+    fn at(&self, delay_s: f32) -> f32 {
+        1.0 + self.trail.at(delay_s)
+    }
+}
 const U_REF: f32 = 5.0;
 /// Overall level of wind noises relative to rain on the leaves.
-const RUSTLE_LEVEL: f32 = 3.0;
+const RUSTLE_LEVEL: f32 = 2.7;
 /// Individually rendered leaf collisions per second (the rest goes into the bed).
 const RESOLVED: f32 = 250.0;
 
@@ -77,6 +173,8 @@ pub struct FoliageConfig {
     pub dryness: f32,
     /// Branch creak propensity (0..1).
     pub creak: f32,
+    /// Level of the crown's aeolian roar from twigs and branches (0..3); trees only.
+    pub body: f32,
     /// Natural sway frequency of the trunk, Hz (0.1..3).
     pub sway_hz: f32,
     /// Level of rain hitting the crown (0..3).
@@ -98,6 +196,7 @@ impl Default for FoliageConfig {
             flutter: 0.2,
             dryness: -1.0,
             creak: 0.1,
+            body: 1.0,
             sway_hz: 0.4,
             rain_on_leaves: 1.0,
             gain: 1.0,
@@ -116,6 +215,7 @@ impl FoliageConfig {
         check("flutter", self.flutter, 0.0, 1.0)?;
         check("dryness", self.dryness, -1.0, 1.0)?;
         check("creak", self.creak, 0.0, 1.0)?;
+        check("body", self.body, 0.0, 3.0)?;
         check("sway_hz", self.sway_hz, 0.1, 3.0)?;
         check("rain_on_leaves", self.rain_on_leaves, 0.0, 3.0)?;
         check("gain", self.gain, 0.0, 8.0)
@@ -151,6 +251,10 @@ pub struct Foliage {
     inner_share: f32,
     needle_gust: [Smooth; NEEDLE_BANDS],
     needle_turb: [Ou; NEEDLE_BANDS],
+    body_gust: [Smooth; BODY_BANDS],
+    body_turb: [Ou; BODY_BANDS],
+    body: [NoiseBand; BODY_BANDS],
+    sweeps: Sweeps,
     sway_gust: Smooth,
     u: f32,
     t: f32,
@@ -196,6 +300,10 @@ impl Foliage {
             inner_share: 0.0,
             needle_gust: [Smooth::new(0.0); NEEDLE_BANDS],
             needle_turb: [Ou::default(); NEEDLE_BANDS],
+            body_gust: [Smooth::new(0.0); BODY_BANDS],
+            body_turb: [Ou::default(); BODY_BANDS],
+            body: [NoiseBand::new(200.0, 1.2, sr); BODY_BANDS],
+            sweeps: Sweeps::default(),
             sway_gust: Smooth::new(0.0),
             u: 0.0,
             t: 0.0,
@@ -280,13 +388,13 @@ impl Foliage {
         FoliageConfig { dryness: 0.0, ..Self::birch() }
     }
     pub fn grass() -> FoliageConfig {
-        FoliageConfig { kind: FoliageKind::Grass, needle_diameter_m: 0.002, area_m2: 60.0, onset_ms: 1.0, creak: 0.0, ..Default::default() }
+        FoliageConfig { kind: FoliageKind::Grass, needle_diameter_m: 0.002, area_m2: 60.0, onset_ms: 1.0, creak: 0.0, body: 0.04, ..Default::default() }
     }
     pub fn dry_grass() -> FoliageConfig {
         FoliageConfig { dryness: 1.0, ..Self::grass() }
     }
     pub fn reeds() -> FoliageConfig {
-        FoliageConfig { kind: FoliageKind::Reeds, needle_diameter_m: 0.007, leaf_size_m: 0.015, area_m2: 40.0, onset_ms: 1.5, creak: 0.0, dryness: 0.6, ..Default::default() }
+        FoliageConfig { kind: FoliageKind::Reeds, needle_diameter_m: 0.007, leaf_size_m: 0.015, area_m2: 40.0, onset_ms: 1.5, creak: 0.0, dryness: 0.6, body: 0.04, ..Default::default() }
     }
 
     pub fn preset(name: &str) -> Option<FoliageConfig> {
@@ -336,23 +444,33 @@ impl Foliage {
             self.gust = Smooth::new(arriving);
             self.sway_gust = Smooth::new(arriving);
             self.inner_gust = Smooth::new(arriving);
-            for g in self.needle_gust.iter_mut() {
+            for g in self.needle_gust.iter_mut().chain(self.body_gust.iter_mut()) {
                 *g = Smooth::new(arriving);
             }
         }
         self.trail.push(arriving, dt);
         let mean = wind_slider(e.wind_ms);
         let cross_s = cfg.area_m2.sqrt().clamp(1.0, 40.0) / (3.0 + 6.0 * mean.min(1.5));
+        // Canopy height scale and sweep strength: in a deep crown a sweep is one eddy among
+        // the branches (+10 %); a low grass canopy sits in the strongest shear near the
+        // ground, where sweeps nearly double the local speed for a moment (honami).
+        let (canopy_m, strength) = match cfg.kind {
+            FoliageKind::Broadleaf | FoliageKind::Needles => (6.0, 0.1),
+            FoliageKind::Grass => (0.8, 0.35),
+            FoliageKind::Reeds => (1.5, 0.2),
+        };
+        self.sweeps.step(wind_speed_ms(arriving) * cfg.exposure, canopy_m, strength, dt, &mut self.rng);
+        let sw = self.sweeps;
         // Outer leaves on the windward side, inner leaves deeper in the crown, each with fast
         // leaf-scale turbulence of their own.
         let g = self.gust.step(self.trail.at(0.15 * cross_s), dt, 0.25);
         let lt = self.leaf_turb.step(dt, 0.2, 0.15, &mut self.rng);
-        self.u = wind_speed_ms(g) * cfg.exposure * lt.exp();
+        self.u = wind_speed_ms(g) * cfg.exposure * lt.exp() * sw.at(0.0);
         let u = self.u;
         let gi = self.inner_gust.step(self.trail.at(0.7 * cross_s), dt, 0.3);
         let it = self.inner_turb.step(dt, 0.3, 0.15, &mut self.rng);
         // Sheltered by the outer foliage.
-        let u_inner = 0.85 * wind_speed_ms(gi) * cfg.exposure * it.exp();
+        let u_inner = 0.85 * wind_speed_ms(gi) * cfg.exposure * it.exp() * sw.at(0.5 * cross_s);
         let gs = self.sway_gust.step(self.trail.at(0.8 * cross_s), dt, 0.6);
         let u_sway = wind_speed_ms(gs) * cfg.exposure;
         self.t += dt;
@@ -370,14 +488,14 @@ impl Foliage {
                 let rate = leaves * 35.0 * f_fl * engage * (1.0 - 0.55 * wet);
                 let size = (0.06 / cfg.leaf_size_m).powf(0.4);
                 let spec = GrainSpec {
-                    amp: 0.05 * (u / U_REF).min(4.0) * (1.0 + 0.5 * dry),
-                    fc: 2600.0 * size * (1.0 + 0.9 * dry) * (1.0 - 0.35 * wet),
+                    amp: 0.03 * (u / U_REF).min(4.0) * (1.0 + 0.5 * dry),
+                    fc: LEAF_FC * size * (1.0 + 0.9 * dry) * (1.0 - 0.35 * wet),
                     q: 0.9 + 0.6 * dry,
                     attack: lerp(0.0008, 0.0002, dry),
                     decay: 0.003 * (cfg.leaf_size_m / 0.06).sqrt() * (1.0 - 0.45 * dry) * (1.0 + 0.6 * wet),
                     ..Default::default()
                 };
-                let swish = 0.004 * cfg.density * cover * cfg.area_m2.sqrt() * flow_level(u, U_REF, 4.6) * engage.sqrt();
+                let swish = 0.0025 * cfg.density * cover * cfg.area_m2.sqrt() * flow_level(u, U_REF, 4.6) * engage.sqrt();
                 (rate, spec, swish)
             }
             FoliageKind::Grass | FoliageKind::Reeds => {
@@ -387,8 +505,8 @@ impl Foliage {
                 let rate = cfg.density * cfg.area_m2 * 60.0 * (u / U_REF).powi(2) * engage * honami * (1.0 - 0.4 * wet);
                 let spec = GrainSpec {
                     amp: 0.025 * (u / U_REF).min(4.0),
-                    fc: if cfg.kind == FoliageKind::Grass { 6000.0 } else { 3500.0 } * (1.0 + 0.4 * dry) * (1.0 - 0.3 * wet),
-                    q: 0.7,
+                    fc: if cfg.kind == FoliageKind::Grass { GRASS_FC } else { 3500.0 } * (1.0 + 0.4 * dry) * (1.0 - 0.3 * wet),
+                    q: 0.6,
                     attack: 0.0006,
                     decay: 0.002,
                     ..Default::default()
@@ -430,17 +548,43 @@ impl Foliage {
                 let at = (k as f32 * 0.618_034 + 0.1).fract();
                 let gk = self.needle_gust[k].step(self.trail.at(at * cross_s), dt, 0.25);
                 let tk = self.needle_turb[k].step(dt, 0.15 + 0.1 * k as f32, 0.15, &mut self.rng);
-                let u = wind_speed_ms(gk) * cfg.exposure * tk.exp();
+                let u = wind_speed_ms(gk) * cfg.exposure * tk.exp() * sw.at(at * cross_s);
                 let f = strouhal_hz(0.2, u, d).clamp(20.0, 16_000.0);
                 let q = if cfg.kind == FoliageKind::Needles { 3.5 } else { 6.0 };
                 self.needles[k].svf.set(f, q, sr);
                 let shed = smoothstep(40.0, 120.0, reynolds(u, d));
-                let lvl = if cfg.kind == FoliageKind::Needles { 0.002 } else { 0.0004 };
+                let lvl = if cfg.kind == FoliageKind::Needles { NEEDLE_LEVEL } else { 0.0004 };
                 lvl * cfg.density * cfg.area_m2.sqrt() * flow_level(u, U_REF, 4.6) * shed * band_norm(f, q, sr) * (1.0 - 0.3 * wet)
             } else {
                 0.0
             };
             self.needles[k].gain.to(target, len);
+        }
+
+        // Crown roar: aeolian shedding of the woody skeleton, one band per diameter class
+        // (limbs low, twigs high), each in its own part of the crown and its own eddies.
+        // Bare winter crowns roar too, so leaf cover does not scale it.
+        let range = body_range(&cfg);
+        let wsum: f32 = (0..BODY_BANDS).map(|k| body_weight(k, range)).sum();
+        for k in 0..BODY_BANDS {
+            let target = if cfg.body > 0.0 {
+                let d = body_diameter(k, range);
+                let at = (k as f32 * 0.618_034 + 0.35).fract();
+                let gk = self.body_gust[k].step(self.trail.at(at * cross_s), dt, 0.3 + 0.1 * k as f32);
+                let tk = self.body_turb[k].step(dt, 0.25 + 0.15 * (BODY_BANDS - 1 - k) as f32, 0.12, &mut self.rng);
+                // The flow inside the crown is slowed by the foliage around the twigs.
+                let u = 0.8 * wind_speed_ms(gk) * cfg.exposure * tk.exp() * sw.at(at * cross_s);
+                let f = strouhal_hz(0.2, u, d).clamp(20.0, 8000.0);
+                // Broad: turbulence intensity in a crown is 30–50 %, and every class spans a
+                // range of diameters and angles to the flow.
+                let q = 1.2;
+                self.body[k].svf.set(f, q, sr);
+                let shed = smoothstep(200.0, 1000.0, reynolds(u, d));
+                BODY_LEVEL * cfg.body * cfg.area_m2.sqrt() * flow_level(u, U_REF, BODY_N) * reconfigure(u) * shed * (body_weight(k, range) / wsum).sqrt() * band_norm(f, q, sr) * (1.0 - 0.2 * wet)
+            } else {
+                0.0
+            };
+            self.body[k].gain.to(target, len);
         }
 
         // Trunk sway (control rate) and creak triggering.
@@ -456,12 +600,16 @@ impl Foliage {
             if cr.v.signum() != cr.dir || speed < 0.15 {
                 cr.active = false;
             }
-        } else if cfg.creak > 0.0 && speed > 0.5 && u > 4.0 && self.rng.uniform() < cfg.creak * (u / 12.0).powi(2) * dt * 4.0 * (1.0 - 0.5 * wet) {
+        } else if cfg.creak > 0.0
+            && speed > 0.5
+            && u_sway > CREAK_ONSET
+            && self.rng.uniform() < cfg.creak * ((u_sway - CREAK_ONSET) / CREAK_ONSET).powi(2) * dt * 4.0 * (1.0 - 0.5 * wet)
+        {
             cr.active = true;
             cr.dir = cr.v.signum();
         }
         cr.rate = if cr.active { 40.0 + 220.0 * speed } else { 0.0 };
-        cr.amp = if cr.active { 0.03 * speed * (u / 10.0) } else { 0.0 };
+        cr.amp = if cr.active { 0.03 * speed * (u_sway / 10.0) } else { 0.0 };
         for k in 0..3 {
             let f = cr.freqs[k];
             cr.modes[k].tune(f, f / 25.0, sr);
@@ -499,14 +647,14 @@ impl Foliage {
             && self.grains.active() == 0
             && self.bed.gain.cur < 1e-7
             && self.swish.gain.cur < 1e-7
-            && self.needles.iter().all(|g| g.gain.cur < 1e-7)
+            && self.needles.iter().chain(self.body.iter()).all(|g| g.gain.cur < 1e-7)
             && self.u < 0.05
             && !self.creak.active
             && self.creak.modes.iter().all(|m| m.energy() < 1e-10)
             && self.rain.is_silent();
         if quiet {
             out.fill(0.0);
-            for b in self.needles.iter_mut().chain([&mut self.bed, &mut self.swish]) {
+            for b in self.needles.iter_mut().chain(self.body.iter_mut()).chain([&mut self.bed, &mut self.swish]) {
                 b.gain.finish();
             }
             return;
@@ -546,7 +694,7 @@ impl Foliage {
         self.grains.render_add(out);
         self.bed.render_add(white, out);
         self.swish.render_add(white, out);
-        for b in self.needles.iter_mut() {
+        for b in self.needles.iter_mut().chain(self.body.iter_mut()) {
             b.render_add(white, out);
         }
         // Creak: one stick-slip pulse per phase wrap, with jittered period.
