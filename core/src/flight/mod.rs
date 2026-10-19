@@ -604,6 +604,9 @@ impl Flight {
         }
         self.environment(inp);
         let (amb_rain, amb) = self.ambient(inp);
+        // The wind is world-fixed: its vector in the listener (heading) frame, for refraction.
+        let (wx, wy) = inp.wind.blow_to_heading(self.pose.heading as f32);
+        self.acoustics.set_wind(wx, wy, amb.wind_ms, amb.wind_ms * inp.wind.speed_ratio(inp.wind_slider));
         let c_air = crate::physics::air::speed_of_sound(amb.temperature_c as f64) as f32;
 
         for ch in self.bus.iter_mut() {
@@ -652,7 +655,7 @@ impl Flight {
             c.water = inp.water * em.flow;
             c.neural = inp.neural;
             c.legacy_levels = mixer.bypass;
-            c.gust = (inp.wind_slider + (inp.wind.local(rel.y) - inp.wind_slider) * inp.gustiness).max(0.0);
+            c.gust = (inp.wind_slider + (inp.wind.at_heading(rel.x, rel.y, self.pose.heading as f32) - inp.wind_slider) * inp.gustiness).max(0.0);
             // Sound director: calibrated level, role, masking EQ, phrase permits.
             let view = EmitterView {
                 key: target_key(&slot.target),

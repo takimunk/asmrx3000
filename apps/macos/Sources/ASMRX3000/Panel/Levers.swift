@@ -271,7 +271,7 @@ enum ControlText {
         "rain.storm": "Гроза", "rain.surface": "Поверхность", "rain.drying": "Высыхание", "rain.gain": "Громкость дождя",
         // Birds, environment, insects, fire.
         "birds.orbit": "Кружат рядом", "env.temperature": "Температура", "env.humidity": "Влажность",
-        "env.season": "Сезон", "insects.warmth": "Тепло", "fire.moisture": "Влажность дров", "fire.resin": "Смола",
+        "env.season": "Сезон", "env.wind_direction": "Ветер откуда", "insects.warmth": "Тепло", "fire.moisture": "Влажность дров", "fire.resin": "Смола",
         // Flight.
         "flight.altitude": "Высота", "flight.curviness": "Извилистость", "flight.biome": "Ландшафт",
         "flight.density": "Густота леса", "flight.seed": "Местность", "flight.airflow": "Шум воздуха",

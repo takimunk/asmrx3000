@@ -19,6 +19,15 @@
 //!   Helmholtz resonance the gap whistles or howls, so the howl comes and goes with gusts.
 //! * **Distance**: far wind is the average of a large area (smoother gusts) and loses its
 //!   highs to air absorption (only the roar remains).
+//! * **Not one filter sweep.** A source is an extent of vegetation, not a point, and the
+//!   wind in it is not one number: each diameter band has its own place in the source and
+//!   its own turbulence. Band k hears the arriving gust after its own lag inside the source
+//!   (extent ≈ distance/4, 2..40 m, crossed at the gust-front speed: frozen turbulence via
+//!   [`GustTrail`]) and adds local turbulence whose time scale follows the element: twigs
+//!   answer the small, fast eddies (≈0.15 s), limbs and trunks only the large slow ones
+//!   (≈2 s). So the bands rise and fall at different moments, the spectral centre wanders
+//!   with the local speeds, and the sum over the extent averages the gusts the way a real
+//!   crown does. Far sources also breathe slowly (gust fronts crossing a forest, τ ≈ 7 s).
 //!
 //! Local wind speed comes from the travelling gust field (`Controls::gust`, mapped to m/s by
 //! [`wind_speed_ms`]), times the source's exposure.
@@ -32,7 +41,7 @@ use super::rain::check;
 use super::{Controls, Generator};
 use crate::rng::Rng;
 
-const BANDS: usize = 6;
+const BANDS: usize = 8;
 const WIRE_SLOTS: usize = 4;
 /// Reference speed for levels, m/s.
 const U_REF: f32 = 5.0;
@@ -152,6 +161,13 @@ pub struct Wind {
     rng: Rng,
     cfg: WindConfig,
     gust: Smooth,
+    trail: GustTrail,
+    /// Per diameter band: gust smoothing, local turbulence, lag inside the source (0..1 of
+    /// the extent).
+    band_gust: [Smooth; BANDS],
+    band_turb: [Ou; BANDS],
+    lag: [f32; BANDS],
+    breath: Ou,
     u: f32,
     bands: [Svf; BANDS],
     band_gain: [Ramp; BANDS],
@@ -177,10 +193,25 @@ pub struct Wind {
 impl Wind {
     pub fn new(sample_rate: f32, seed: u64, cfg: WindConfig) -> Self {
         let sr = sample_rate;
+        let mut rng = Rng::new(seed);
+        // Bands sit at scattered places in the source (stratified, shuffled).
+        let mut lag = [0.0f32; BANDS];
+        for (k, l) in lag.iter_mut().enumerate() {
+            *l = (k as f32 + rng.uniform()) / BANDS as f32;
+        }
+        for k in (1..BANDS).rev() {
+            let j = (rng.uniform() * (k + 1) as f32) as usize % (k + 1);
+            lag.swap(k, j);
+        }
         Self {
             sample_rate,
-            rng: Rng::new(seed),
+            rng,
             gust: Smooth::new(0.0),
+            trail: GustTrail::default(),
+            band_gust: [Smooth::new(0.0); BANDS],
+            band_turb: [Ou::default(); BANDS],
+            lag,
+            breath: Ou::default(),
             u: 0.0,
             bands: [Svf::new(200.0, 1.5, sr); BANDS],
             band_gain: [Ramp::new(0.0); BANDS],
@@ -391,31 +422,53 @@ impl Generator for Wind {
         let dt = len as f32 / sr;
         let c = self.cfg.clone();
 
-        // Gust at the source, averaged over the area it represents.
+        // Gust arriving at the source; its parts hear it at different times.
         let mean = wind_slider(ctl.env.wind_ms);
-        let local = mean + (ctl.gust - mean) * c.gust_response;
+        let local = (mean + (ctl.gust - mean) * c.gust_response).max(0.0);
+        self.trail.push(local, dt);
+        let extent = (0.25 * c.distance_m).clamp(2.0, 40.0);
+        let cross_s = extent / (3.0 + 6.0 * mean.min(1.5)); // gust-front speed as windfield.rs
+        let smooth_s = 0.12 + c.distance_m / 80.0;
         if !self.started {
             self.started = true;
-            self.gust = Smooth::new(local.max(0.0));
+            self.gust = Smooth::new(local);
+            for g in self.band_gust.iter_mut() {
+                *g = Smooth::new(local);
+            }
         }
-        let g = self.gust.step(local.max(0.0), dt, 0.12 + c.distance_m / 40.0);
+        // Wires and gaps sit in the middle of the source.
+        let g = self.gust.step(self.trail.at(0.5 * cross_s), dt, smooth_s);
         let turb = self.turb.step(dt, 0.25, 0.18, &mut self.rng);
         self.u = wind_speed_ms(g) * c.exposure * (1.0 + turb).max(0.3);
         let u = self.u;
+        // Slow breathing of a distant roar.
+        let far = smoothstep(30.0, 300.0, c.distance_m);
+        let breath = if far > 0.0 { (0.35 * far * self.breath.step(dt, 7.0, 1.0, &mut self.rng)).exp() } else { 1.0 };
 
-        // Body: diameter bands.
-        let level = c.body * flow_level(u, U_REF, c.level_exponent) * 0.012;
-        let re_min = reynolds(u, c.d_min_m);
+        // Body: diameter bands, each with its own local wind.
+        let u_mean = (wind_speed_ms(mean) * c.exposure).max(0.5);
+        let mut level_sum = 0.0f32;
         for k in 0..BANDS {
-            let d = c.d_min_m * (c.d_max_m / c.d_min_m).powf(k as f32 / (BANDS - 1) as f32);
-            let f = strouhal_hz(c.strouhal, u, d).clamp(12.0, 16_000.0);
+            let x = k as f32 / (BANDS - 1) as f32;
+            let d = c.d_min_m * (c.d_max_m / c.d_min_m).powf(x);
+            let gk = self.band_gust[k].step(self.trail.at(self.lag[k] * cross_s), dt, smooth_s);
+            // Twigs follow small fast eddies, limbs only the large slow ones.
+            let tau = (0.15 + 1.9 * x * x) * (5.0 / u_mean).sqrt().clamp(0.5, 2.0);
+            let sigma = 0.2 - 0.14 * x;
+            let tk = self.band_turb[k].step(dt, tau, sigma, &mut self.rng);
+            let uk = wind_speed_ms(gk) * c.exposure * tk.exp();
+            let level = c.body * flow_level(uk, U_REF, c.level_exponent) * 0.012 * breath;
+            level_sum += level;
+            let f = strouhal_hz(c.strouhal, uk, d).clamp(12.0, 16_000.0);
             let q = 1.3;
             self.bands[k].set(f, q, sr);
             let audible = smoothstep(14.0, 45.0, f) * (1.0 - smoothstep(12_000.0, 16_000.0, f));
-            let tilt = 10f32.powf(c.tilt_db * (d / c.d_min_m).log2() / 20.0);
-            let shed = smoothstep(40.0, 200.0, re_min * d / c.d_min_m);
+            // 8 bands over the same diameter range as the former 6: same total level.
+            let tilt = 10f32.powf(c.tilt_db * (d / c.d_min_m).log2() / 20.0) * (6.0 / BANDS as f32).sqrt();
+            let shed = smoothstep(40.0, 200.0, reynolds(uk, d));
             self.band_gain[k].to(level * tilt * audible * shed * band_norm(f, q, sr), len);
         }
+        let level = level_sum;
         // Air absorption + area averaging: far wind keeps only the roar.
         let f_lp = (14_000.0 * (20.0 / c.distance_m.max(20.0)).powf(0.6)).max(300.0);
         self.lp_coef = one_pole_coef(f_lp, sr);

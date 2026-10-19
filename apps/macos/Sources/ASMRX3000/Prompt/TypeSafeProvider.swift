@@ -509,6 +509,10 @@ struct Knob {
              anchors: [("embers", 5, "glowing embers"), ("campfire", 20, "a campfire"), ("big_fire", 100, "a big fire"), ("bonfire", 500, "a bonfire")],
              upDown: ("жарче", "тише")),
         Knob(key: "env.time_of_day", what: "the time of day", ru: "время", anchors: hours),
+        Knob(key: "env.wind_direction", what: "where the wind blows from (a compass side; ahead = north, left = west)", ru: "ветер откуда", range: 0...360,
+             anchors: [("north", 0, "from the north, ahead"), ("northeast", 45, "from the northeast"), ("east", 90, "from the east, the right"),
+                       ("southeast", 135, "from the southeast"), ("south", 180, "from the south, behind"), ("southwest", 225, "from the southwest"),
+                       ("west", 270, "from the west, the left"), ("northwest", 315, "from the northwest")]),
     ]
 
     /// Half-hour clock options with plain descriptions ("03:00" = 3 a.m., deep night).

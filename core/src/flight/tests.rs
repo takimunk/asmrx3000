@@ -553,3 +553,22 @@ fn frame_tells_the_ui_where_and_what() {
     s.grid(f.x, f.y, 1.0, 1, 1, &mut out);
     assert!((out[0].max(out[1]) - f.ground_z).abs() < 0.6, "sampler {} engine {}", out[0], f.ground_z);
 }
+
+#[test]
+fn wind_direction_is_world_fixed_in_flight() {
+    // The wind stays where it is in the world while the course turns: relative to the
+    // course it turns the other way, and the gusts still arrive from the same compass side.
+    let e = flying_engine(10.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    e.set_control(id::ENV_WIND_DIRECTION, 0.0); // from the north (turns from the west over ~10 s)
+    look(&e, 0.0, 0.0, 30.0);
+    let rel = |e: &Engine| e.telemetry(telemetry::WIND_FROM);
+    let (h0, w0) = (heading(&e), rel(&e));
+    // From the north = world +x: relative to the course that is -heading.
+    assert!(turned(-h0, w0).abs() < 0.05, "heading {h0}, wind from {w0}");
+    look(&e, 40.0, 0.0, 4.0);
+    let (h1, w1) = (heading(&e), rel(&e));
+    let dh = turned(h0, h1);
+    assert!(dh > 1.0, "did not turn: {dh}");
+    assert!((turned(w0, w1) + dh).abs() < 0.05, "course turned {dh:.2} rad, wind turned {:.2} rad relative to it", turned(w0, w1));
+}

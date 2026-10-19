@@ -99,6 +99,7 @@ enum {
     ASMR_TELEMETRY_MIX_GAIN_DB = 25,         /* leveller + comfort compressor + limiter, dB */
     ASMR_TELEMETRY_SOLOISTS = 26,            /* foreground sources right now */
     ASMR_TELEMETRY_MASKING = 27,             /* share of the soloists' loudness masked by the bed, 0..1 */
+    ASMR_TELEMETRY_WIND_FROM = 28,           /* where the wind comes from re the listener's forward (flight: the course), rad, ccw (+pi/2 = left) */
 };
 
 enum {
@@ -261,6 +262,7 @@ enum {
     ASMR_CONTROL_ENV_TEMPERATURE = 701,  /* deg C, follows a diurnal cycle */
     ASMR_CONTROL_ENV_HUMIDITY = 702,     /* follows a diurnal cycle */
     ASMR_CONTROL_ENV_SEASON = 703,       /* spring, summer, autumn, winter */
+    ASMR_CONTROL_ENV_WIND_DIRECTION = 704, /* degrees the wind blows FROM, clockwise from north (270 = west, the scene's left); world-fixed */
     ASMR_CONTROL_INSECTS_ACTIVITY = 800, /* macro */
     ASMR_CONTROL_INSECTS_WARMTH = 801,   /* deg C microclimate offset */
     ASMR_CONTROL_INSECTS_LEVEL = 850,    /* "insects.level", dB */

@@ -20,6 +20,12 @@
 //! * **Rain on the crown** (via [`RainLayer`]): the intercepted share of the rain taps on the
 //!   leaves; wet leaves change the timbre of both rain and rustle.
 //!
+//! The crown is not one point in one wind: the gust crosses it (extent √area at the
+//! gust-front speed, [`GustTrail`]), so the leaf collisions, each needle band and the trunk
+//! sway hear it at their own moments, each with its own small-scale turbulence (leaves
+//! answer fast eddies, ~0.2 s; the trunk the slow ones). The rustle swells in parts instead
+//! of as one gain.
+//!
 //! Large numbers of collisions are rendered as in rain: up to a budget individually, the
 //! rest as a noise bed of equal energy (Campbell's theorem).
 
@@ -136,6 +142,16 @@ pub struct Foliage {
     rng: Rng,
     cfg: FoliageConfig,
     gust: Smooth,
+    trail: GustTrail,
+    leaf_turb: Ou,
+    /// The inner leaves: their own place in the crown and turbulence, a duller spectrum.
+    inner_gust: Smooth,
+    inner_turb: Ou,
+    spec_inner: GrainSpec,
+    inner_share: f32,
+    needle_gust: [Smooth; NEEDLE_BANDS],
+    needle_turb: [Ou; NEEDLE_BANDS],
+    sway_gust: Smooth,
     u: f32,
     t: f32,
     flutter_phase: [f32; 2],
@@ -172,6 +188,15 @@ impl Foliage {
         Self {
             sample_rate,
             gust: Smooth::new(0.0),
+            trail: GustTrail::default(),
+            leaf_turb: Ou::default(),
+            inner_gust: Smooth::new(0.0),
+            inner_turb: Ou::default(),
+            spec_inner: GrainSpec::default(),
+            inner_share: 0.0,
+            needle_gust: [Smooth::new(0.0); NEEDLE_BANDS],
+            needle_turb: [Ou::default(); NEEDLE_BANDS],
+            sway_gust: Smooth::new(0.0),
             u: 0.0,
             t: 0.0,
             flutter_phase: [rng.uniform(), rng.uniform()],
@@ -306,12 +331,30 @@ impl Foliage {
         let dt = len as f32 / sr;
         let cfg = self.cfg.clone();
         let e = &c.env;
+        let arriving = c.gust.max(0.0);
         if self.t == 0.0 {
-            self.gust = Smooth::new(c.gust.max(0.0));
+            self.gust = Smooth::new(arriving);
+            self.sway_gust = Smooth::new(arriving);
+            self.inner_gust = Smooth::new(arriving);
+            for g in self.needle_gust.iter_mut() {
+                *g = Smooth::new(arriving);
+            }
         }
-        let g = self.gust.step(c.gust.max(0.0), dt, 0.25);
-        self.u = wind_speed_ms(g) * cfg.exposure;
+        self.trail.push(arriving, dt);
+        let mean = wind_slider(e.wind_ms);
+        let cross_s = cfg.area_m2.sqrt().clamp(1.0, 40.0) / (3.0 + 6.0 * mean.min(1.5));
+        // Outer leaves on the windward side, inner leaves deeper in the crown, each with fast
+        // leaf-scale turbulence of their own.
+        let g = self.gust.step(self.trail.at(0.15 * cross_s), dt, 0.25);
+        let lt = self.leaf_turb.step(dt, 0.2, 0.15, &mut self.rng);
+        self.u = wind_speed_ms(g) * cfg.exposure * lt.exp();
         let u = self.u;
+        let gi = self.inner_gust.step(self.trail.at(0.7 * cross_s), dt, 0.3);
+        let it = self.inner_turb.step(dt, 0.3, 0.15, &mut self.rng);
+        // Sheltered by the outer foliage.
+        let u_inner = 0.85 * wind_speed_ms(gi) * cfg.exposure * it.exp();
+        let gs = self.sway_gust.step(self.trail.at(0.8 * cross_s), dt, 0.6);
+        let u_sway = wind_speed_ms(gs) * cfg.exposure;
         self.t += dt;
         let wet = e.leaf_wetness.clamp(0.0, 1.0);
         let dry = if cfg.dryness >= 0.0 { cfg.dryness } else { e.dryness } * (1.0 - wet);
@@ -319,7 +362,7 @@ impl Foliage {
         let leaves = cfg.density * cfg.area_m2 * cover;
 
         // Leaf collisions (broadleaf, grass blades, reed stalks).
-        let (rate, spec, swish) = match cfg.kind {
+        let collide = |u: f32| match cfg.kind {
             FoliageKind::Broadleaf => {
                 let f_fl = self.flutter_hz(u);
                 let onset = cfg.onset_ms;
@@ -354,6 +397,14 @@ impl Foliage {
             }
             FoliageKind::Needles => (0.0, GrainSpec::default(), 0.0),
         };
+        let (ra, mut spec, wa) = collide(u);
+        let (rb, mut spec_b, wb) = collide(u_inner);
+        spec.fc *= 1.12;
+        spec_b.fc *= 0.88;
+        let rate = 0.5 * (ra + rb);
+        let swish = (0.5 * (wa * wa + wb * wb)).sqrt();
+        self.spec_inner = spec_b;
+        self.inner_share = if ra + rb > 0.0 { rb / (ra + rb) } else { 0.0 };
         // Coherent flutter groups (aspen): the collision rate pulses near the flutter rate.
         let f_fl = self.flutter_hz(u).min(12.0);
         for k in 0..2 {
@@ -375,6 +426,11 @@ impl Foliage {
         for k in 0..NEEDLE_BANDS {
             let target = if cfg.kind == FoliageKind::Needles || cfg.kind == FoliageKind::Reeds {
                 let d = cfg.needle_diameter_m * (0.7f32).powf(1.0 - 2.0 * k as f32 / (NEEDLE_BANDS - 1) as f32);
+                // Each band from its own part of the crown, with its own turbulence.
+                let at = (k as f32 * 0.618_034 + 0.1).fract();
+                let gk = self.needle_gust[k].step(self.trail.at(at * cross_s), dt, 0.25);
+                let tk = self.needle_turb[k].step(dt, 0.15 + 0.1 * k as f32, 0.15, &mut self.rng);
+                let u = wind_speed_ms(gk) * cfg.exposure * tk.exp();
                 let f = strouhal_hz(0.2, u, d).clamp(20.0, 16_000.0);
                 let q = if cfg.kind == FoliageKind::Needles { 3.5 } else { 6.0 };
                 self.needles[k].svf.set(f, q, sr);
@@ -390,11 +446,11 @@ impl Foliage {
         // Trunk sway (control rate) and creak triggering.
         let cr = &mut self.creak;
         let w0 = TAU * cfg.sway_hz;
-        let force = (u / 10.0).powi(2) * (1.0 + cr.force_ou.step(dt, 0.8, 0.8, &mut self.rng));
+        let force = (u_sway / 10.0).powi(2) * (1.0 + cr.force_ou.step(dt, 0.8, 0.8, &mut self.rng));
         let acc = force * w0 * w0 * 0.05 - 2.0 * 0.06 * w0 * cr.v - w0 * w0 * cr.x;
         cr.v += acc * dt;
         cr.x += cr.v * dt;
-        let vmax = (u / 10.0).powi(2) * w0 * 0.05 + 1e-6;
+        let vmax = (u_sway / 10.0).powi(2) * w0 * 0.05 + 1e-6;
         let speed = (cr.v.abs() / vmax).min(2.0);
         if cr.active {
             if cr.v.signum() != cr.dir || speed < 0.15 {
@@ -465,12 +521,12 @@ impl Foliage {
         // Leaf collisions, spawned at their sample offsets.
         let resolved = self.rate.min(RESOLVED) / sr;
         let base_mod = 1.0 + self.cfg.flutter * 0.7 * (0.6 * self.rate_mod[0] + 0.4 * self.rate_mod[1]);
-        let spec = self.spec;
+        let (spec_outer, spec_inner, inner) = (self.spec, self.spec_inner, self.inner_share);
         let crackle = self.crackle;
         if resolved > 0.0 {
             for i in 0..len as u32 {
                 for _ in 0..self.ev.tick(resolved * base_mod.max(0.0), &mut self.rng) {
-                    let mut s = spec;
+                    let mut s = if self.rng.uniform() < inner { spec_inner } else { spec_outer };
                     // Log-normal collision strength.
                     s.amp *= (0.6 * self.rng.gauss()).exp() * 0.7;
                     s.fc *= self.rng.range(0.75, 1.3);

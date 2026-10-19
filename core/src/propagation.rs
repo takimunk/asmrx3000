@@ -13,7 +13,10 @@
 //!  * ground-reflected path: image source with its own retarded delay, direction and the
 //!    spherical-wave reflection coefficient Q of the local ground impedance -- the
 //!    interference with the direct path produces the physical ground-effect dip;
-//!  * early reflections from the nearest trunks (sends to `reverb`), late-tail send.
+//!  * early reflections from the nearest trunks (sends to `reverb`), late-tail send;
+//!  * wind (physics/wind.rs): refraction by the wind gradient — an upwind shadow zone that
+//!    darkens and quietens far sources, a downwind gain — as part of the path filter, and
+//!    turbulent level wander of far paths as a slow gain on both paths.
 //! All spectral effects of a path are fused into one fixed-pole parallel filter refitted at
 //! control rate (only when geometry changed) and interpolated per sample; delays, gains and
 //! SH gains are interpolated per sample, so fast motion produces no zipper noise.
@@ -25,7 +28,8 @@ use crate::engine::BLOCK;
 use crate::math::Vec3;
 use crate::nearfield::NearField;
 use crate::num::C64;
-use crate::physics::{diffraction, directivity::{self, Directivity}, ground};
+use crate::physics::{diffraction, directivity::{self, Directivity}, ground, wind};
+use crate::rng::Rng;
 use crate::reverb::{Sends, ER_TRUNKS};
 use crate::shaping::{CoeffRamp, FilterBank, NF};
 use crate::simd::F4;
@@ -70,6 +74,9 @@ struct SpecKey {
     valid: bool,
     /// Mix EQ (dB) the filters were fitted with.
     eq: [f32; NF],
+    /// Wind shadow penetration and downwind weight the filters were fitted with.
+    shadow: f32,
+    favour: f32,
 }
 
 pub struct Propagator {
@@ -88,6 +95,11 @@ pub struct Propagator {
     key: SpecKey,
     /// Set by `stage`, consumed by `finish`: (block length, r1, direct and ground SH targets).
     pending: Option<(usize, f32, [f32; CHANNELS], [f32; CHANNELS])>,
+    /// Turbulent level wander: unit-variance OU state and its own random stream.
+    turb: f32,
+    rng: Rng,
+    /// Wind state for the next refit (shadow, favour).
+    wind_sf: (f32, f32),
 }
 
 /// Retarded propagation time: solves |d - v tau| = c tau for a source moving with constant
@@ -110,7 +122,8 @@ pub fn retarded_time(d: Vec3, v: Vec3, c: f32) -> f32 {
 }
 
 impl Propagator {
-    pub fn new(ctx: &Context) -> Self {
+    /// `seed` decorrelates the turbulent wander of different emitters (deterministic).
+    pub fn new(ctx: &Context, seed: u64) -> Self {
         let max = (MAX_DELAY_S * ctx.sample_rate) as usize;
         Self {
             delay: DelayLine::new(max),
@@ -125,8 +138,11 @@ impl Propagator {
             started: false,
             idle: 0,
             sleeping: false,
-            key: SpecKey { pos: Vec3::default(), forward: Vec3::default(), r1: 0.0, r2: 0.0, sin_psi: 0.0, obstructed: false, epoch: 0, valid: false, eq: [0.0; NF] },
+            key: SpecKey { pos: Vec3::default(), forward: Vec3::default(), r1: 0.0, r2: 0.0, sin_psi: 0.0, obstructed: false, epoch: 0, valid: false, eq: [0.0; NF], shadow: 0.0, favour: 0.0 },
             pending: None,
+            turb: 0.0,
+            rng: Rng::new(0x9e37_79b9_7f4a_7c15 ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d)),
+            wind_sf: (0.0, 0.0),
         }
     }
 
@@ -214,6 +230,10 @@ impl Propagator {
         let r2 = d2.length().max(0.05);
         let sin_psi = ((sz - gz) + (l.z - gz)) / r2;
 
+        // Wind: refraction state of this path (cheap scalars; the spectrum is a fixed shape
+        // per state, see `Context::wind_shadow_db`) and the turbulent wander of its level.
+        let (shadow, favour, wander) = self.wind(ctx, s, l, r1, sz, gz, dt);
+
         // Spectral refit when the predicted change of the path filters exceeds ~0.4 dB:
         // air absorption over the distance change, ground coefficient (grazing angle,
         // image distance), obstacles (Fresnel-zone scale), directivity angle.
@@ -228,10 +248,14 @@ impl Propagator {
             || (sin_psi - k.sin_psi).abs() > 0.01
             || moved > if k.obstructed { 0.15 } else { 1.0 }
             || (em.directivity != Directivity::Omni && forward.dot(k.forward) < 0.995)
-            || eq_moved(&em.eq_db, &k.eq);
+            || eq_moved(&em.eq_db, &k.eq)
+            // 0.75 dB of the deepest wind-shadow / downwind band.
+            || (shadow - k.shadow).abs() * ctx.wind_shadow_db.iter().fold(0.0f32, |m, v| m.max(-v)) > 0.75
+            || (favour - k.favour).abs() * 5.0 > 0.75;
         if need && (!k.valid || phase % 2 == 0) {
+            self.wind_sf = (shadow, favour);
             let obstructed = self.refit(ctx, em, s, r1, r2, img, sin_psi, gz);
-            self.key = SpecKey { pos: s, forward, r1, r2, sin_psi, obstructed, epoch: ctx.epoch, valid: true, eq: em.eq_db };
+            self.key = SpecKey { pos: s, forward, r1, r2, sin_psi, obstructed, epoch: ctx.epoch, valid: true, eq: em.eq_db, shadow, favour };
         }
 
         let tau1 = retarded_time(d1, vel, c) as f64 + self.extra_m / c as f64;
@@ -245,8 +269,8 @@ impl Propagator {
             self.ground.delay = dl2;
         }
 
-        let g1 = em.gain / r1.max(R_MIN);
-        let g2 = em.gain / r2.max(R_MIN);
+        let g1 = em.gain * wander / r1.max(R_MIN);
+        let g2 = em.gain * wander / r2.max(R_MIN);
         let mut sh1 = [0.0f32; CHANNELS];
         let mut sh2 = [0.0f32; CHANNELS];
         ambisonics::encode(d1 * (1.0 / r1), &mut sh1);
@@ -337,6 +361,28 @@ impl Propagator {
         );
     }
 
+    /// Wind on this path: (shadow penetration, downwind weight, turbulent amplitude factor).
+    #[allow(clippy::too_many_arguments)]
+    fn wind(&mut self, ctx: &Context, s: Vec3, l: Vec3, r1: f32, sz: f32, gz: f32, dt: f32) -> (f32, f32, f32) {
+        if !ctx.features.wind || ctx.wind_mean_ms < 0.3 {
+            self.turb = 0.0;
+            return (0.0, 0.0, 1.0);
+        }
+        // Source -> listener, along the wind.
+        let (wx, wy) = ctx.wind_to;
+        let cos_phi = ((l.x - s.x) * wx + (l.y - s.y) * wy) / r1;
+        let p = wind::WindPath { cos_phi: cos_phi as f64, r: r1 as f64, hs: (sz - gz) as f64, hr: (l.z - gz) as f64, u: ctx.wind_ms as f64, c: ctx.speed_of_sound as f64 };
+        let rf = wind::refraction(&p);
+        let (shadow, favour) = (rf.shadow as f32, rf.favour as f32);
+        // Lognormal amplitude with unit-variance OU in dB, normalised to keep the mean power.
+        let sigma = wind::fluctuation_db(r1, ctx.wind_mean_ms, shadow);
+        let tau = wind::fluctuation_tau(ctx.wind_mean_ms);
+        self.turb += -self.turb / tau * dt + (2.0 * dt / tau).sqrt() * self.rng.gauss();
+        let k = sigma * (core::f32::consts::LN_10 / 20.0);
+        let wander = (k * self.turb - k * k).exp();
+        (shadow, favour, wander)
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Refits both path filters. Returns whether an obstacle affected the path.
     fn refit(&mut self, ctx: &Context, em: &Emitter, s: Vec3, r1: f32, r2: f32, img: Vec3, sin_psi: f32, gz: f32) -> bool {
@@ -407,9 +453,11 @@ impl Propagator {
             }
         }
 
-        // Mix EQ (masking ducks, distance cues): same on both paths.
+        // Mix EQ (masking ducks, distance cues) and the wind's refraction: same on both paths.
+        let (shadow, favour) = self.wind_sf;
         for i in 0..NF {
-            let a = em.eq_db[i] as f64 * (core::f64::consts::LN_10 / 20.0);
+            let db = em.eq_db[i] + shadow * ctx.wind_shadow_db[i] + favour * ctx.wind_favour_db[i];
+            let a = db as f64 * (core::f64::consts::LN_10 / 20.0);
             ln1[i] += a;
             ln2[i] += a;
         }

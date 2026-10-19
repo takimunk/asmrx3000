@@ -169,15 +169,19 @@ impl Drop for EditGuard<'_> {
     fn drop(&mut self) { self.0.store(false, Ordering::Release); }
 }
 
-fn is_time(i: usize) -> bool {
-    controls::meta(i).id == controls::id::ENV_TIME
+/// Circular controls: the clock (24 h) and the wind direction (360°).
+fn period(i: usize) -> Option<f32> {
+    match controls::meta(i).id {
+        controls::id::ENV_TIME => Some(24.0),
+        controls::id::ENV_WIND_DIRECTION => Some(360.0),
+        _ => None,
+    }
 }
 
 fn wrap(i: usize, v: f32) -> f32 {
-    if is_time(i) {
-        v.rem_euclid(24.0)
-    } else {
-        v
+    match period(i) {
+        Some(p) => v.rem_euclid(p),
+        None => v,
     }
 }
 
@@ -495,6 +499,7 @@ fn alias(k: &str) -> Option<&'static str> {
         "temperature" | "temp" | "env.temp" => "env.temperature",
         "humidity" => "env.humidity",
         "season" => "env.season",
+        "wind.direction" | "wind_direction" | "wind.from" | "wind.dir" | "wind.heading" | "env.wind_dir" | "env.wind_from" | "wind_from" | "direction" | "направление_ветра" => "env.wind_direction",
         "volume" | "master" | "master.gain" | "master.level" | "loudness_overall" | "громкость" => "master.volume",
         "biome" | "landscape" | "place" | "location" | "terrain" | "flight.landscape" | "flight.place" | "flight.terrain" => "flight.biome",
         "thunder" | "storm" | "rain.thunder" | "thunderstorm" | "rain.thunderstorm" => "rain.storm",
@@ -677,8 +682,45 @@ fn as_f32(v: &Value) -> Option<f32> {
     }
 }
 
+/// Compass words for where the wind blows from, in degrees (meteorological: clockwise from
+/// north; the scene's forward is north, its left is west). Russian and English.
+fn compass_deg(s: &str) -> Option<f32> {
+    let low = s.trim().to_lowercase().replace(['_', '-'], " ");
+    let words: Vec<&str> = low.split_whitespace().skip_while(|w| matches!(*w, "from" | "the" | "с" | "со" | "ветер" | "wind")).collect();
+    let t = words.concat();
+    let t = t.as_str();
+    const WORDS: [(&[&str], f32); 12] = [
+        (&["северозапад", "northwest", "nw", "сз"], 315.0),
+        (&["северовосток", "northeast", "ne", "св"], 45.0),
+        (&["юговосток", "southeast", "se", "юв"], 135.0),
+        (&["югозапад", "southwest", "sw", "юз"], 225.0),
+        (&["север", "north", "n"], 0.0),
+        (&["восток", "восточн", "east", "e"], 90.0),
+        (&["юг", "южн", "south", "s"], 180.0),
+        (&["запад", "west", "w"], 270.0),
+        (&["слева", "left"], 270.0),
+        (&["справа", "right"], 90.0),
+        (&["спереди", "впереди", "front", "ahead", "лицо", "навстречу"], 0.0),
+        (&["сзади", "behind", "back", "спину", "вспину"], 180.0),
+    ];
+    for (words, deg) in WORDS {
+        for w in words {
+            let short = w.chars().count() <= 2;
+            if (short && t == *w) || (!short && t.starts_with(w)) {
+                return Some(deg);
+            }
+        }
+    }
+    None
+}
+
 fn parse_value(i: usize, val: &Value) -> Result<Op, (String, String)> {
     let m = controls::meta(i);
+    if let (Value::String(s), "env.wind_direction") = (val, m.key) {
+        if let Some(d) = compass_deg(s) {
+            return Ok(Op::Abs(d));
+        }
+    }
     let discrete = m.flags & flags::DISCRETE != 0;
     let bad = || (format!("{}: expected a number, an option name or \"reset\", got {val}", m.key), format!("у «{}» непонятное значение {val}", m.key));
     match val {
@@ -960,8 +1002,8 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
             Op::Mul(f) => b * f,
         };
         let mut x = target.clamp(m.min, m.max);
-        if is_time(c.i) {
-            x = target.rem_euclid(24.0);
+        if let Some(p) = period(c.i) {
+            x = target.rem_euclid(p);
         }
         if discrete {
             x = x.round().clamp(0.0, controls::options(m.id).len().saturating_sub(1) as f32);
@@ -974,7 +1016,7 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         a.insert("key".into(), json!(m.key));
         a.insert("value".into(), if discrete { json!(option_of(m.id, x)) } else { r3(x) });
         a.insert("from".into(), if discrete { json!(option_of(m.id, b)) } else { r3(b) });
-        if (x - target).abs() > 1e-4 * (1.0 + target.abs()) && !(discrete && (x - target).abs() < 0.5) && !is_time(c.i) {
+        if (x - target).abs() > 1e-4 * (1.0 + target.abs()) && !(discrete && (x - target).abs() < 0.5) && period(c.i).is_none() {
             a.insert("clamped".into(), json!(true));
         }
         applied.push(Value::Object(a));
@@ -1044,12 +1086,12 @@ fn start_value(v: &View, i: usize, from: f32, mut to: f32, glide: f32) {
         v.bank.set(m.id, to, v.params);
         return;
     }
-    if is_time(i) {
-        // The short way round the clock.
-        if to - from > 12.0 {
-            to -= 24.0;
-        } else if from - to > 12.0 {
-            to += 24.0;
+    if let Some(p) = period(i) {
+        // The short way round the clock (or the compass).
+        if to - from > 0.5 * p {
+            to -= p;
+        } else if from - to > 0.5 * p {
+            to += p;
         }
     }
     v.glides.start(i, VALUE, from, to, glide);
@@ -1163,6 +1205,21 @@ fn rain_words(mm_h: f32) -> (&'static str, &'static str) {
         r if r < 45.0 => ("downpour", "ливень"),
         _ => ("cloudburst", "стена воды"),
     }
+}
+
+/// Nearest of the eight compass points for a wind from `deg`: (English, Russian "с …").
+fn compass_words(deg: f32) -> (&'static str, &'static str) {
+    const P: [(&str, &str); 8] = [
+        ("north", "с севера"),
+        ("northeast", "с северо-востока"),
+        ("east", "с востока"),
+        ("southeast", "с юго-востока"),
+        ("south", "с юга"),
+        ("southwest", "с юго-запада"),
+        ("west", "с запада"),
+        ("northwest", "с северо-запада"),
+    ];
+    P[((deg.rem_euclid(360.0) / 45.0).round() as usize) % 8]
 }
 
 fn wind_words(ms: f32) -> (&'static str, &'static str) {
@@ -1287,10 +1344,16 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     } else if storm > 0.12 {
         w.push_str(", гром вдали");
     }
-    w.push_str(&format!(", {wind_ru} ({:.0} м/с).", wind));
+    let wind_from = get("env.wind_direction").unwrap_or(270.0);
+    let (from_en, from_ru) = compass_words(wind_from);
+    if wind >= 1.0 {
+        w.push_str(&format!(", {wind_ru} {from_ru} ({:.0} м/с).", wind));
+    } else {
+        w.push_str(&format!(", {wind_ru} ({:.0} м/с).", wind));
+    }
     parts.push(("weather", w));
     let weather = json!({"rain_mm_h": r3(rain_now), "rain_target_mm_h": r3(rain_set), "rain": rain_en, "storm": r3(storm),
-        "wind_m_s": r3(wind), "wind": wind_en, "temperature_c": r3(temp), "leaf_wetness": r3(wet)});
+        "wind_m_s": r3(wind), "wind": wind_en, "wind_from_deg": r3(wind_from), "wind_from": from_en, "temperature_c": r3(temp), "leaf_wetness": r3(wet)});
 
     // Water, nearest sounding source relative to the head.
     let regime = opt("water.regime").unwrap_or("scene");
@@ -1474,6 +1537,7 @@ fn describe_static(key: &str) -> &'static str {
         "env.temperature" => "Air temperature, °C. Crickets chirp faster when warm and fall silent below ~10 °C.",
         "env.humidity" => "Relative humidity 0..1 (dry air carries high frequencies further).",
         "env.season" => "spring, summer, autumn, winter: which birds sing, leaf state.",
+        "env.wind_direction" => "Where the wind blows FROM, degrees clockwise from north: 0 north (= ahead in the scene), 90 east (right), 180 south (behind), 270 west (left, default). Compass words work too: \"север\", \"northwest\", \"left\". Gusts sweep in from that side, upwind sounds get quieter and duller far away, downwind ones carry. Fixed to the world: in flight it does not turn with the course. «ветер с севера» = 0.",
         "insects.activity" => "Crickets and other insects, level multiplier (0 silent, 1 as built, 2 loud). Mostly evening and night.",
         "insects.warmth" => "Microclimate offset for insects, °C.",
         "fire.heat" => "Campfire heat release, kW, logarithmic (5 embers, 20 campfire, 100 big fire, 500 bonfire). Only audible if the scene has a fire.",
@@ -2194,6 +2258,30 @@ mod tests {
         assert_eq!(super::direction(0.0, 1.0).1, "слева");
         assert_eq!(super::direction(0.0, -1.0).1, "справа");
         assert_eq!(super::direction(-1.0, 0.1).1, "сзади");
+    }
+
+    #[test]
+    fn wind_direction_from_words() {
+        // «ветер с севера»: the model may answer with a number, a compass word or a phrase.
+        let e = engine();
+        let get = |e: &Engine| e.control(id::ENV_WIND_DIRECTION);
+        for (val, deg) in [
+            (json!("север"), 0.0),
+            (json!("с севера"), 0.0),
+            (json!("северо-западный"), 315.0),
+            (json!("from the east"), 90.0),
+            (json!("SW"), 225.0),
+            (json!("слева"), 270.0),
+            (json!(135), 135.0),
+        ] {
+            let patch = json!({"glide_s": 0, "changes": [{"key": "wind.direction", "value": val}]}).to_string();
+            let r = parse(&e.apply_patch_json(&patch));
+            assert!(r["errors"].as_array().map_or(true, |a| a.is_empty()), "{val}: {r}");
+            render(&e, 0.01);
+            assert!((get(&e) - deg).abs() < 1e-3, "{val}: {} vs {deg}", get(&e));
+        }
+        assert_eq!(super::compass_words(350.0).1, "с севера");
+        assert_eq!(super::compass_words(270.0).0, "west");
     }
 
     #[test]
