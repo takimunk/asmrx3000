@@ -409,7 +409,8 @@ struct Knob {
     static func biomeRu(_ name: String) -> String {
         ["mixed": "смешанный лес", "broadleaf": "лиственный лес", "taiga": "тайга", "river_valley": "речная долина",
          "meadows": "луга", "highlands": "нагорье", "desert": "пустыня", "snowy_mountains": "снежные горы",
-         "lake_shore": "берег озера", "sea_coast": "морское побережье", "big_river": "большая река"][name] ?? name.replacingOccurrences(of: "_", with: " ")
+         "lake_shore": "берег озера", "sea_coast": "морское побережье", "big_river": "большая река",
+         "journey": "путешествие"][name] ?? name.replacingOccurrences(of: "_", with: " ")
     }
 
     /// What Jev reads about a landscape preset (English and the Russian words people use).
@@ -426,6 +427,7 @@ struct Knob {
             "lake_shore": "A lake shore with lapping water ('озеро', 'на берегу озера', 'пруд').",
             "sea_coast": "A sea coast with surf ('море', 'к морю', 'побережье', 'океан', 'пляж').",
             "big_river": "A wide big river ('большая река', 'широкая река', 'на Волгу').",
+            "journey": "A journey: the landscape changes as you fly, meadows, forests, lakes, taiga, mountains ('путешествие', 'разные места', 'покажи всё', 'лети куда-нибудь').",
         ][name] ?? "A landscape called '\(name.replacingOccurrences(of: "_", with: " "))'."
     }
 

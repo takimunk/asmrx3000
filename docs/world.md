@@ -30,6 +30,7 @@ The key stays `flight.biome` (a preset; names in English snake_case, index = pos
 | 8 | `lake_shore` | hills ±10 m | forest, sandy beaches | big lakes (70..170 m semi-axes) | lapping all round |
 | 9 | `sea_coast` | coast with beaches and cliffs | sand on the beach, rock on cliffs | the sea | surf (sand or shingle), gulls |
 | 10 | `big_river` | floodplain, valley sides | forest, beaches | a 90 m wide river every ~1.5 km, banks | mid-stream boils, bank lapping |
+| 11 | `journey` (default) | changes with the place | | | regions of the biomes 0..8, see "Journey" below |
 
 The language control switches biomes generically (`flight.biome=desert`); option names come
 from `asmr_get_control_option`.
@@ -40,6 +41,81 @@ from `asmr_get_control_option`.
 |---|---|---|---|---|
 | 1009 | `flight.relief` | 0..2 | 1 | relief scale: 0 flat, 1 as the biome, 2 twice as steep. Regenerates like a new seed (0.8 s fade) |
 | 1010 | `flight.stops` | 0..1 | 0.5 | how often and how long the flight eases down and lingers at places; 0 never |
+
+## Journey (`journey.rs`, the default preset)
+
+In a journey the biome is not a setting but a **pure function of (seed, place)**: a flight
+starts in a lake meadow where everything is calm and quiet, flies into the forest where the
+birds start and the wind moves the crowns, crosses a taiga, climbs into highlands.
+
+* **Regions**: a jittered Voronoi diagram on an 800 m grid (sites in the middle 40 % of each
+  cell, so the 3 × 3 cells around a point hold every site that matters), its lookup
+  domain-warped by ±100 m of value noise at 700 m so the borders curve.
+* **Climate** picks each region's biome: temperature and moisture fields at 3 km and a
+  ruggedness field at 2.1 km (value noise, as standard scores), plus a little chance per
+  region. Neighbours are therefore plausible:
+
+  | climate | biome |
+  |---|---|
+  | very cold | `snowy_mountains` where rugged, else `taiga` |
+  | rugged | `highlands` |
+  | cool | `taiga` (`highlands` where rugged) |
+  | hot and dry (never with cold within ~1 km) | `desert`, rare |
+  | dry | `meadows` |
+  | wet | `lake_shore` or `river_valley` |
+  | temperate | `mixed`, `broadleaf` (warmer), now and then `meadows`, `lake_shore`, `river_valley` |
+
+  Shares over many regions: taiga 18 %, meadows 19 %, highlands 13 %, mixed 11 %, broadleaf
+  11 %, river valley 9 %, lake shore 9 %, snowy mountains 5 %, desert 4 %. The 3 × 3 regions
+  around the origin are never desert or snowy peaks (a journey starts somewhere gentle). The
+  sea coast and the big river are not part of a journey: their geometry (a 1.4 km continent
+  field, a band of rivers every 1.5 km) is global.
+* **Borders blend** over ~180 m of ground: a neighbouring region's weight is
+  smoothstep(180 m → 0) of the difference of the distances to its site and to the nearest
+  site (twice the distance from the border near it), and weights per biome are normalised
+  (`journey::Blend`, up to four biomes).
+  * **Heights**: each biome's own base relief (hills, massifs, dunes, at its own scales) is
+    evaluated and the heights are lerped; noise scales are never lerped (that would chirp).
+    Between gentle biomes a step stays under 0.24 m per 2.5 m; next to mountains the blend
+    is a slope, never a jump.
+  * **Numeric traits** lerp: forest share, stand density, species weights, the crossing rate
+    of rivers (1/`river_every`), lake chance and size, ridges, boulders, falls, camps, birds,
+    valley width, snowline, treeline, rock slope, temperature, wind, habitat. Forest cover is
+    each biome's own patch field, weighted.
+  * **Discrete traits** (air over crests, beaches, snow and sand cover, the bird tables of the
+    open biomes) come from the dominant biome, or are **dithered** by a smooth 30 m noise per
+    terrain sample and per tree (and by hash per tile for tile-wide choices), so an ecotone
+    has patches of both: snow and spruce reaching into the taiga, sand fingering into the
+    meadow.
+  * **Who uses which**: terrain samples, trees and birds the biome where they stand; tiles
+    (boulders, meadows, air sites, birds of the open) the biome at their centre, dithered per
+    tile; macro cells (rivers, lakes, ridges, falls, camps) the biome at the cell's centre;
+    a lake laps unless its centre is frozen.
+* **Cost**: a lookup is ~140 ns (nine site hashes, the climate of at most a few sites). Each
+  tile checks its centre once: when no other biome is within 180 + 120 m (the field is at
+  most ~1.7-Lipschitz, the half diagonal is 28 m) the whole tile is one biome and its
+  samples skip the lookup. Border tiles look up per terrain sample and on a 10 m grid for
+  their trees. Streaming: mean 1.6 µs, worst 222 µs per 64-sample block at 25 m/s (as the
+  river valley), `chunk_generation_cost`.
+* **The listener** hears the blended biome under it: temperature and the wind over open land
+  lerp across the border (no step over 0.3 °C per 2.5 m), the air dries towards the desert,
+  precipitation turns to snow with the dominant biome; ground, stand density, birds and
+  water come with the content itself. Flying from a lake meadow into a wood the crickets
+  and the lapping fade behind, the crowns and the songbirds come in.
+* **The UI**: `asmr_terrain_sample` evaluates the same function (no tile caches, the same
+  heights). `AsmrFlightFrame.biome` stays the preset (pass it to `asmr_terrain_new`);
+  the new `local_biome` (in place of the padding) is the dominant biome under the listener,
+  and `snow_cover` / `sand_cover` are the blended shares there. The Мир header shows it:
+  "полёт: путешествие · луга".
+
+A journey of 300 s at 20 m/s from seed 1 (with stops): meadows → broadleaf (a stop) →
+lake shore (two stops at the water). Along straight 6 km lines the tests see 3..7 biomes.
+Tests: `journey::tests` (shares, no snow next to sand, weights continuous and normalised),
+`journey_crosses_biomes` (≥ 3 biomes in 6 km for 10 seeds, smooth temperature and wind),
+`journey_heights_are_continuous_across_borders`, `journey_sampler_sees_the_same_relief`,
+`landscape_is_a_function_of_place` (also on a journey border),
+`journey_audio_is_deterministic_and_the_frame_names_the_place`. A preset other than
+`journey` renders bit-identical audio to before.
 
 ## Relief (`terrain.rs`)
 
@@ -296,3 +372,7 @@ than lows, capped at 25 dB; flat ground hides nothing), `valleys_answer_and_plai
 * Sea waves are not drawn as moving geometry; the surf is in the foam bands and the sound.
 * Trees are still the scene's four models (spruce or broadleaf by species); deserts have no
   shrubs, snow does not sit on the crowns.
+* Journey: the picture's ground look (snow, sand, rock slope) is one set of values for the
+  whole view, those under the listener (the relief and water are exact): a desert seen from
+  a meadow 500 m away looks grassy until you get there. Precipitation turns to snow at the
+  border (dominant biome), not gradually.

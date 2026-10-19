@@ -19,6 +19,7 @@
 pub mod acoustic;
 pub mod airflow;
 pub mod bridge;
+pub mod journey;
 pub mod land;
 pub mod terrain;
 #[cfg(test)]
@@ -1401,7 +1402,8 @@ impl Flight {
         let (px, py) = (self.pose.x, self.pose.y);
         let near = &self.near[..self.n_near];
         let surface = self.land.surface_at(px, py);
-        let b = self.land.biome_def();
+        // The biome here (in a journey it changes along the way, blended across borders).
+        let (b, _) = self.land.local(px, py);
         let ahead = (px + 15.0 * self.pose.cos, py + 15.0 * self.pose.sin);
         let local = b.density_ha * self.density * self.land.cover_near(px, py, near).max(self.land.cover_near(ahead.0, ahead.1, near));
         let q = (local / 50.0).round() * 50.0;
@@ -1426,11 +1428,14 @@ impl Flight {
     /// snows, the precipitation reaches only the snow patches (flakes do not patter on leaves
     /// or water). Returns (for the rain/snow patches, for everything else).
     fn ambient(&self, inp: &Inputs) -> (Ambient, Ambient) {
-        let b = self.land.biome_def();
+        let (b, _) = self.land.local(self.pose.x, self.pose.y);
         let mut a = inp.ambient;
         a.temperature_c += b.temperature;
         a.wind_ms *= b.wind;
-        if b.sand > 0.5 {
+        if self.land.journey() {
+            // Dry air fades in towards the desert.
+            a.humidity *= 1.0 - 0.6 * self.land.share(self.pose.x, self.pose.y, |b| b.sand);
+        } else if b.sand > 0.5 {
             a.humidity *= 0.4;
         }
         let precip = a;
@@ -1512,7 +1517,8 @@ impl Flight {
     /// Publishes where the listener is in the landscape and what it looks like, for the UI's
     /// terrain (it samples the relief itself with `asmr_terrain_sample`).
     pub fn publish_frame(&self, bridge: &FrameBridge) {
-        let b = self.land.biome_def();
+        let (px, py) = (self.pose.x, self.pose.y);
+        let (b, local) = self.land.local(px, py);
         bridge.publish(&bridge::Frame {
             x: self.pose.x,
             y: self.pose.y,
@@ -1525,12 +1531,12 @@ impl Flight {
             generation: self.generation,
             linger: self.pose.linger,
             snow: if self.snowing { 1.0 } else { 0.0 },
-            snow_cover: b.snow,
-            sand_cover: b.sand,
+            snow_cover: self.land.share(px, py, |b| b.snow),
+            sand_cover: self.land.share(px, py, |b| b.sand),
             rock_slope: b.rock_slope,
             sea: if b.relief.sea > 0.0 { 1.0 } else { 0.0 },
             enclosure: self.echoes.enclosure,
-            _pad: 0.0,
+            local_biome: local,
         });
     }
 

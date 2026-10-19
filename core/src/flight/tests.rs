@@ -4,9 +4,14 @@ use crate::controls::id;
 use crate::engine::{param, telemetry, Engine};
 use crate::scene::{ObjectInfo, ObjectKind, SceneDesc};
 
+/// A flight over the mixed forest (the default was `mixed` before the `journey` preset).
 fn flying_engine(speed: f32, seed: u32) -> Engine {
+    flying_over("mixed", speed, seed)
+}
+
+fn flying_over(biome: &str, speed: f32, seed: u32) -> Engine {
     let mut desc = SceneDesc::default_scene();
-    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), stops: Some(0.0), ..Default::default() });
+    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), biome: Some(biome.into()), stops: Some(0.0), ..Default::default() });
     let e = Engine::with_scene(48_000.0, &desc).unwrap();
     e.set_param(param::PLAYING, 1.0);
     e
@@ -42,8 +47,20 @@ fn trees_near(l: &Land, x: f64, y: f64, r: f64) -> Vec<(i64, i64, u8, u32)> {
 fn landscape_is_a_function_of_place() {
     // Arrive at (600, 0) straight along x, and by a wide loop from the other side: the same
     // trees and features stand there. Another seed, another forest.
+    landscape_is_a_function_of_place_in(0, 7);
+    // A journey too, where two biomes meet at (600, 0).
+    let seed = (1..400u64)
+        .find(|&s| {
+            let bl = Land::new(s, super::journey::JOURNEY).params.blend(600.0, 0.0, 0.0);
+            bl.n > 1 && bl.w[1] > 0.3 && bl.parts().all(|(b, _)| b.forest > 0.3)
+        })
+        .unwrap();
+    landscape_is_a_function_of_place_in(super::journey::JOURNEY, seed);
+}
+
+fn landscape_is_a_function_of_place_in(biome: u32, seed: u64) {
     let fly = |seed: u64, path: &[(f64, f64)]| {
-        let mut l = Land::new(seed, 0);
+        let mut l = Land::new(seed, biome);
         l.stream(path[0].0, path[0].1, usize::MAX);
         for w in path.windows(2) {
             let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) / 0.4).ceil() as usize;
@@ -57,8 +74,8 @@ fn landscape_is_a_function_of_place() {
         }
         l
     };
-    let straight = fly(7, &[(0.0, 0.0), (600.0, 0.0)]);
-    let looped = fly(7, &[(0.0, 0.0), (0.0, 500.0), (1100.0, 500.0), (1100.0, 0.0), (600.0, 0.0)]);
+    let straight = fly(seed, &[(0.0, 0.0), (600.0, 0.0)]);
+    let looped = fly(seed, &[(0.0, 0.0), (0.0, 500.0), (1100.0, 500.0), (1100.0, 0.0), (600.0, 0.0)]);
     let a = trees_near(&straight, 600.0, 0.0, 60.0);
     assert!(a.len() > 50, "{} trees", a.len());
     assert_eq!(a, trees_near(&looped, 600.0, 0.0, 60.0));
@@ -68,7 +85,7 @@ fn landscape_is_a_function_of_place() {
         v
     };
     assert_eq!(feats(&straight), feats(&looped));
-    assert_ne!(a, trees_near(&fly(8, &[(0.0, 0.0), (600.0, 0.0)]), 600.0, 0.0, 60.0));
+    assert_ne!(a, trees_near(&fly(seed + 1, &[(0.0, 0.0), (600.0, 0.0)]), 600.0, 0.0, 60.0));
     // Bounded: nothing far away survives.
     for t in straight.tiles.iter().filter(|t| t.alive) {
         let (cx, cy) = land::tile_centre(t.i, t.j);
@@ -552,4 +569,124 @@ fn frame_tells_the_ui_where_and_what() {
     let mut out = [0.0f32; terrain::SAMPLE_FLOATS];
     s.grid(f.x, f.y, 1.0, 1, 1, &mut out);
     assert!((out[0].max(out[1]) - f.ground_z).abs() < 0.6, "sampler {} engine {}", out[0], f.ground_z);
+}
+
+
+// ---------------------------------------------------------------------------------------
+// Journey: the biome as a function of place
+// ---------------------------------------------------------------------------------------
+
+/// Points every 2.5 m along a 6 km straight line from the origin, heading by seed.
+fn journey_line(seed: u64) -> impl Iterator<Item = (f64, f64)> {
+    let th = seed as f64 * 0.9;
+    (0..=2400).map(move |k| (k as f64 * 2.5 * th.cos(), k as f64 * 2.5 * th.sin()))
+}
+
+#[test]
+fn journey_crosses_biomes() {
+    // Any 6 km of a journey crosses at least three biomes, and what the listener feels
+    // (temperature, wind) changes along the way, smoothly.
+    for seed in 0..10u64 {
+        let l = Land::new(seed, super::journey::JOURNEY);
+        let mut seen: Vec<u32> = Vec::new();
+        let (mut t_lo, mut t_hi, mut w_lo, mut w_hi) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        let mut prev: Option<(f32, f32)> = None;
+        for (x, y) in journey_line(seed) {
+            let (b, dom) = l.local(x, y);
+            if !seen.contains(&dom) {
+                seen.push(dom);
+            }
+            assert!(dom != 9 && dom != 10 && dom != super::journey::JOURNEY, "no sea coast or big river in a journey");
+            if let Some((t, w)) = prev {
+                assert!((b.temperature - t).abs() < 0.3 && (b.wind - w).abs() < 0.02, "a step at ({x}, {y}): {t} -> {}", b.temperature);
+            }
+            prev = Some((b.temperature, b.wind));
+            (t_lo, t_hi, w_lo, w_hi) = (t_lo.min(b.temperature), t_hi.max(b.temperature), w_lo.min(b.wind), w_hi.max(b.wind));
+        }
+        let names: Vec<&str> = seen.iter().map(|&b| land::BIOMES[b as usize].name).collect();
+        println!("seed {seed}: {names:?}, {t_lo:+.1}..{t_hi:+.1} °C, wind x{w_lo:.2}..{w_hi:.2}");
+        assert!(seen.len() >= 3, "seed {seed}: only {names:?}");
+        assert!(t_hi - t_lo > 1.5 || w_hi - w_lo > 0.15, "seed {seed}: the air never changes");
+    }
+}
+
+#[test]
+fn journey_heights_are_continuous_across_borders() {
+    // Across region borders the relief blends: between gentle biomes (no mountains or
+    // dunes) no step over 0.5 m per 2.5 m, and everywhere the height is continuous (refined
+    // to 2.5 cm, no jump over 10 cm).
+    let (mut borders, mut gentle, mut worst_gentle) = (0, 0, 0.0f32);
+    for seed in 0..10u64 {
+        let l = Land::new(seed, super::journey::JOURNEY);
+        let p = l.params;
+        let mut prev: Option<(f64, f64, f32, bool)> = None;
+        for (x, y) in journey_line(seed) {
+            let bl = p.blend(x, y, 0.0);
+            let h = p.base(x, y).h;
+            let soft = bl.parts().all(|(b, _)| b.relief.mountains == 0.0 && b.relief.dunes == 0.0);
+            if let Some((px, py, ph, was_border)) = prev {
+                if bl.n > 1 || was_border {
+                    borders += 1;
+                    let dh = (h - ph).abs();
+                    if soft {
+                        gentle += 1;
+                        worst_gentle = worst_gentle.max(dh);
+                        assert!(dh < 0.5, "seed {seed}: step {dh} m at ({x:.1}, {y:.1})");
+                    }
+                    if dh > 0.25 {
+                        let mut last = ph;
+                        for k in 1..=100 {
+                            let t = k as f64 / 100.0;
+                            let hk = p.base(px + (x - px) * t, py + (y - py) * t).h;
+                            assert!((hk - last).abs() < 0.1, "seed {seed}: jump {} m near ({x:.1}, {y:.1})", hk - last);
+                            last = hk;
+                        }
+                    }
+                }
+            }
+            prev = Some((x, y, h, bl.n > 1));
+        }
+    }
+    println!("{borders} border steps, {gentle} between gentle biomes, worst {worst_gentle:.2} m");
+    assert!(borders > 500 && gentle > 100, "{borders} {gentle}");
+}
+
+#[test]
+fn journey_sampler_sees_the_same_relief() {
+    // The UI's sampler (no tile caches) and the streamed tiles agree, also on borders.
+    let seed = 3;
+    let mut l = Land::new(seed, super::journey::JOURNEY);
+    let mut s = terrain::Sampler::new(seed, super::journey::JOURNEY, 1.0);
+    let mut out = [0.0f32; terrain::SAMPLE_FLOATS];
+    let mut checked = (0, 0);
+    for (x, y) in journey_line(seed).step_by(40).take(50) {
+        l.stream(x, y, usize::MAX);
+        let (x, y) = (x + 1.25, y + 1.25);
+        s.grid(x, y, 1.0, 1, 1, &mut out);
+        let (g, w, _) = l.nearest(x, y);
+        let border = !l.params.blend(x, y, 0.0).uniform();
+        checked.0 += 1;
+        checked.1 += border as usize;
+        assert!((out[0] - l.ground(x, y)).abs() < 0.6 || w > g, "sampler {} engine {} at ({x}, {y})", out[0], l.ground(x, y));
+    }
+    assert!(checked.0 == 50, "{checked:?}");
+}
+
+#[test]
+fn journey_audio_is_deterministic_and_the_frame_names_the_place() {
+    let take = || {
+        let e = flying_over("journey", 25.0, 4);
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        let mut out = Vec::new();
+        for _ in 0..(48_000 * 3 / 512) {
+            e.render(&mut l, &mut r);
+            out.extend_from_slice(&l);
+        }
+        (out, e.flight_frame().unwrap())
+    };
+    let (a, f) = take();
+    assert_eq!(a, take().0);
+    assert_eq!(f.biome, super::journey::JOURNEY);
+    let land = Land::new(f.seed, f.biome);
+    assert_eq!(f.local_biome, land.local(f.x, f.y).1, "the frame tells the biome under the listener");
 }

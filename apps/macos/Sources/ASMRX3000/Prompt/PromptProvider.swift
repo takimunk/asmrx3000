@@ -267,6 +267,7 @@ struct MockProvider: PromptProvider {
             (["озер", "озёр", "lake"], ["lake_shore", "taiga"]),
             (["тайг", "taiga"], ["taiga"]),
             (["луг", "поле", "meadow"], ["meadows"]),
+            (["путешеств", "journey", "travel"], ["journey"]),
         ]
         let options = scene.options["flight.biome"] ?? []
         if let place = places.first(where: { p in p.words.contains { t.contains($0) } }),

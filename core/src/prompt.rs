@@ -618,6 +618,7 @@ const PLACE_WORDS: &[(&[&str], &[&str])] = &[
     (&["meadow", "field", "steppe", "prairie", "grass", "луг", "поле", "степ", "трав"], &["meadows"]),
     (&["oak", "birch", "deciduous", "broadleaf", "дуб", "берез", "листв"], &["broadleaf"]),
     (&["forest", "wood", "лес"], &["mixed"]),
+    (&["journey", "travel", "tour", "everywhere", "путешеств", "разн", "везде"], &["journey"]),
 ];
 
 /// Matches a preset name loosely: exact, as-built words, prefix / substring, edit distance,
@@ -1078,6 +1079,7 @@ fn biome_ru(name: &str) -> String {
         "lake_shore" => "берег озера",
         "sea_coast" => "морское побережье",
         "big_river" => "большая река",
+        "journey" => "путешествие",
         other => return other.replace('_', " "),
     }
     .to_string()
@@ -1097,6 +1099,7 @@ fn biome_en(name: &str) -> String {
         "lake_shore" => "a lake shore with lapping water".into(),
         "sea_coast" => "a sea coast with surf".into(),
         "big_river" => "a wide big river".into(),
+        "journey" => "a journey: the landscape changes along the way (meadows, forests, lakes, taiga, mountains)".into(),
         other => other.replace('_', " "),
     }
 }
