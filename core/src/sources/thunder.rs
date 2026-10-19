@@ -837,7 +837,12 @@ impl Generator for Thunder {
             }
         }
         self.quiet += dt;
-        while self.next < self.n && self.pulses[self.next].t <= self.clock + LOOKAHEAD {
+        // At most a few pulses per block are written ahead of time (each is a few hundred
+        // samples of filtering), so a strike's hundreds of pulses spread over the lookahead
+        // instead of landing in one block; a pulse due within two blocks is always written.
+        let mut budget = 6;
+        while self.next < self.n && self.pulses[self.next].t <= self.clock + LOOKAHEAD && (budget > 0 || self.pulses[self.next].t <= self.clock + 2.0 * dt) {
+            budget -= 1;
             let p = self.pulses[self.next];
             let offset = ((p.t - self.clock).max(0.0) * sr) as usize;
             self.write_pulse(p, offset);
