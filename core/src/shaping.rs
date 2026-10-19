@@ -392,6 +392,11 @@ impl CoeffRamp {
         self.blocks_left = blocks;
     }
 
+    /// Jumps to the target (a path whose filter state is cleared: nothing to glide over).
+    pub fn settle(&mut self) {
+        self.set(self.target);
+    }
+
     /// Advances one block: returns (start, end) coefficient sets.
     fn advance(&mut self) -> (Coeffs, Coeffs) {
         let c0 = self.co;

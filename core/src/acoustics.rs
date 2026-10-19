@@ -227,6 +227,11 @@ pub struct Acoustics {
     props: Vec<Propagator>,
     bank: FilterBank,
     staged: Vec<bool>,
+    /// Filter-bank slot (lanes 2s, 2s + 1) of each emitter, and the emitter in each slot: a
+    /// permutation. Slots pair up into SIMD groups; a group whose two emitters sleep is not
+    /// filtered, so waking emitters move next to an awake one (`place`).
+    slot_of: Vec<usize>,
+    occupant: Vec<usize>,
     reverb: ForestReverb,
     rotator: ShRotator,
     bed: bed::BedDecoder,
@@ -342,6 +347,8 @@ impl Acoustics {
             props,
             bank,
             staged: vec![false; emitters],
+            slot_of: (0..emitters).collect(),
+            occupant: (0..emitters).collect(),
             reverb,
             rotator: ShRotator::new(),
             bed: bed::BedDecoder::new(),
@@ -368,6 +375,8 @@ impl Acoustics {
     /// Makes room for `n` emitters (allocates: not on the audio thread).
     pub fn ensure_emitters(&mut self, n: usize) {
         while self.props.len() < n {
+            self.slot_of.push(self.props.len());
+            self.occupant.push(self.props.len());
             self.props.push(Propagator::new(&self.ctx));
             self.staged.push(false);
         }
@@ -549,10 +558,39 @@ impl Acoustics {
     /// `render` (path filters run there, batched across emitters); `_bus` is the same bus.
     pub fn propagate(&mut self, id: usize, em: &Emitter, input: &[f32], _bus: &mut [[f32; BLOCK]; CHANNELS]) {
         let phase = self.block.wrapping_add(id as u64);
-        if let Some(p) = self.props.get_mut(id) {
-            p.stage(&self.ctx, em, input, &mut self.sends, &mut self.scratch, phase, &mut self.bank, 2 * id);
-            self.staged[id] = true;
+        if id >= self.props.len() {
+            return;
         }
+        if self.props[id].asleep() && input.iter().any(|v| *v != 0.0) {
+            self.place(id);
+        }
+        let path = 2 * self.slot_of[id];
+        self.props[id].stage(&self.ctx, em, input, &mut self.sends, &mut self.scratch, phase, &mut self.bank, path);
+        self.staged[id] = true;
+    }
+
+    /// Emitter `id` is about to wake: give it a slot whose partner is awake, taken from a
+    /// sleeper (they swap), so the pair's filter group is shared. Its lanes start cleared.
+    fn place(&mut self, id: usize) {
+        let awake = |s: usize, props: &[Propagator], occupant: &[usize]| {
+            occupant.get(s).is_some_and(|&e| e != id && !props[e].asleep())
+        };
+        let own = self.slot_of[id];
+        if !awake(own ^ 1, &self.props, &self.occupant) {
+            let free = (0..self.occupant.len()).find(|&s| {
+                let e = self.occupant[s];
+                (e == id || self.props[e].asleep()) && awake(s ^ 1, &self.props, &self.occupant)
+            });
+            if let Some(s) = free {
+                let other = self.occupant[s];
+                self.occupant.swap(own, s);
+                self.slot_of[id] = s;
+                self.slot_of[other] = own;
+            }
+        }
+        let path = 2 * self.slot_of[id];
+        self.bank.reset(path);
+        self.bank.reset(path + 1);
     }
 
     /// Adds reverb, rotates the bus into the head frame (`head`: head -> world) and decodes.
@@ -581,29 +619,47 @@ impl Acoustics {
     /// Path filters (batched), near field, encode, reverb: the full world-frame bus.
     fn complete_world_bus(&mut self, bus: &mut [[f32; BLOCK]; CHANNELS], len: usize) {
         use crate::profile::{lap, Section};
-        crate::profile::census(self.staged.iter().filter(|s| **s).count(), self.props.len());
         // Path filters for all emitters, four paths per SIMD group, then near field + encode.
         for (id, staged) in self.staged.iter().enumerate() {
-            if !*staged {
-                self.bank.silence(2 * id, len);
-                self.bank.silence(2 * id + 1, len);
+            // Awake but not rendered this block: its filters ring out on silence.
+            if !*staged && !self.props[id].asleep() {
+                self.bank.silence(2 * self.slot_of[id], len);
+                self.bank.silence(2 * self.slot_of[id] + 1, len);
             }
         }
-        for (g, pair) in self.props.chunks_mut(2).enumerate() {
-            let (a, rest) = pair.split_first_mut().unwrap();
-            let (ad, ag) = a.coeffs_mut();
-            let ramps = match rest.first_mut() {
-                Some(b) => {
-                    let (bd, bg) = b.coeffs_mut();
+        // A group of two emitters is skipped when both sleep: their filter state is cleared,
+        // their input silent and `finish` reads nothing back (most birds, rain and insects).
+        let mut filtered = 0;
+        for (g, pair) in self.occupant.chunks(2).enumerate() {
+            if pair.iter().all(|&e| self.props[e].asleep()) {
+                continue;
+            }
+            filtered += pair.len();
+            for &e in pair {
+                // A sleeper beside an awake partner: zero input keeps its cleared lanes at zero.
+                if self.props[e].asleep() {
+                    self.bank.silence(2 * self.slot_of[e], len);
+                    self.bank.silence(2 * self.slot_of[e] + 1, len);
+                }
+            }
+            let ramps = match *pair {
+                [a, b] => {
+                    let [pa, pb] = self.props.get_disjoint_mut([a, b]).expect("slots are a permutation");
+                    let ((ad, ag), (bd, bg)) = (pa.coeffs_mut(), pb.coeffs_mut());
                     [Some(ad), Some(ag), Some(bd), Some(bg)]
                 }
-                None => [Some(ad), Some(ag), None, None],
+                [a] => {
+                    let (ad, ag) = self.props[a].coeffs_mut();
+                    [Some(ad), Some(ag), None, None]
+                }
+                _ => unreachable!(),
             };
             self.bank.process_group(g, len, ramps);
         }
+        crate::profile::census(self.props.iter().filter(|p| !p.asleep()).count(), filtered);
         lap(Section::PathFilters);
         for (id, p) in self.props.iter_mut().enumerate() {
-            p.finish(&self.ctx, &self.bank, 2 * id, bus, &mut self.scratch);
+            p.finish(&self.ctx, &self.bank, 2 * self.slot_of[id], bus, &mut self.scratch);
             self.staged[id] = false;
         }
         lap(Section::Encode);
@@ -951,5 +1007,88 @@ mod tests {
             lv[i] = 10.0 * e.log10();
         }
         assert!((lv[0] - lv[1]).abs() < 3.0, "measured {:.1} dB vs analytic {:.1} dB", lv[0], lv[1]);
+    }
+
+    /// Sleeping emitters are not filtered and a waking one moves next to an awake partner; an
+    /// emitter's sound must not depend on that: with every effect linear, the scene equals
+    /// the sum of each emitter rendered alone.
+    #[test]
+    fn slot_moves_on_wake_keep_superposition() {
+        // 0 and 2 never sound; 1 sounds throughout; 3 wakes after sleeping for 0.5 s.
+        let wake = (0.5 * FS) as usize / BLOCK;
+        let blocks = wake + 120;
+        let noise = |seed: u32, n: usize| {
+            let mut x = seed.wrapping_mul(0x9E37_79B9) ^ n as u32;
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x2C1B_3C6D);
+            x ^= x >> 12;
+            (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+        };
+        let at = [Vec3::new(3.0, 1.0, 0.0), Vec3::new(6.0, -4.0, 1.0), Vec3::new(-8.0, 2.0, 0.5), Vec3::new(-2.0, -7.0, 2.0)];
+        let run = |a: bool, b: bool| -> (Vec<[f32; CHANNELS]>, Acoustics) {
+            let mut ac = Acoustics::new(FS, 4);
+            let mut l = [0.0f32; BLOCK];
+            let mut r = [0.0f32; BLOCK];
+            let mut out = Vec::new();
+            for blk in 0..blocks {
+                let mut bus = [[0.0f32; BLOCK]; CHANNELS];
+                for (id, p) in at.iter().enumerate() {
+                    let on = (id == 1 && a) || (id == 3 && b && blk >= wake);
+                    let x: [f32; BLOCK] = core::array::from_fn(|i| if on { noise(id as u32 + 1, blk * BLOCK + i) * 0.3 } else { 0.0 });
+                    ac.propagate(id, &Emitter::at(*p, 1.0), &x, &mut bus);
+                }
+                ac.render(&mut bus, &Mat3::from_head(0.0, 0.0, 0.0), BLOCK, &mut l, &mut r);
+                if blk >= wake {
+                    for i in 0..BLOCK {
+                        out.push(core::array::from_fn(|ch| bus[ch][i]));
+                    }
+                }
+            }
+            (out, ac)
+        };
+        let (both, ac) = run(true, true);
+        let (only_a, _) = run(true, false);
+        let (only_b, _) = run(false, true);
+        assert_eq!(ac.slot_of[3] ^ 1, ac.slot_of[1], "the waking emitter pairs with the awake one");
+        assert!(ac.props[0].asleep() && ac.props[2].asleep());
+        let peak = both.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+        let err = both.iter().zip(only_a.iter().zip(&only_b))
+            .flat_map(|(x, (a, b))| (0..CHANNELS).map(move |ch| (x[ch] - a[ch] - b[ch]).abs()))
+            .fold(0.0f32, f32::max);
+        let b_peak = only_b.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(b_peak > 0.01 * peak, "the woken emitter is heard ({b_peak} vs {peak})");
+        assert!(err < 1e-4 * peak, "superposition error {err} vs peak {peak}");
+    }
+
+    /// An emitter sleeps soon after its sound has left the delay line (not after the whole
+    /// buffer), and what sleep cuts off is already below -80 dB.
+    #[test]
+    fn sleep_follows_the_path_and_cuts_nothing_audible() {
+        for (dist, ground) in [(2.0f32, true), (40.0, true), (120.0, false)] {
+            let mut ac = Acoustics::new(FS, 1);
+            // The shared reverb rings on by itself; measure the emitter's own paths.
+            ac.set_features(Features { ground, reverb: false, early_reflections: false, ..ac.ctx.features });
+            let mut l = [0.0f32; BLOCK];
+            let mut r = [0.0f32; BLOCK];
+            let on = (0.3 * FS) as usize / BLOCK;
+            let (mut peak, mut last, mut slept) = (0.0f32, 0.0f32, None);
+            for blk in 0..(1.5 * FS) as usize / BLOCK {
+                let x: [f32; BLOCK] = core::array::from_fn(|i| if blk < on { ((blk * BLOCK + i) as f32 * 0.37).sin() * 0.5 } else { 0.0 });
+                let mut bus = [[0.0f32; BLOCK]; CHANNELS];
+                ac.propagate(0, &Emitter::at(Vec3::new(dist, 0.0, 0.0), 1.0), &x, &mut bus);
+                ac.render(&mut bus, &Mat3::from_head(0.0, 0.0, 0.0), BLOCK, &mut l, &mut r);
+                let level = bus.iter().flat_map(|c| c.iter()).fold(0.0f32, |m, v| m.max(v.abs()));
+                if ac.props[0].asleep() {
+                    slept = Some(blk);
+                    break;
+                }
+                peak = peak.max(level);
+                last = level;
+            }
+            let slept = slept.expect("the emitter sleeps") as f32 * BLOCK as f32 / FS - 0.3;
+            let flight = dist / ac.ctx.speed_of_sound;
+            assert!(slept < flight + 0.3, "{dist} m: slept {slept:.2} s after the sound stopped");
+            assert!(last < 1e-4 * peak, "{dist} m: cut at {:.0} dB", 20.0 * (last / peak).log10());
+        }
     }
 }
