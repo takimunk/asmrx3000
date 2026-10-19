@@ -118,7 +118,9 @@ pub mod telemetry {
     pub const RAIN_RATE: u32 = 8;
     /// Leaf wetness 0..1 (canopy water store / capacity).
     pub const WETNESS: u32 = 9;
-    /// Lightning flash 0..1 (jumps to 1 on a strike, decays in ~0.2 s; thunder follows r/c later).
+    /// Lightning flash 0..1: the flicker of the stepped leader and the 1–5 return strokes
+    /// (30–120 ms apart), or the diffuse glow of an intracloud flash, dimmer with distance;
+    /// thunder follows r/c after the first return stroke.
     pub const LIGHTNING: u32 = 10;
     /// Canopy drip rate, mm/h.
     pub const DRIP: u32 = 11;

@@ -599,8 +599,11 @@ enum Shaders {
             }
         }
         v = v + (1.0 - v) * light;
-        // A lightning strike lights the whole picture for a moment.
-        v += F.env.z * 0.35 * (1.0 - v);
+        // A lightning strike lights the whole picture for a moment. The core sends the flicker
+        // of the strokes, dimmer with distance: a far flash is a faint sheet glow, a near one
+        // nearly whites the picture out.
+        float flash = F.env.z;
+        v += flash * (0.3 + 0.5 * flash) * (1.0 - v);
         // A gentle vignette keeps the eye in the middle.
         float2 cv = in.uv * 2.0 - 1.0;
         v *= 1.0 - 0.22 * dot(cv * float2(0.8, 1.0), cv * float2(0.8, 1.0)) * 0.5;

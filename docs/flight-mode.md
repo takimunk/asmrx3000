@@ -58,7 +58,8 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 A new biome or seed fades every voice out (0.8 s), regenerates the landscape around the
 listener and fades the new one in. Your position and heading carry on.
 
-Weather and time of day (rain, wind, storm, temperature, season, hour) and the scene's
+Weather and time of day (rain, wind, storm with its lightning and thunder, temperature,
+season, hour) and the scene's
 macros (wind speed, foliage, water flow, birds, insects, fire) apply to everything generated,
 as in the scene.
 
@@ -223,9 +224,19 @@ let outgoing voices fade (0.35 s) while new ones fade in.
 | fire | 2 | 1 | campfires within 150 m | 1/d |
 | rain | 4 | 4 | four patches around the listener; surface follows the ground (under canopy, meadow, on water, sand, rock, snow); snowfall when it snows | — |
 | air | 4 | 3 | wind over exposed ground within 160 m: dune sand, ridge howl, blowing snow, breeze on open crests | weight / d |
+| sky | 1 | 1 | thunder of the director's lightning: a direction proxy 40 m away towards the strike's bearing in the landscape frame (it stays put as the course turns), the long-range physics inside the generator | — |
 
-So **at most 41 emitters sound at once, out of 58**. The scene has 43, most of them asleep
+So **at most 42 emitters sound at once, out of 59**. The scene has 43, most of them asleep
 (rain and thunder).
+
+**Thunderstorms in flight.** The director's weather keeps running while you fly: with STORM
+up, its lightning (the same flashes the picture shows) feeds the `sky` slot through
+`Ambient` (strike counter, distance, return strokes, bearing). The bearing is taken in the
+landscape frame, so a strike off to the left stays there while the course turns under it;
+the proxy has no velocity (no Doppler from a 40 m stand-in), skips the terrain-path
+diffraction (it stands for a source kilometres away), and like the rain patches it is kept
+through a regeneration. Its share of the field feeds the slope echoes, so valleys answer the
+thunder. See docs/physical-models.md for the flash and the thunder itself.
 
 Area sources are extended: a crown of radius a heard from d gets the factor
 d/√(d² + a²) on top of the propagation's 1/d (intensity ~1/(d² + a²)), so passing through

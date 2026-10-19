@@ -851,3 +851,40 @@ fn wind_direction_is_world_fixed_in_flight() {
     assert!(dh > 1.0, "did not turn: {dh}");
     assert!((turned(w0, w1) + dh).abs() < 0.05, "course turned {dh:.2} rad, wind turned {:.2} rad relative to it", turned(w0, w1));
 }
+
+/// Storms are heard in flight too: the thunder slot sounds after the director's strikes,
+/// from the strike's bearing in the landscape, which stays put while the course turns.
+#[test]
+fn thunder_in_flight_keeps_its_bearing_in_the_landscape() {
+    let e = flying_engine(20.0, 5);
+    e.set_param(param::STORM, 1.0);
+    let mut src = [crate::SourceInfo::default(); crate::MAX_SOURCES];
+    let (mut loud, mut strikes, mut turned) = (0.0f32, 0, 0.0f32);
+    let mut last: Option<(f32, f32)> = None;
+    for _ in 0..240 {
+        run(&e, 0.5);
+        let n = e.sources(&mut src);
+        let Some(t) = src[..n].iter().find(|s| s.kind == SourceKind::Thunder as u32) else { continue };
+        if e.telemetry(telemetry::FLIGHT) < 1.0 {
+            continue;
+        }
+        let r = t.world_x.hypot(t.world_y).hypot(t.world_z);
+        assert!((r - crate::director::THUNDER_PROXY_M).abs() < 0.1, "proxy at {r} m");
+        loud = loud.max(t.level);
+        let rel = t.world_y.atan2(t.world_x);
+        let world = wrap(rel + e.telemetry(telemetry::FLIGHT_HEADING));
+        if let Some((w, r)) = last {
+            if wrap(world - w).abs() > 0.002 {
+                strikes += 1;
+            } else {
+                turned += wrap(rel - r).abs();
+            }
+        }
+        last = Some((world, rel));
+    }
+    assert!(loud > 0.0, "thunder never sounded in flight");
+    // The bearing changes only with a new strike (~4 a minute); between strikes the course
+    // turned under it (the listener-relative direction moved, the landscape one did not).
+    assert!((1..=16).contains(&strikes), "{strikes} bearing changes");
+    assert!(turned > 0.15, "turned {turned} rad between strikes");
+}

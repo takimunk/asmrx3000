@@ -17,7 +17,7 @@ fn weathers() -> [(&'static str, Controls); 5] {
                 Ambient { wind_ms: wind_speed_ms(0.6), rain_mm_h: 8.0, leaf_wetness: 1.0, ground_wetness: 1.0, puddles: 0.4, drip_mm_h: 3.0, hour: 21.0, ..Default::default() },
             ),
         ),
-        ("storm", base(1.6, Ambient { wind_ms: wind_speed_ms(1.2), rain_mm_h: 60.0, leaf_wetness: 1.0, ground_wetness: 1.0, puddles: 0.6, drip_mm_h: 10.0, storm: 1.0, strike: 1, strike_distance_m: 900.0, ..Default::default() })),
+        ("storm", base(1.6, Ambient { wind_ms: wind_speed_ms(1.2), rain_mm_h: 60.0, leaf_wetness: 1.0, ground_wetness: 1.0, puddles: 0.6, drip_mm_h: 10.0, storm: 1.0, strike: 1, strike_distance_m: 900.0, strike_strokes: 3, ..Default::default() })),
         ("after_rain", base(0.3, Ambient { wind_ms: wind_speed_ms(0.3), leaf_wetness: 0.8, ground_wetness: 0.9, puddles: 0.2, drip_mm_h: 0.6, dryness: 0.9, hour: 6.0, ..Default::default() })),
     ]
 }
