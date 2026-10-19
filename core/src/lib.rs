@@ -26,13 +26,13 @@ pub mod profile;
 mod prompt;
 mod propagation;
 mod reverb;
-mod rng;
+pub mod rng;
 mod rotation;
 pub mod scene;
 mod shaping;
 mod simd;
 pub mod sources;
-mod windfield;
+pub mod windfield;
 
 pub use ambisonics::CHANNELS;
 pub use controls::ControlInfo;

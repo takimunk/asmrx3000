@@ -6,3 +6,4 @@ pub mod diffraction;
 pub mod directivity;
 pub mod ground;
 pub mod scattering;
+pub mod wind;

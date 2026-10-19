@@ -94,10 +94,17 @@ pub mod param {
     pub const HEAD_PREDICTION: u32 = 42;
     /// 1 = the head turns about the neck (ears translate: motion parallax), 0 = pure rotation.
     pub const HEAD_PARALLAX: u32 = 43;
-    /// Flight mode on (1) / off (0): cross-fades the scene into an endless streamed landscape
-    /// the listener travels through (flight/, docs/flight-mode.md).
+    /// Flight mode: 0 = the scene (home), 1 = flying through an endless streamed landscape,
+    /// 2 = in that landscape, holding still (walking with the MOVE_* keys). 1 and 2 are both
+    /// "in the world" for the cross-fade (flight/, docs/flight-mode.md).
     pub const FLIGHT: u32 = 44;
-    pub const COUNT: usize = 45;
+    /// Movement keys held in the app, −1..1: W/S (+ = forward), A/D (+ = right), Q/E (+ = turn
+    /// right); MOVE_RUN 0/1 (Shift). Standing they walk; flying they steer and set the cruise.
+    pub const MOVE_FORWARD: u32 = 45;
+    pub const MOVE_STRAFE: u32 = 46;
+    pub const MOVE_TURN: u32 = 47;
+    pub const MOVE_RUN: u32 = 48;
+    pub const COUNT: usize = 49;
 }
 
 pub mod telemetry {
@@ -111,7 +118,9 @@ pub mod telemetry {
     pub const RAIN_RATE: u32 = 8;
     /// Leaf wetness 0..1 (canopy water store / capacity).
     pub const WETNESS: u32 = 9;
-    /// Lightning flash 0..1 (jumps to 1 on a strike, decays in ~0.2 s; thunder follows r/c later).
+    /// Lightning flash 0..1: the flicker of the stepped leader and the 1–5 return strokes
+    /// (30–120 ms apart), or the diffuse glow of an intracloud flash, dimmer with distance;
+    /// thunder follows r/c after the first return stroke.
     pub const LIGHTNING: u32 = 10;
     /// Canopy drip rate, mm/h.
     pub const DRIP: u32 = 11;
@@ -145,7 +154,10 @@ pub mod telemetry {
     pub const SOLOISTS: u32 = 26;
     /// Share of the soloists' loudness lost to masking by the bed, 0..1 (after ducking).
     pub const MASKING: u32 = 27;
-    pub const COUNT: usize = 28;
+    /// Where the wind comes from relative to the listener's forward (the scene's x axis; in
+    /// flight the course), rad, counter-clockwise (+π/2 = from the left).
+    pub const WIND_FROM: u32 = 28;
+    pub const COUNT: usize = 29;
 }
 
 #[repr(u32)]
@@ -905,7 +917,12 @@ impl Dsp {
         let head = pose.rotation;
         self.acoustics.set_listener_offset(pose.offset);
 
+        self.wind.set_direction(st.get(controls::id::ENV_WIND_DIRECTION));
         self.wind.step(wind, dt, &mut self.rng);
+        // Wind refraction and turbulence on every path (propagation.rs): the mean wind and
+        // the gust at the listener (the profile near the ground follows the gusts).
+        let (wx, wy) = self.wind.blow_to();
+        self.acoustics.set_wind(wx, wy, crate::sources::common::wind_speed_ms(wind), crate::sources::common::wind_speed_ms(self.wind.local(0.0)));
         // Scene: user moves in, director moves the animals, emitters follow their owners.
         shared.objects.apply_moves(&mut self.world);
         let env = Environment {
@@ -944,7 +961,7 @@ impl Dsp {
         // Scene focus: where the head points, and whether the listener travels (flight speed;
         // the scene's listener stands still).
         let travel = match self.flight.as_deref() {
-            Some(f) if self.flight_mix > 0.5 => f.pose().speed,
+            Some(f) if self.flight_mix > 0.5 => f.pose().ground_speed(),
             _ => 0.0,
         };
         self.mix.set_listener(&head, travel);
@@ -955,7 +972,7 @@ impl Dsp {
             controls.water = water * em.flow;
             controls.neural = neural;
             controls.legacy_levels = self.mix.bypass;
-            controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
+            controls.gust = (wind + (self.wind.at(em.position.x, em.position.y) - wind) * gustiness).max(0.0);
             let flying = em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0;
             let view = EmitterView {
                 key: idx as u64,
@@ -1057,6 +1074,13 @@ impl Dsp {
                 gustiness,
                 water,
                 neural,
+                hold: p(param::FLIGHT) > 1.5,
+                moves: flight::Moves::new(
+                    p(param::MOVE_FORWARD),
+                    p(param::MOVE_STRAFE),
+                    p(param::MOVE_TURN),
+                    p(param::MOVE_RUN) > 0.5,
+                ),
             };
             let bed = match self.bed_mode {
                 0 => None,
@@ -1157,7 +1181,7 @@ impl Dsp {
         }
         if let Some(f) = self.flight.as_deref() {
             let pose = f.pose();
-            t[telemetry::FLIGHT_SPEED as usize].store(pose.speed);
+            t[telemetry::FLIGHT_SPEED as usize].store(pose.ground_speed());
             t[telemetry::FLIGHT_ALTITUDE as usize].store(pose.height);
             t[telemetry::FLIGHT_ODOMETER as usize].store((pose.s % 10_000.0) as f32);
             t[telemetry::FLIGHT_TURN as usize].store(pose.turn);
@@ -1167,6 +1191,11 @@ impl Dsp {
         }
         t[telemetry::FLIGHT as usize].store(self.flight_mix);
         t[telemetry::GUST as usize].store(self.wind.gust());
+        let (wx, wy) = match flight {
+            Some(f) => f.acoustics.context().wind_to,
+            None => self.acoustics.context().wind_to,
+        };
+        t[telemetry::WIND_FROM as usize].store((-wy).atan2(-wx));
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
         t[telemetry::TIME as usize].store((self.time % 86_400.0) as f32);
         t[telemetry::OUTPUT_LEVEL as usize].store(self.out_level);
@@ -1290,7 +1319,7 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 46);
+        assert_eq!(engine.sources(&mut src), 48);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
@@ -1333,7 +1362,7 @@ mod tests {
         assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
         let mut objs = [ObjectInfo::default(); 64];
         let n = engine.objects(&mut objs);
-        assert_eq!(n, 34);
+        assert_eq!(n, 36);
         let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
         assert_eq!(tree.kind, ObjectKind::Tree as u32);
         assert_ne!(tree.flags & object_flags::MOVABLE, 0);

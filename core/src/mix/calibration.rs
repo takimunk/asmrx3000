@@ -137,7 +137,7 @@ pub enum Metric {
     LaEq1m,
     /// A-weighted equivalent level at the listener in the default scene (distributed sources).
     LaEqScene,
-    /// Mean LAFmax at the listener per thunder clap (storm 1, strikes ~0.5–3 km).
+    /// Loudest LAFmax at the listener among the thunder claps of a storm (storm 1).
     LaFmaxScene,
 }
 
@@ -178,26 +178,31 @@ pub static TABLE: [Entry; 18] = [
     e(C::Bird(Species::Skylark), LaFmax1m, 80.0, 76.8, "song (perched)", "skylark song ~75–85 dB at 1 m, heard from 50 m up"),
     e(C::Bird(Species::Gull), LaFmax1m, 90.0, 81.0, "long call", "herring gull long call ~85–95 dB at 1 m (estimate)"),
     e(C::Bird(Species::Raven), LaFmax1m, 86.0, 77.9, "croak", "raven croaks carry >1 km; ~80–90 dB at 1 m (estimate)"),
-    e(C::Water, LaEq1m, 57.0, 52.6, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
-    e(C::Foliage, LaEqScene, 44.0, 70.5, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
-    e(C::Wind, LaEqScene, 36.0, 29.9, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
+    // Water raw_db re-measured 52.6 → 52.8 after the reference tuning of the water model (surface-flow bed, babble).
+    e(C::Water, LaEq1m, 57.0, 52.8, "brook_pebbles segment, WATER 0.6 (0.8 m/s, 12 cm deep)", "small stream 55–70 dB(A) at 1 m; 45–55 at 5 m (soundscape surveys)"),
+    // Re-measured (69.5 → 67.0) when the foliage model gained the crown's aeolian roar and
+    // darker leaf slaps: more of its energy now lies below 500 Hz, where A-weighting counts less.
+    e(C::Foliage, LaEqScene, 44.0, 67.0, "default scene canopy, 4.8 m/s at crown height", "Fégeant 1999; Bolin 2009: deciduous vegetation 40–50 dB(A) at 5 m/s"),
+    e(C::Wind, LaEqScene, 36.0, 34.7, "forest_roar 60 m away, 4.8 m/s", "distant forest roar 30–40 dB(A) in a breeze"),
     e(C::Rain, LaEqScene, 51.0, 63.0, "default scene, 4 mm/h steady rain", "rain 1 mm/h ~45, 4 mm/h ~50, 15 mm/h ~58, 50 mm/h ~65 dB(A) (in-forest measurements)"),
     e(C::Insects, LaEq1m, 72.0, 81.4, "field_cricket chorus (4 males), 22 °C, night", "Gryllus campestris calling song ~90 dB at 10 cm (~70 dB at 1 m each)"),
     e(C::Fire, LaEq1m, 62.0, 62.8, "campfire 20 kW", "campfire crackle ~55–65 dB(A) at 1 m"),
 ];
 
-/// Thunder: loudest clap LAFmax at the listener in 4 minutes at storm 1 (~10 strikes,
-/// 0.5–3 km).
+/// Thunder: loudest clap LAFmax at the listener in 4 minutes at storm 1 (~10 flashes,
+/// ~0.3–2 km: the storm is overhead).
+/// 80 dB(A), below the ~90 a strike a few hundred metres away really makes: the comfort
+/// compressor would hold that moment anyway (`mix::tests::storm_stays_comfortable`).
 /// Kept separate: the generator includes the long-range physics and its emitter is a
 /// direction proxy at `director::THUNDER_PROXY_M`, whose 1/r the gain undoes.
 pub static THUNDER: Entry = Entry {
     class: C::Thunder,
     metric: LaFmaxScene,
-    target_db: 84.0,
-    raw_db: 71.5,
+    target_db: 80.0,
+    raw_db: 74.7,
     post: crate::director::THUNDER_PROXY_M,
-    condition: "storm 1, loudest clap in 4 min",
-    source: "thunder 1–3 km: 80–100 dB peak, ~75–90 dB(A) Fmax (Few 1969; Bass 1980)",
+    condition: "storm 1, loudest clap in 4 min (strikes ~0.3–2 km)",
+    source: "thunder 0.3–3 km: 80–110 dB peak, ~75–95 dB(A) Fmax (Few 1969; Bass 1980)",
 };
 
 pub fn entry(class: SoundClass) -> &'static Entry {

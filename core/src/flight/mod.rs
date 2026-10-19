@@ -19,6 +19,7 @@
 pub mod acoustic;
 pub mod airflow;
 pub mod bridge;
+pub mod journey;
 pub mod land;
 pub mod terrain;
 #[cfg(test)]
@@ -37,7 +38,7 @@ use crate::rng::Rng;
 use crate::scene::{object_flags, vary_water, Emitter, Entity, Geometry, ObjectInfo, ObjectKind, World};
 use crate::shaping::NF;
 use crate::sources::{
-    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Water, Wind, Wings,
+    Ambient, Bird as Voice, Controls, Fire, Flyer, Foliage, Insects, ModelConfig, ModelKind, Rain, Thunder, Water, Wind, Wings,
 };
 use crate::windfield::WindField;
 
@@ -75,6 +76,17 @@ const MAX_RANGE: f32 = 220.0;
 const MID_BAND: usize = 22;
 /// Deceleration when easing into a stop, m/s².
 const STOP_DECEL: f32 = 1.0;
+/// Holding still in the world (ASMR_PARAM_FLIGHT = 2), and walking: deceleration, m/s².
+/// Firm enough that a stop feels immediate, soft enough not to jolt (25 m/s → 0 in ~6 s).
+const HOLD_DECEL: f32 = 4.0;
+/// Walking and running pace on foot (W/S/A/D, with Shift), m/s.
+const WALK: f32 = 1.5;
+const RUN: f32 = 5.0;
+/// Turning on foot with Q/E, rad/s (60°/s), and its slew limit, rad/s².
+const KEY_TURN: f32 = 1.047;
+const KEY_TURN_ACCEL: f32 = 3.0;
+/// In flight, W/S change the cruise by this much per second held, m/s².
+const KEY_CRUISE_RATE: f32 = 3.0;
 
 /// Ids of objects reported to the UI that have a shape: see `asmr_get_object_path`.
 pub use bridge::PATH_POINTS;
@@ -90,10 +102,19 @@ enum Pool {
     Rain,
     /// Wind over exposed ground: dune sand, ridge howl, blowing snow, grass on open crests.
     Air,
+    /// Thunder of the director's lightning, from the strike's bearing in the landscape.
+    Sky,
+}
+
+impl Pool {
+    /// Pools that follow the listener (not the landscape): kept through a regeneration.
+    fn persistent(self) -> bool {
+        matches!(self, Pool::Rain | Pool::Sky)
+    }
 }
 
 /// (pool, slots, voiced at once). Spare slots let outgoing voices fade while new ones fade in.
-const POOLS: [(Pool, usize, usize); 8] = [
+const POOLS: [(Pool, usize, usize); 9] = [
     (Pool::Near, 14, 10),
     (Pool::Cell, 8, 6),
     (Pool::Bird, 14, 8),
@@ -102,11 +123,12 @@ const POOLS: [(Pool, usize, usize); 8] = [
     (Pool::Fire, 2, 1),
     (Pool::Rain, 4, 4),
     (Pool::Air, 4, 3),
+    (Pool::Sky, 1, 1),
 ];
 
-/// Emitters in flight mode (fixed: the level-of-detail bound). At most 41 sound at once
+/// Emitters in flight mode (fixed: the level-of-detail bound). At most 42 sound at once
 /// (the voiced counts above); the rest are spares that fade out while others fade in.
-pub const EMITTERS: usize = 58;
+pub const EMITTERS: usize = 59;
 
 /// Species of the bird slots (a streamed bird takes a slot of its species when one is free).
 const BIRD_SLOTS: [Species; 14] = [
@@ -134,6 +156,8 @@ enum Target {
     Bird { idx: u16, id: u32 },
     Site { idx: u16, id: u32 },
     Rain(u8),
+    /// The thunder proxy (direction of the latest strike).
+    Sky,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,6 +191,7 @@ fn target_key(t: &Target) -> u64 {
         Target::Bird { idx, id } => 3 << 60 | (idx as u64) << 32 | id as u64,
         Target::Site { idx, id } => 4 << 60 | (idx as u64) << 32 | id as u64,
         Target::Rain(i) => 5 << 60 | i as u64,
+        Target::Sky => 6 << 60,
     }
 }
 
@@ -228,6 +253,32 @@ pub struct Inputs<'a> {
     pub gustiness: f32,
     pub water: f32,
     pub neural: bool,
+    /// Holding still in the world (ASMR_PARAM_FLIGHT = 2): no cruise and no stops, down to
+    /// standing height; the keys walk.
+    pub hold: bool,
+    /// Movement keys (ASMR_PARAM_MOVE_*).
+    pub moves: Moves,
+}
+
+/// Movement keys held in the app (ASMR_PARAM_MOVE_*), each −1..1.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Moves {
+    /// W / S: + = forward. Standing: walk along where the head looks. Flying: cruise up / down.
+    pub forward: f32,
+    /// A / D: + = right. Standing: step sideways. Flying: turn.
+    pub strafe: f32,
+    /// Q / E: + = right. Turns the course.
+    pub turn: f32,
+    /// Shift: run (5 m/s) instead of walk (1.5 m/s).
+    pub run: bool,
+}
+
+impl Moves {
+    /// Clamped to −1..1, NaN as 0.
+    pub fn new(forward: f32, strafe: f32, turn: f32, run: bool) -> Self {
+        let c = |v: f32| if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 };
+        Self { forward: c(forward), strafe: c(strafe), turn: c(turn), run }
+    }
 }
 
 /// Listener pose in the world.
@@ -240,7 +291,10 @@ pub struct Pose {
     pub heading: f64,
     /// Ears above the ground, m.
     pub height: f32,
+    /// Speed along the course, m/s (negative walking backwards).
     pub speed: f32,
+    /// Sideways speed, m/s (+ = to the left of the course; stepping aside on foot).
+    pub side: f32,
     /// Turn rate, rad/s (+ = turning left).
     pub turn: f32,
     /// Vertical speed, m/s.
@@ -253,6 +307,13 @@ pub struct Pose {
     /// sin / cos of the heading.
     sin: f64,
     cos: f64,
+}
+
+impl Pose {
+    /// Speed over the ground, m/s (along and across the course).
+    pub fn ground_speed(&self) -> f32 {
+        self.speed.hypot(self.side)
+    }
 }
 
 pub struct Flight {
@@ -308,6 +369,9 @@ pub struct Flight {
     generation: u32,
     /// Smoothed ground the flight level follows (looks ahead over rises).
     terrain_follow: f32,
+    /// Direction of the latest lightning strike in the landscape frame (unit), and the
+    /// strike counter it belongs to.
+    sky: (Vec3, u32),
 }
 
 /// Stops and slow-downs at places worth lingering (a lake shore, a waterfall, the surf, the
@@ -332,11 +396,29 @@ struct Route {
     next_visited: usize,
     /// How far the flight level comes down to standing height (0..1, smoothed).
     down: f32,
+    /// Holding still in the world (ASMR_PARAM_FLIGHT = 2) as of the last block.
+    hold: bool,
+    /// Cruise added by W / S in flight, m/s (reset by a new flight.speed or a stop).
+    cruise_offset: f32,
+    /// flight.speed the offset applies to.
+    cruise_ctl: f32,
 }
 
 impl Route {
     fn new() -> Self {
-        Self { visit: Visit::Cruise, at: (0.0, 0.0), id: 0, timer: 0.0, cooldown: 20.0, visited: [0; 16], next_visited: 0, down: 0.0 }
+        Self {
+            visit: Visit::Cruise,
+            at: (0.0, 0.0),
+            id: 0,
+            timer: 0.0,
+            cooldown: 20.0,
+            visited: [0; 16],
+            next_visited: 0,
+            down: 0.0,
+            hold: false,
+            cruise_offset: 0.0,
+            cruise_ctl: f32::NAN,
+        }
     }
 }
 
@@ -411,6 +493,7 @@ impl Flight {
                     Pool::Fire => (SourceKind::Fire, Fire::preset("campfire").map(ModelConfig::Fire)),
                     Pool::Rain => (SourceKind::Rain, Some(rain(Surface::Forest, false))),
                     Pool::Air => (SourceKind::Wind, Some(air(0))),
+                    Pool::Sky => (SourceKind::Thunder, Some(ModelConfig::Thunder(Thunder::storm()))),
                     Pool::Bird => (SourceKind::Bird, None),
                 };
                 let generator: Box<dyn crate::sources::Generator> = match cfg {
@@ -446,8 +529,12 @@ impl Flight {
                         None => SoundClass::Bird(species),
                     },
                 });
-                let target = if pool == Pool::Rain { Target::Rain(j as u8) } else { Target::None };
-                slots.push(Slot { pool, target, want: pool == Pool::Rain, fade: 0.0, gain: 1.0, ref_area: 1.0, extent: 5.0, species, vel: Vec3::default() });
+                let target = match pool {
+                    Pool::Rain => Target::Rain(j as u8),
+                    Pool::Sky => Target::Sky,
+                    _ => Target::None,
+                };
+                slots.push(Slot { pool, target, want: pool.persistent(), fade: 0.0, gain: 1.0, ref_area: 1.0, extent: 5.0, species, vel: Vec3::default() });
             }
         }
         debug_assert_eq!(emitters.len(), EMITTERS);
@@ -498,6 +585,7 @@ impl Flight {
             snowing: false,
             generation: 0,
             terrain_follow: f32::NAN,
+            sky: (crate::director::thunder_direction(0.0, 3000.0), 0),
         };
         f.locate();
         f
@@ -561,7 +649,7 @@ impl Flight {
         let p = &self.pose;
         Vec3::new(
             -p.speed + p.turn * rel.y + c * own[0] + s * own[1],
-            -p.turn * rel.x - s * own[0] + c * own[1],
+            -p.side - p.turn * rel.x - s * own[0] + c * own[1],
             -p.climb + own[2],
         )
     }
@@ -604,6 +692,12 @@ impl Flight {
         }
         self.environment(inp);
         let (amb_rain, amb) = self.ambient(inp);
+        // The wind is world-fixed: its vector in the listener (heading) frame, for refraction.
+        let (wx, wy) = inp.wind.blow_to_heading(self.pose.heading as f32);
+        self.acoustics.set_wind(wx, wy, amb.wind_ms, amb.wind_ms * inp.wind.speed_ratio(inp.wind_slider));
+        if amb.strike != self.sky.1 {
+            self.sky = (crate::director::thunder_direction(amb.strike_bearing, amb.strike_distance_m), amb.strike);
+        }
         let c_air = crate::physics::air::speed_of_sound(amb.temperature_c as f64) as f32;
         crate::profile::lap(crate::profile::Section::Flight);
 
@@ -647,13 +741,14 @@ impl Flight {
                 em.controls.activity = activity;
                 em.controls.calling = calling;
                 em.controls.flap = flap;
+                em.controls.wings_driven = true;
             }
             let tmp = &mut self.scratch[..len];
             let mut c = em.controls;
             c.water = inp.water * em.flow;
             c.neural = inp.neural;
             c.legacy_levels = mixer.bypass;
-            c.gust = (inp.wind_slider + (inp.wind.local(rel.y) - inp.wind_slider) * inp.gustiness).max(0.0);
+            c.gust = (inp.wind_slider + (inp.wind.at_heading(rel.x, rel.y, self.pose.heading as f32) - inp.wind_slider) * inp.gustiness).max(0.0);
             // Sound director: calibrated level, role, masking EQ, phrase permits.
             let view = EmitterView {
                 key: target_key(&slot.target),
@@ -718,7 +813,8 @@ impl Flight {
 
         // Wind noise of motion, at the ears.
         let wind_ms = inp.ambient.wind_ms;
-        let airspeed = (self.pose.speed * self.pose.speed + 0.16 * wind_ms * wind_ms).sqrt();
+        let ground_speed = self.pose.ground_speed();
+        let airspeed = (ground_speed * ground_speed + 0.16 * wind_ms * wind_ms).sqrt();
         self.airflow.render(airspeed, inp.st.get(id::FLIGHT_AIRFLOW), inp.head_yaw, sr, &mut self.left[..len], &mut self.right[..len]);
 
         let (gs, gf) = ((mix * core::f32::consts::FRAC_PI_2).cos(), (mix * core::f32::consts::FRAC_PI_2).sin());
@@ -745,12 +841,17 @@ impl Flight {
             self.ctl = Some(*st);
             self.dirty = true;
         }
-        let cruise = st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0);
+        let cruise = self.cruise_speed(st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0), inp, dt);
         let stops = st.get(id::FLIGHT_STOPS).clamp(0.0, 1.0);
-        self.update_route(dt, stops);
-        let target = self.route_speed(cruise);
-        let dv = (target - self.pose.speed).clamp(-ACCEL * dt, ACCEL * dt);
-        self.pose.speed += dv;
+        self.update_route(dt, stops, inp.hold);
+        if inp.hold {
+            self.walk(inp, dt);
+        } else {
+            let target = self.route_speed(cruise);
+            let dv = (target - self.pose.speed).clamp(-ACCEL * dt, ACCEL * dt);
+            self.pose.speed += dv;
+            self.pose.side -= self.pose.side.clamp(-HOLD_DECEL * dt, HOLD_DECEL * dt);
+        }
         let alt = st.get(id::FLIGHT_ALTITUDE).clamp(1.2, 40.0);
         // Standing at a place: down to standing height.
         let alt = alt + (alt.min(1.7) - alt) * self.route.down;
@@ -763,7 +864,7 @@ impl Flight {
         if (seed != self.seed_ctl || biome != self.biome_ctl || relief != self.relief_ctl) && self.regen == 0.0 {
             self.regen = REGEN_S;
             for s in self.slots.iter_mut() {
-                if s.pool != Pool::Rain {
+                if !s.pool.persistent() {
                     s.want = false;
                 }
             }
@@ -776,7 +877,7 @@ impl Flight {
                 self.biome_ctl = biome;
                 self.relief_ctl = relief;
                 for s in self.slots.iter_mut() {
-                    if s.pool != Pool::Rain {
+                    if !s.pool.persistent() {
                         *s = Slot { target: Target::None, want: false, fade: 0.0, ..*s };
                     }
                 }
@@ -793,6 +894,46 @@ impl Flight {
         }
     }
 
+    /// The cruise: flight.speed plus what W / S added in flight (ramped at
+    /// KEY_CRUISE_RATE). The offset is dropped when flight.speed changes or on a stop, so
+    /// flying on after a stop resumes at flight.speed.
+    fn cruise_speed(&mut self, ctl: f32, inp: &Inputs, dt: f32) -> f32 {
+        let r = &mut self.route;
+        if ctl != r.cruise_ctl || inp.hold {
+            r.cruise_ctl = ctl;
+            r.cruise_offset = 0.0;
+        }
+        if !inp.hold {
+            r.cruise_offset = (r.cruise_offset + inp.moves.forward * KEY_CRUISE_RATE * dt).clamp(-ctl, 30.0 - ctl);
+        }
+        (ctl + r.cruise_offset).clamp(0.0, 30.0)
+    }
+
+    /// Standing in the world: the keys walk (W/S along where the head looks when steering by
+    /// head, else along the course; A/D sideways; Shift runs). Speeds up at ACCEL, slows down
+    /// at HOLD_DECEL; no keys = stand still.
+    fn walk(&mut self, inp: &Inputs, dt: f32) {
+        let m = inp.moves;
+        let pace = if m.run { RUN } else { WALK };
+        let g = if self.steering(inp) { self.gaze.0 } else { 0.0 };
+        let (s, c) = g.sin_cos();
+        let n = m.forward.hypot(m.strafe).max(1.0);
+        let (f, r) = (m.forward / n, m.strafe / n);
+        let tx = pace * (f * c + r * s);
+        let ty = pace * (f * s - r * c);
+        let (dx, dy) = (tx - self.pose.speed, ty - self.pose.side);
+        let d = dx.hypot(dy);
+        let rate = if tx.hypot(ty) < self.pose.ground_speed() { HOLD_DECEL } else { ACCEL };
+        let k = if d > rate * dt { rate * dt / d } else { 1.0 };
+        self.pose.speed += dx * k;
+        self.pose.side += dy * k;
+    }
+
+    /// Steering by head is live (a mode is on and AirPods poses arrive).
+    fn steering(&self, inp: &Inputs) -> bool {
+        inp.head_tracked && inp.st.get(id::FLIGHT_STEER).round() as u32 > 0
+    }
+
     /// Steers and moves the listener. With steering by head, the course turns towards where
     /// the head looks (yaw; pitch climbs and dives with `yaw_pitch`); otherwise it wanders
     /// along a gentle curve. Both go through the same turn-rate slew limit.
@@ -806,8 +947,21 @@ impl Flight {
         self.gaze.0 += (wrap(yaw) - self.gaze.0) * g;
         self.gaze.1 += (pitch - self.gaze.1) * g;
         let beyond = |a: f32| a.signum() * (a.abs() - DEAD_ZONE).max(0.0);
-        let target = if mode > 0 {
-            (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn
+        let by_head = (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn;
+        let m = inp.moves;
+        // Keys: + = right, the turn rate is + = left.
+        let keys = -(m.turn + if inp.hold { 0.0 } else { m.strafe }).clamp(-1.0, 1.0);
+        let target = if inp.hold {
+            // On foot: Q/E turn; walking forward with the head turned, the course follows the
+            // gaze (so the view, which looks along the course, stays behind you).
+            let follow = if mode > 0 && m.forward > 0.05 { by_head } else { 0.0 };
+            (follow + keys * KEY_TURN).clamp(-KEY_TURN, KEY_TURN)
+        } else if keys != 0.0 {
+            // Keyboard steering in flight, on top of the head.
+            let head = if mode > 0 { by_head } else { 0.0 };
+            (head + keys * max_turn).clamp(-max_turn, max_turn)
+        } else if mode > 0 {
+            by_head
         } else if self.route.visit == Visit::Approach {
             // Heading for a place to stop: turn towards it (gently).
             let r = self.rel(self.route.at.0, self.route.at.1, 0.0);
@@ -817,8 +971,9 @@ impl Flight {
             let k = curvature(self.land.seed, self.pose.s) * self.curviness as f64;
             (k * self.pose.speed as f64) as f32 + self.coast_bias()
         };
-        self.pose.turn += (target - self.pose.turn).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
-        if mode >= 2 {
+        let slew = if inp.hold { KEY_TURN_ACCEL } else { TURN_ACCEL } * dt;
+        self.pose.turn += (target - self.pose.turn).clamp(-slew, slew);
+        if mode >= 2 && !inp.hold {
             let climb = (beyond(self.gaze.1) / FULL_TURN).clamp(-1.0, 1.0) * CLIMB_PER_SPEED * self.pose.speed;
             self.climb_offset = (self.climb_offset + climb * dt).clamp(1.2 - self.altitude, 40.0 - self.altitude);
         } else {
@@ -826,11 +981,12 @@ impl Flight {
         }
 
         let mid = self.pose.heading + 0.5 * (self.pose.turn * dt) as f64;
-        let step = (self.pose.speed * dt) as f64;
-        self.pose.x += step * mid.cos();
-        self.pose.y += step * mid.sin();
+        let (fwd, side) = ((self.pose.speed * dt) as f64, (self.pose.side * dt) as f64);
+        let (ms, mc) = mid.sin_cos();
+        self.pose.x += fwd * mc - side * ms;
+        self.pose.y += fwd * ms + side * mc;
         self.pose.heading = (self.pose.heading + (self.pose.turn * dt) as f64).rem_euclid(core::f64::consts::TAU);
-        self.pose.s += step;
+        self.pose.s += fwd.hypot(side);
         self.locate();
         if self.regen == 0.0 {
             // Quicker right after a reseed, while the landscape is still filling in.
@@ -899,14 +1055,30 @@ impl Flight {
         }
     }
 
-    /// Advances the stop-and-go: approach → linger → fly on.
-    fn update_route(&mut self, dt: f32, stops: f32) {
+    /// Advances the stop-and-go: approach → linger → fly on. Holding still in the world
+    /// suspends it: the flight level comes down to standing height and no place is sought
+    /// until a while after flying on.
+    fn update_route(&mut self, dt: f32, stops: f32, hold: bool) {
         let (px, py) = (self.pose.x, self.pose.y);
         let speed = self.pose.speed;
         let seed = self.land.seed;
         let r = &mut self.route;
         r.cooldown -= dt;
         let ease = |x: &mut f32, to: f32, tau: f32| *x += (to - *x) * (1.0 - (-dt / tau).exp());
+        if hold != r.hold {
+            r.hold = hold;
+            if hold && r.visit == Visit::Linger {
+                r.visited[r.next_visited] = r.id;
+                r.next_visited = (r.next_visited + 1) % r.visited.len();
+            }
+            r.visit = Visit::Cruise;
+        }
+        if hold {
+            ease(&mut r.down, 1.0, 1.5);
+            r.cooldown = r.cooldown.max(15.0);
+            self.pose.linger += (1.0 - self.pose.linger) * (1.0 - (-dt / 1.5).exp());
+            return;
+        }
         match r.visit {
             Visit::Cruise => ease(&mut r.down, 0.0, 3.0),
             Visit::Approach => {
@@ -977,7 +1149,7 @@ impl Flight {
     fn step_birds(&mut self, dt: f32, inp: &Inputs) {
         let pose = self.pose;
         let (hs, hc) = (pose.sin, pose.cos);
-        let speed = pose.speed;
+        let speed = pose.ground_speed();
         let seed = self.land.seed;
         let threshold = 0.5 * (inp.birds / 0.6).clamp(0.0, 1.67);
         for i in 0..self.land.birds.len() {
@@ -1086,6 +1258,12 @@ impl Flight {
             Target::Rain(k) => {
                 let (sx, sy) = (if k & 1 == 0 { 7.0 } else { -7.0 }, if k & 2 == 0 { 7.0 } else { -7.0 });
                 Some((Vec3::new(sx, sy, -self.pose.height), Vec3::new(0.0, 0.0, -self.pose.climb), false))
+            }
+            Target::Sky => {
+                // A direction proxy fixed in the landscape frame: it stays put as you turn.
+                let (s, c) = (self.pose.sin as f32, self.pose.cos as f32);
+                let d = self.sky.0 * crate::director::THUNDER_PROXY_M;
+                Some((Vec3::new(c * d.x + s * d.y, -s * d.x + c * d.y, d.z), Vec3::default(), false))
             }
         }
     }
@@ -1234,7 +1412,7 @@ impl Flight {
         let c = self.acoustics.context().speed_of_sound;
         for i in 0..self.slots.len() {
             let slot = self.slots[i];
-            if slot.target == Target::None || slot.pool == Pool::Rain {
+            if slot.target == Target::None || slot.pool.persistent() {
                 self.paths[i] = PathTerrain { ground: self.pose.ground, surface: self.land.surface_at(self.pose.x, self.pose.y), ..PathTerrain::NONE };
                 self.path_db[i] = [0.0; NF];
                 continue;
@@ -1330,7 +1508,7 @@ impl Flight {
                 }
                 None
             }
-            Target::Rain(_) | Target::None => None,
+            Target::Rain(_) | Target::Sky | Target::None => None,
         };
         if cfg.is_some() {
             self.world.emitters[i].base = cfg;
@@ -1408,7 +1586,8 @@ impl Flight {
         let (px, py) = (self.pose.x, self.pose.y);
         let near = &self.near[..self.n_near];
         let surface = self.land.surface_at(px, py);
-        let b = self.land.biome_def();
+        // The biome here (in a journey it changes along the way, blended across borders).
+        let (b, _) = self.land.local(px, py);
         let ahead = (px + 15.0 * self.pose.cos, py + 15.0 * self.pose.sin);
         let local = b.density_ha * self.density * self.land.cover_near(px, py, near).max(self.land.cover_near(ahead.0, ahead.1, near));
         let q = (local / 50.0).round() * 50.0;
@@ -1433,11 +1612,14 @@ impl Flight {
     /// snows, the precipitation reaches only the snow patches (flakes do not patter on leaves
     /// or water). Returns (for the rain/snow patches, for everything else).
     fn ambient(&self, inp: &Inputs) -> (Ambient, Ambient) {
-        let b = self.land.biome_def();
+        let (b, _) = self.land.local(self.pose.x, self.pose.y);
         let mut a = inp.ambient;
         a.temperature_c += b.temperature;
         a.wind_ms *= b.wind;
-        if b.sand > 0.5 {
+        if self.land.journey() {
+            // Dry air fades in towards the desert.
+            a.humidity *= 1.0 - 0.6 * self.land.share(self.pose.x, self.pose.y, |b| b.sand);
+        } else if b.sand > 0.5 {
             a.humidity *= 0.4;
         }
         let precip = a;
@@ -1519,7 +1701,8 @@ impl Flight {
     /// Publishes where the listener is in the landscape and what it looks like, for the UI's
     /// terrain (it samples the relief itself with `asmr_terrain_sample`).
     pub fn publish_frame(&self, bridge: &FrameBridge) {
-        let b = self.land.biome_def();
+        let (px, py) = (self.pose.x, self.pose.y);
+        let (b, local) = self.land.local(px, py);
         bridge.publish(&bridge::Frame {
             x: self.pose.x,
             y: self.pose.y,
@@ -1532,12 +1715,12 @@ impl Flight {
             generation: self.generation,
             linger: self.pose.linger,
             snow: if self.snowing { 1.0 } else { 0.0 },
-            snow_cover: b.snow,
-            sand_cover: b.sand,
+            snow_cover: self.land.share(px, py, |b| b.snow),
+            sand_cover: self.land.share(px, py, |b| b.sand),
             rock_slope: b.rock_slope,
             sea: if b.relief.sea > 0.0 { 1.0 } else { 0.0 },
             enclosure: self.echoes.enclosure,
-            _pad: 0.0,
+            local_biome: local,
         });
     }
 
@@ -1624,13 +1807,10 @@ fn bird_voice(b: &land::Bird, inp: &Inputs, density: f32) -> (f32, bool, f32) {
         BirdState::Flying => {
             let awake = sp.flight_activity(inp.hour) * (1.0 - 0.9 * rain);
             let activity = (def.call_rate.max(0.3) * awake.max(0.3) * density).min(1.0);
-            let flap = if b.t < 0.6 {
-                1.0
-            } else if b.dur - b.t < 0.5 {
-                0.85
-            } else {
-                0.5
-            };
+            // The species' own rhythm (bounding finches, rowing gulls, …), varying beat to
+            // beat and bout to bout; take-off and landing efforts come with it.
+            let phase = land::unit(land::hash(0, b.id as i64, 0, 0xF1A9));
+            let (_, flap) = crate::director::flight_motion(def.flight, b.t, b.dur, [0.0, 1.0, 0.0], phase);
             (activity, !def.sings_in_flight, flap)
         }
     }

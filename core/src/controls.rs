@@ -114,6 +114,9 @@ pub mod id {
     pub const ENV_TEMPERATURE: u32 = 701;
     pub const ENV_HUMIDITY: u32 = 702;
     pub const ENV_SEASON: u32 = 703;
+    /// Where the wind blows from, degrees clockwise from north (270 = westerly, from the
+    /// scene's left). World-fixed: in flight it does not turn with the heading.
+    pub const ENV_WIND_DIRECTION: u32 = 704;
     pub const INSECTS_ACTIVITY: u32 = 800;
     pub const INSECTS_WARMTH: u32 = 801;
     pub const FIRE_HEAT: u32 = 900;
@@ -196,7 +199,7 @@ use flags::{DISCRETE as D, LEVEL as LV, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 69;
+const N: usize = 70;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -230,6 +233,7 @@ static DEFS: [Def; N] = [
     def(ENV_TEMPERATURE, g::ENVIRONMENT, ENV_TIME, 0, -20.0, 40.0, "env.temperature", "\u{b0}C", Store::Param(param::TEMPERATURE, Conv::Same)),
     def(ENV_HUMIDITY, g::ENVIRONMENT, ENV_TIME, 0, 0.0, 1.0, "env.humidity", "", Store::Param(param::HUMIDITY, Conv::Same)),
     def(ENV_SEASON, g::ENVIRONMENT, ENV_TIME, D, 0.0, 3.0, "env.season", "", Store::Local),
+    def(ENV_WIND_DIRECTION, g::ENVIRONMENT, ENV_TIME, 0, 0.0, 360.0, "env.wind_direction", "\u{b0}", Store::Local),
     def(INSECTS_ACTIVITY, g::INSECTS, NO_PARENT, M, 0.0, 2.0, "insects.activity", "", Store::Local),
     def(INSECTS_WARMTH, g::INSECTS, INSECTS_ACTIVITY, 0, -10.0, 10.0, "insects.warmth", "\u{b0}C", Store::Local),
     def(FIRE_HEAT, g::FIRE, NO_PARENT, M | L, 1.0, 1000.0, "fire.heat", "kW", Store::Local),
@@ -447,13 +451,15 @@ impl ControlBank {
             ENV_TEMPERATURE => b.temperature,
             ENV_HUMIDITY => b.humidity,
             ENV_SEASON => b.season as f32,
+            ENV_WIND_DIRECTION => 270.0,
             FIRE_HEAT => b.fire.heat_kw,
             FIRE_MOISTURE => b.fire.moisture,
             FIRE_RESIN => b.fire.resin,
             FLIGHT_SPEED => 6.0,
             FLIGHT_ALTITUDE => flight_altitude(6.0),
             FLIGHT_CURVINESS => 0.35,
-            FLIGHT_BIOME | FLIGHT_SEED => 0.0,
+            FLIGHT_BIOME => crate::flight::journey::JOURNEY as f32,
+            FLIGHT_SEED => 0.0,
             FLIGHT_DENSITY | FLIGHT_AIRFLOW | FLIGHT_STEER => 1.0,
             FLIGHT_TURN_RATE => 30.0,
             FLIGHT_RELIEF => 1.0,

@@ -21,7 +21,7 @@ use crate::physics::{
     diffraction::Obstacle,
     directivity::{self, Directivity},
     ground::{self, GroundType, GROUND_TYPES},
-    scattering,
+    scattering, wind,
 };
 use crate::propagation::Propagator;
 use crate::reverb::{self, ForestGeometry, ForestReverb, Sends, ER_TRUNKS};
@@ -142,11 +142,13 @@ pub struct Features {
     pub occlusion: bool,
     pub forest: bool,
     pub near_field: bool,
+    /// Wind refraction (upwind shadow, downwind enhancement) and turbulent level wander.
+    pub wind: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Self { ground: true, reverb: true, early_reflections: true, occlusion: true, forest: true, near_field: true }
+        Self { ground: true, reverb: true, early_reflections: true, occlusion: true, forest: true, near_field: true, wind: true }
     }
 }
 
@@ -171,6 +173,16 @@ pub struct Context {
     pub er_trunks: Vec<Trunk>,
     pub reverb_send: f32,
     pub tail_extent: f32,
+    /// Unit vector the wind blows towards, in this context's frame (x, y).
+    pub wind_to: (f32, f32),
+    /// Wind speed at 10 m driving refraction, m/s (mean, following the gusts at the
+    /// listener with a 2 s lag), and the mean alone (turbulence).
+    pub wind_ms: f32,
+    pub wind_mean_ms: f32,
+    /// Spectral shapes of the wind excess (dB on the grid) for a full shadow and a fully
+    /// favourable (downwind) path; a path's wind EQ is shadow·S + favour·F.
+    pub wind_shadow_db: [f32; NF],
+    pub wind_favour_db: [f32; NF],
     crown_base: f32,
     dir_radii: [f64; 16],
     dir_mean: [[f64; NF]; 16],
@@ -328,13 +340,24 @@ impl Acoustics {
             er_trunks: Vec::with_capacity(ER_TRUNKS),
             reverb_send: 0.0,
             tail_extent: 30.0,
+            wind_to: crate::windfield::blow_vector(270.0),
+            wind_ms: 0.0,
+            wind_mean_ms: 0.0,
+            wind_shadow_db: core::array::from_fn(|i| {
+                let rf = wind::Refraction { shadow: 1.0, ..Default::default() };
+                wind::excess_db(freqs[i], &rf) as f32
+            }),
+            wind_favour_db: core::array::from_fn(|i| {
+                let rf = wind::Refraction { favour: 1.0, ..Default::default() };
+                wind::excess_db(freqs[i], &rf) as f32
+            }),
             crown_base: 8.0,
             dir_radii,
             dir_mean,
             design,
         };
         let reverb = ForestReverb::new(sample_rate, &ctx.design);
-        let props = (0..emitters).map(|_| Propagator::new(&ctx)).collect();
+        let props = (0..emitters).map(|i| Propagator::new(&ctx, i as u64)).collect();
         let bank = FilterBank::new(&ctx.design, 2 * emitters);
         // This spectral shape depends only on the fixed trunk model and fitting grid.
         let i1k = freqs.iter().position(|f| *f >= 1000.0).unwrap_or(NF / 2);
@@ -375,9 +398,10 @@ impl Acoustics {
     /// Makes room for `n` emitters (allocates: not on the audio thread).
     pub fn ensure_emitters(&mut self, n: usize) {
         while self.props.len() < n {
+            let i = self.props.len() as u64;
             self.slot_of.push(self.props.len());
             self.occupant.push(self.props.len());
-            self.props.push(Propagator::new(&self.ctx));
+            self.props.push(Propagator::new(&self.ctx, i));
             self.staged.push(false);
         }
         self.bank.ensure(2 * n);
@@ -439,6 +463,23 @@ impl Acoustics {
     /// neck, world frame, metres). Real-time safe; affects delays, directions and near field.
     pub fn set_listener_offset(&mut self, offset: Vec3) {
         self.ctx.listener = offset;
+    }
+
+    /// The wind, once per block: (`to_x`, `to_y`) the unit vector it blows towards in this
+    /// context's frame (world x north / y west for the scene; the heading frame in flight),
+    /// `mean_ms` the mean speed and `now_ms` the speed at the listener with its gusts.
+    /// Real-time safe.
+    pub fn set_wind(&mut self, to_x: f32, to_y: f32, mean_ms: f32, now_ms: f32) {
+        let n = (to_x * to_x + to_y * to_y).sqrt();
+        if n > 1e-6 && n.is_finite() {
+            self.ctx.wind_to = (to_x / n, to_y / n);
+        }
+        let fix = |v: f32| if v.is_finite() { v.clamp(0.0, 40.0) } else { 0.0 };
+        let (mean, now) = (fix(mean_ms), fix(now_ms));
+        self.ctx.wind_mean_ms = mean;
+        // The near-ground profile adjusts to a gust over a couple of seconds.
+        let a = (BLOCK as f32 / self.ctx.sample_rate / 2.0).min(1.0);
+        self.ctx.wind_ms += (now - self.ctx.wind_ms) * a;
     }
 
     /// Applies weather/ground/forest parameters. Cheap when nothing changed; real-time safe.
@@ -772,7 +813,7 @@ mod tests {
     const FS: f32 = 48_000.0;
 
     fn quiet() -> Features {
-        Features { ground: false, reverb: false, early_reflections: false, occlusion: false, forest: false, near_field: false }
+        Features { ground: false, reverb: false, early_reflections: false, occlusion: false, forest: false, near_field: false, wind: false }
     }
 
     /// Runs `blocks` blocks with input from `src(sample)` and emitter state from `em(block)`;
@@ -1007,6 +1048,52 @@ mod tests {
             lv[i] = 10.0 * e.log10();
         }
         assert!((lv[0] - lv[1]).abs() < 3.0, "measured {:.1} dB vs analytic {:.1} dB", lv[0], lv[1]);
+    }
+
+    /// Wind from the north (blowing to −x), 6 m/s. Sound travelling upwind (source 150 m
+    /// south, downwind of the listener) is in the refractive shadow: much darker than the same
+    /// source 150 m north (sound carried downwind); crosswind lies in between.
+    #[test]
+    fn sound_travelling_upwind_is_darker_than_downwind() {
+        let tilt = |pos: Vec3| {
+            let mut ac = Acoustics::new(FS, 1);
+            ac.set_features(Features { wind: true, ..quiet() });
+            for _ in 0..2000 {
+                ac.set_wind(-1.0, 0.0, 6.0, 6.0);
+            }
+            let h = impulse_response(&mut ac, Emitter::at(pos, 1.0), 420);
+            let (lo, hi) = (level_db(&h, 250.0), level_db(&h, 4000.0));
+            (hi, hi - lo)
+        };
+        let (hi_up, up) = tilt(Vec3::new(-150.0, 0.0, 0.0));
+        let (hi_down, down) = tilt(Vec3::new(150.0, 0.0, 0.0));
+        let (hi_cross, cross) = tilt(Vec3::new(0.0, 150.0, 0.0));
+        eprintln!("150 m, 6 m/s: 4 kHz re 250 Hz upwind {up:.1} dB, crosswind {cross:.1} dB, downwind {down:.1} dB; 4 kHz level upwind {hi_up:.1}, crosswind {hi_cross:.1}, downwind {hi_down:.1} dB");
+        // (Downwind lifts the low-mid ground-effect band most, so its tilt is not above the
+        // crosswind one; its level is.)
+        assert!(up < cross - 6.0 && up < down - 6.0, "up {up:.1} cross {cross:.1} down {down:.1}");
+        assert!(hi_up < hi_cross - 6.0 && hi_cross < hi_down + 3.0);
+        assert!(down - up > 8.0 && down - up < 25.0);
+        // Broadband too (the turbulent wander of one realisation is a few dB at most).
+        assert!(hi_up < hi_down - 8.0);
+    }
+
+    /// Far paths wander in level with the turbulence (a few dB at 150 m), near ones do not.
+    #[test]
+    fn turbulence_makes_far_sources_come_and_go() {
+        let spread = |r: f32| {
+            let mut ac = Acoustics::new(FS, 1);
+            ac.set_features(Features { wind: true, ..quiet() });
+            ac.set_wind(0.0, -1.0, 6.0, 6.0);
+            let blocks = (40.0 * FS) as usize / BLOCK;
+            let w = run_w(&mut ac, blocks, |n| (n as f32 * 0.13).sin(), move |_| Emitter::at(Vec3::new(r, 0.0, 0.0), 1.0));
+            let lv: Vec<f32> = w.chunks(BLOCK * 64).skip(12).map(|c| 10.0 * (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).log10()).collect();
+            let m = lv.iter().sum::<f32>() / lv.len() as f32;
+            (lv.iter().map(|x| (x - m).powi(2)).sum::<f32>() / lv.len() as f32).sqrt()
+        };
+        let (near, far) = (spread(5.0), spread(150.0));
+        eprintln!("level sd over 40 s at 6 m/s crosswind: 5 m {near:.2} dB, 150 m {far:.2} dB");
+        assert!(near < 0.4 && far > 1.5 && far < 6.0);
     }
 
     /// Sleeping emitters are not filtered and a waking one moves next to an awake partner; an

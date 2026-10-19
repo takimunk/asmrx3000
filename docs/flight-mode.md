@@ -14,14 +14,18 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 
 ## Using it
 
-* **App**: the flight button in the transport row (the `flight` pictogram, next to play)
-  toggles the mode, with a 1.5 s cross-fade. The **FLIGHT** group in the tracks has the speed
+* **App**: the mode switch in the transport row, "Дома | Стоим | Летим": home (the forest by
+  the river), standing in the generated world, flying through it. Home ↔ the world
+  cross-fades over 1.5 s; standing ↔ flying does not (it is the same world). **F** stops here
+  / flies on in the world and takes off from home. The keys walk and steer (see *Standing and
+  walking* below). The **FLIGHT** group in the tracks has the speed
   macro and its children. The view shows the streamed landscape around the herm in the
   travel frame (it always looks along the course): trees grow in at the edge of the haze and
   pass the herm, brooks and lakes cross the ground, the ground relief is anchored to the
   world (it slides and turns under the herm as the course does), and the ground sinks
   below the herm as it climbs.
-* **C ABI** (`asmr.h`): `ASMR_PARAM_FLIGHT` (44; 0/1), controls `ASMR_CONTROL_FLIGHT_*` in
+* **C ABI** (`asmr.h`): `ASMR_PARAM_FLIGHT` (44; 0 home, 1 flying, 2 standing in the world),
+  the movement keys `ASMR_PARAM_MOVE_FORWARD / STRAFE / TURN / RUN` (45..48), controls `ASMR_CONTROL_FLIGHT_*` in
   `ASMR_GROUP_FLIGHT`, telemetry `ASMR_TELEMETRY_FLIGHT*`, object kinds `ASMR_OBJECT_LAKE`
   and `ASMR_OBJECT_ROCK`, and `asmr_get_object_path` for river, lake and ridge shapes.
 * **Scenes**: a `flight` block in the scene JSON starts the scene in the air, at cruising
@@ -42,7 +46,7 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 | 1000 | `flight.speed` (macro) | 0..25 m/s | 6 | walk 1.5, run 5, glide 12, fast flight 25; the actual speed ramps at 2.5 m/s² |
 | 1001 | `flight.altitude` | 1.2..40 m (log) | follows speed | ears above the ground. Follows the speed: 1.7 m walking, under the crowns at a run, about 20 m (above the canopy) in fast flight. Gentle swells of up to ±12 % above walking height |
 | 1002 | `flight.curviness` | 0..1 | 0.35 | how much the course wanders when not steered by head; 1 = turn radius 250 m |
-| 1003 | `flight.biome` | preset | mixed | mixed, broadleaf, taiga, river_valley, meadows, highlands, desert, snowy_mountains, lake_shore, sea_coast, big_river (docs/world.md) |
+| 1003 | `flight.biome` | preset | journey | mixed, broadleaf, taiga, river_valley, meadows, highlands, desert, snowy_mountains, lake_shore, sea_coast, big_river, journey (the biome changes with the place, regions of ~800 m; docs/world.md, "Journey") |
 | 1004 | `flight.density` | 0..2 | 1 | trees and stands; takes effect immediately (thins or fills the generated forest) |
 | 1005 | `flight.seed` | 0..999 | 0 | another landscape |
 | 1006 | `flight.airflow` | 0..3 | 1 | wind noise of motion at the ears (1 = physical, subtle) |
@@ -54,9 +58,46 @@ Code: `core/src/flight/` (`mod.rs` runtime, `land.rs` landscape, `bridge.rs` UI 
 A new biome or seed fades every voice out (0.8 s), regenerates the landscape around the
 listener and fades the new one in. Your position and heading carry on.
 
-Weather and time of day (rain, wind, storm, temperature, season, hour) and the scene's
+Weather and time of day (rain, wind, storm with its lightning and thunder, temperature,
+season, hour) and the scene's
 macros (wind speed, foliage, water flow, birds, insects, fire) apply to everything generated,
 as in the scene.
+
+## Standing and walking
+
+`ASMR_PARAM_FLIGHT` = 2 is the world without the flight: you stop where you are and can walk.
+
+* **Stopping**: the target speed is 0, reached at 4 m/s² (firmer than a stop at a place, so it
+  feels immediate without a jolt: 12 m/s stops in 3 s, 25 m/s in ~6 s). The flight level comes
+  down to standing height (1.7 m) as at a place's linger (`route.down`, 1.5 s, then the 2.5 s
+  altitude smoothing); the frame's `linger` goes to 1. Stops are suspended (an approach or
+  linger in progress is dropped) and the next one is sought no sooner than 15 s after flying
+  on. The wind noise of motion falls silent by itself as the speed goes to 0. Back to 1 the
+  flight speeds up to `flight.speed` at 2.5 m/s² and the level climbs back.
+* **Keys** (the app sets `ASMR_PARAM_MOVE_*` from the held keys, by key position so any
+  layout works; cleared when the scene loses focus or the window stops being key):
+
+  | key | param | standing | flying |
+  |---|---|---|---|
+  | W / S | MOVE_FORWARD +1 / −1 | walk forward / back, 1.5 m/s, along where the head looks | the cruise up / down by 3 m/s per second held |
+  | A / D | MOVE_STRAFE −1 / +1 | step left / right, the course is kept | turn left / right at `flight.turn_rate` |
+  | Q / E | MOVE_TURN −1 / +1 | turn the course left / right at 60°/s | turn, as A / D |
+  | ⇧ | MOVE_RUN 1 | run, 5 m/s | — |
+
+  * On foot the velocity (along and across the course) goes to the keys' target at 2.5 m/s²
+    and slows down at 4 m/s²; diagonals are not faster. "Where the head looks" is the course
+    plus the smoothed head yaw (the same 0.35 s gaze as steering by head) when steering by
+    head is on and AirPods poses arrive, else the course. Walking forward with the head
+    turned, the course turns towards the gaze with the head-steering law (dead zone, full
+    rate at ~43°), so the view, which looks along the course, stays behind you; standing
+    still, the head only looks around. Q/E add ±60°/s; the turn rate slews at 3 rad/s².
+  * In flight the keys steer on top of the head (or instead of the wandering course),
+    clamped to `flight.turn_rate`, through the usual 0.8 rad/s² slew. W/S keep an offset on
+    `flight.speed` (0..30 m/s in all); it is dropped when `flight.speed` changes and on a
+    stop, so flying on resumes at `flight.speed`. The slider does not move.
+* **Prompt**: `flight.on` has three states, "on", "stand", "off": "стоп", "остановись",
+  "зависни" → stand; "домой", "приземлись домой" → off (`prompt.rs`, `TypeSafeProvider`).
+* Telemetry `ASMR_TELEMETRY_FLIGHT_SPEED` is the speed over the ground (along and across).
 
 ## The landscape (`land.rs`)
 
@@ -97,6 +138,9 @@ It is streamed **in 2D around the listener**, whichever way it flies:
 * Eleven **biomes** differ in relief, ground, forest share, stand density and scale,
   species, and how often water, rock, falls and camps appear (`land::BIOMES`). The relief,
   water bodies, surfaces, the sea, the big river and the new biomes are in **docs/world.md**.
+  The twelfth preset, **`journey`** (the default), makes the biome a function of place:
+  regions of ~800 m with plausible neighbours, blended over ~180 m, so a flight goes from a
+  quiet lake meadow into the forest, the taiga, the hills (docs/world.md, "Journey").
 * Tiles also carry the **terrain** on a 5 m grid, surf on the shoreline and wind over the most
   exposed crest.
 
@@ -110,8 +154,8 @@ Streaming makes at most one tile and one tree set per audio block, nearest first
 
 ## Motion and steering
 
-The listener moves at the flight speed, rate-limited to 2.5 m/s², along its **heading**,
-which integrates a turn rate ω:
+The listener moves at the flight speed, rate-limited to 2.5 m/s², along its **heading**
+(on foot also sideways, at `side`), which integrates a turn rate ω:
 
 * **Steering by head** (`flight.steer_by_head` = yaw, the default; live while AirPods poses
   arrive through `asmr_set_head_pose`). The input is the head yaw relative to the course,
@@ -137,7 +181,7 @@ places worth it. Every emitter is
 placed listener-relative (travel frame, +x = where you fly) each block, and the propagation
 gets its exact relative velocity:
 
-  v_rel = (−v + ω·y, −ω·x, −climb) + R(−heading)·v_own
+  v_rel = (−v + ω·y, −v_side − ω·x, −climb) + R(−heading)·v_own
 
 So Doppler, parallax, approach/recede, and the whole field swinging round in a turn come from
 the propagation itself (retarded-time delay lines), not from an effect. Head tracking rotates
@@ -180,9 +224,19 @@ let outgoing voices fade (0.35 s) while new ones fade in.
 | fire | 2 | 1 | campfires within 150 m | 1/d |
 | rain | 4 | 4 | four patches around the listener; surface follows the ground (under canopy, meadow, on water, sand, rock, snow); snowfall when it snows | — |
 | air | 4 | 3 | wind over exposed ground within 160 m: dune sand, ridge howl, blowing snow, breeze on open crests | weight / d |
+| sky | 1 | 1 | thunder of the director's lightning: a direction proxy 40 m away towards the strike's bearing in the landscape frame (it stays put as the course turns), the long-range physics inside the generator | — |
 
-So **at most 41 emitters sound at once, out of 58**. The scene has 43, most of them asleep
+So **at most 42 emitters sound at once, out of 59**. The scene has 43, most of them asleep
 (rain and thunder).
+
+**Thunderstorms in flight.** The director's weather keeps running while you fly: with STORM
+up, its lightning (the same flashes the picture shows) feeds the `sky` slot through
+`Ambient` (strike counter, distance, return strokes, bearing). The bearing is taken in the
+landscape frame, so a strike off to the left stays there while the course turns under it;
+the proxy has no velocity (no Doppler from a 40 m stand-in), skips the terrain-path
+diffraction (it stands for a source kilometres away), and like the rain patches it is kept
+through a regeneration. Its share of the field feeds the slope echoes, so valleys answer the
+thunder. See docs/physical-models.md for the flash and the thunder itself.
 
 Area sources are extended: a crown of radius a heard from d gets the factor
 d/√(d² + a²) on top of the propagation's 1/d (intensity ~1/(d² + a²)), so passing through
@@ -193,6 +247,21 @@ the canopy (u(z) = u_h·e^{a(z/h − 1)}, a ≈ 2..3; Inoue 1963, Cionco 1965), 
 forest cover c gets exposure 1.1 − 0.45·c, and an aggregate stand 0.7. Lone and edge trees
 get the full wind. With this, the near crowns in flight are as loud as the scene's trees
 (within 1 dB), and the stands add the distant roar of the forest.
+
+### The wind is fixed to the world
+
+The wind has one direction for the whole world (`env.wind_direction`, where it blows from,
+clockwise from north; the flight world's x is north). It does not turn with the course: the
+gust field is sampled at each source's world offset from the listener (the listener-relative
+position turned back by the heading, `WindField::at_heading`), so gusts sweep in from the
+upwind compass side whatever the heading, and the propagation gets the wind vector turned into
+the heading frame (`blow_to_heading`): sounds carried downwind reach further, sounds upwind of
+the listener's path fall into the refraction shadow and darken, distant ones wander with the
+turbulence (docs/spatial-engine.md). Flying a U-turn swaps which side the gusts arrive from.
+Telemetry `WIND_FROM` gives the wind's side relative to the course (rad, +left). The biome's
+wind factor scales the speed the propagation sees. Limitation: the listener's own motion
+through the frozen gust pattern is not Doppler-shifted (the history is time-indexed around the
+listener), so flying upwind does not make gusts pass faster.
 
 ## Birds
 
@@ -240,7 +309,8 @@ decoder. `flight.airflow` scales it (0 = off).
   Ids (≥ 0x40000000) are stable while an object exists. `asmr_get_objects` switches to the
   streamed objects at cross-fade 0.5.
 * `core/tests/flight_alloc.rs` runs 40 s of flight (20 m/s, highlands, rain, birds, steering
-  by head through two U-turns, a reseed and a speed change half way) under a counting global allocator: **zero allocations or
+  by head through two U-turns, a reseed and a speed change half way, then the keys, a stop and
+  walking) under a counting global allocator: **zero allocations or
   frees** on the render thread.
 
 ## Measurements
@@ -256,6 +326,11 @@ Apple Silicon, release build, 48 kHz, 512-frame callbacks, single thread, 60 s e
 | 25 m/s | 7.9 | -27.9 | 0.55 |
 | tour (walk → 25 m/s → 6 m/s) | 8.4 | -28.8 | 0.42 |
 | steer (10 m/s, head left / right / over the shoulder) | 9.9 | -26.2 | 0.53 |
+
+A journey (`journey`, seed 1, 12 m/s: meadows into broadleaf woods) costs 11.0 % against
+9.6 % for `mixed` and `meadows` on the same run (`-- 60 build/flight 12 journey 1`); the
+difference is the content (a meadow full of crickets, then a denser wood), not the region
+lookups, which are cached per tile.
 
 For comparison, the scene alone (forest by the river, 30 s, `--example render`):
 RMS −31.7 dBFS, peak −12.6 dBFS, DSP load 4.1 %. Flight is a few dB louder (it is a whole
@@ -283,7 +358,10 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
   reached; sounding emitters ≤ 50; objects ≤ 256 and streamed.
 * `objects_enter_and_leave`: ids appear and disappear; trees move 2.5 m per 0.25 s at 10 m/s,
   towards the listener.
-* `audio_is_deterministic`: two engines render bit-identical audio.
+* `audio_is_deterministic`: two engines render bit-identical audio (`mixed`; a journey in
+  `journey_audio_is_deterministic_and_the_frame_names_the_place`).
+* `journey_crosses_biomes`, `journey_heights_are_continuous_across_borders`,
+  `journey_sampler_sees_the_same_relief`, `journey::tests`: see docs/world.md, "Journey".
 * `controls_and_toggle`: altitude follows speed unless set; biome names; scene objects,
   then streamed ones, then scene objects again; shapes readable.
 * `new_seed_new_landscape`: a reseed replaces every object.
@@ -294,9 +372,20 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
   turns; a faster turn-rate setting turns faster.
 * `steering_off_keeps_the_course`: with steering off the head only looks around; with
   `yaw_pitch` looking up climbs.
+* `holding_stops_and_stays_put`: FLIGHT = 2 at 12 m/s stops within 3.5 s without leaving the
+  world, does not drift for 6 s, comes down to standing height; FLIGHT = 1 resumes the cruise.
+* `walking_goes_where_the_head_looks`: W walks 1.5 m/s along the course (S back, ⇧ 5 m/s);
+  with AirPods 30° left it walks 30° left of the course while the course turns that way;
+  standing and looking around does not turn.
+* `strafing_keeps_the_heading`: D steps right at 1.5 m/s with the heading unchanged;
+  diagonals are not faster.
+* `turning_keys_turn`: Q/E turn ~60°/s on the spot; in flight D turns right, W raises the
+  cruise.
 * `streaming_survives_turning_around`: a full U-turn at 20 m/s by head; objects and voices
   stay bounded and there is landscape ahead.
 * `flight_reaches_the_bed_output`: the flight sounds in the 7.1.4 bed path.
+* `wind_direction_is_world_fixed_in_flight`: a northerly stays north while the course turns
+  by ~1.5 rad; relative to the course it turns by the opposite angle.
 * `core/tests/flight_alloc.rs`: no allocation in the render path.
 * `chunk_generation_cost` (tiles; ignored; `-- --ignored --nocapture`): per-block streaming cost.
 
@@ -310,6 +399,7 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
   heightfield (Stage/FlightTerrain.swift). Waterfalls, camps and meadows are reported but
   not drawn as models.
 * Steering by head needs AirPods poses (`asmr_set_head_pose`); without them the course
-  wanders by curviness. Keyboard steering would be a small addition (a turn-rate input).
+  wanders by curviness, or the keys steer (A/D, Q/E).
+* Walking has no collisions either (trunks, water, steep slopes): you walk through.
 * The first switch-on costs ~100 ms on the calling thread (the app calls it on the main
   thread when the button is pressed).

@@ -11,8 +11,14 @@
 //!   Drainage is what drips: it rises fast in rain and tails off for a long time after.
 //! * Ground: a surface water store fed by rain, drained by infiltration (~4 mm/h) and
 //!   evaporation, plus slower soil moisture; puddles form when the store exceeds ~1 mm.
-//! * Lightning: Poisson strikes at up to 4/min with storm activity, at distances around a
-//!   storm centre that drifts in bearing; the director points the thunder emitter at it.
+//! * Lightning: Poisson flashes at up to 4/min with storm activity, around a storm centre
+//!   that drifts in bearing and comes closer as the storm grows: storm 1 → ~0.6–1.5 km
+//!   (thunder 2–4 s after the flash), storm 0.5 → ~2–4 km, a weak storm ~5–10 km (lognormal
+//!   spread, the centre wandering slowly), with an occasional close strike (250–600 m). About
+//!   a third are intracloud flashes (diffuse light, rumble only), the rest cloud-to-ground
+//!   with 1–5 return strokes. The flash brightness follows those strokes
+//!   ([`Flash::brightness`]: leader glow, the flicker of the strokes, dimmer and smeared with
+//!   distance); the director points the thunder emitter at the strike.
 //!
 //! `time_scale` speeds up only the water stores (canopy, ground), so demos can show an hour
 //! of drying in a minute.
@@ -20,6 +26,7 @@
 use crate::rng::Rng;
 use crate::scene::{EnvironmentDesc, Season};
 use crate::sources::common::{rain_unit, vapour_pressure_kpa, wind_speed_ms, Ou, Smooth};
+use crate::sources::thunder::{random_strokes, Flash};
 use crate::sources::Ambient;
 
 use super::Environment;
@@ -48,11 +55,17 @@ pub struct Weather {
     storm: f32,
     strike: u32,
     strike_distance: f32,
+    strokes: u8,
     struck: bool,
     next_strike: f32,
     bearing: f32,
     bearing_ou: Ou,
+    /// Slow wander of the storm centre's (log) distance.
+    centre_ou: Ou,
     flash: f32,
+    light: Flash,
+    /// Seconds since the latest flash started.
+    age: f32,
 }
 
 impl Weather {
@@ -81,10 +94,14 @@ impl Weather {
             storm: env.storm,
             strike: 0,
             strike_distance: 0.0,
+            strokes: 0,
             struck: false,
             bearing,
             bearing_ou: Ou::default(),
+            centre_ou: Ou::default(),
             flash: 0.0,
+            light: Flash::default(),
+            age: 1e3,
         }
     }
 
@@ -110,7 +127,8 @@ impl Weather {
         self.drip_mm_h
     }
 
-    /// Lightning flash brightness 0..1 (decays in ~0.2 s), for the UI.
+    /// Lightning flash brightness 0..1 for the UI: the flicker of the leader and the return
+    /// strokes (or the diffuse surges of an intracloud flash), dimmer with distance.
     pub fn flash(&self) -> f32 {
         self.flash
     }
@@ -123,6 +141,16 @@ impl Weather {
     /// Bearing of the latest strike (radians, 0 = +x forward, +π/2 = left) and distance (m).
     pub fn strike_position(&self) -> (f32, f32) {
         (self.bearing, self.strike_distance)
+    }
+
+    /// The latest flash's timing (strokes) and seconds since it started.
+    pub fn last_flash(&self) -> (Flash, f32) {
+        (self.light, self.age)
+    }
+
+    /// Median strike distance at storm activity `storm` (0..1), m: the storm centre.
+    pub fn storm_centre_m(storm: f32) -> f32 {
+        1000.0 * (2.2 * (1.0 - storm.clamp(0.0, 1.0))).exp()
     }
 
     pub fn step(&mut self, dt: f32, env: &Environment) {
@@ -160,18 +188,26 @@ impl Weather {
 
         // Lightning.
         self.struck = false;
-        self.flash *= (-dt / 0.15).exp();
+        self.age += dt;
+        self.flash = self.light.brightness(self.age, self.strike_distance);
         if self.storm > 0.0 {
             let b = self.bearing_ou.step(dt, 120.0, 0.6, &mut self.rng);
+            let wander = self.centre_ou.step(dt, 90.0, 0.25, &mut self.rng);
             self.next_strike -= dt * self.storm;
             if self.next_strike <= 0.0 {
                 self.next_strike = 15.0 * crate::sources::common::exp1(&mut self.rng);
-                let centre = 12_000.0 * (1.0 - self.storm) + 1500.0;
-                self.strike_distance = (centre * (0.45 * self.rng.gauss()).exp()).clamp(300.0, 25_000.0);
+                let centre = Self::storm_centre_m(self.storm) * wander.exp();
+                let close = self.rng.uniform() < 0.07 * self.storm;
+                let d = if close { self.rng.range(250.0, 600.0) } else { centre * (0.4 * self.rng.gauss()).exp() };
+                self.strike_distance = d.clamp(200.0, 25_000.0);
                 self.bearing = (b + 0.4 * self.rng.gauss()).rem_euclid(core::f32::consts::TAU);
                 self.strike = self.strike.wrapping_add(1);
+                // About a third are intracloud flashes (a close strike is to the ground).
+                self.strokes = if !close && self.rng.uniform() < 0.33 { 0 } else { random_strokes(&mut self.rng) };
+                self.light = Flash::new(self.strike, self.strokes);
+                self.age = 0.0;
                 self.struck = true;
-                self.flash = 1.0;
+                self.flash = self.light.brightness(0.0, self.strike_distance);
             }
         }
     }
@@ -193,6 +229,8 @@ impl Weather {
             storm: self.storm,
             strike: self.strike,
             strike_distance_m: self.strike_distance,
+            strike_strokes: self.strokes,
+            strike_bearing: self.bearing,
         }
     }
 
@@ -268,5 +306,69 @@ mod tests {
         }
         // 3 per minute on average.
         assert!((2..=14).contains(&strikes), "{strikes}");
+    }
+
+    /// A strong storm is close (thunder a few seconds after the flash), a moderate one a few
+    /// kilometres away.
+    #[test]
+    fn stronger_storm_strikes_closer() {
+        let median = |storm: f32| {
+            let mut w = Weather::new(&EnvironmentDesc::default(), 5);
+            let env = Environment { storm, ..Default::default() };
+            let mut d = Vec::new();
+            let dt = 1.0 / 100.0;
+            while d.len() < 200 {
+                w.step(dt, &env);
+                if w.struck() {
+                    d.push(w.strike_position().1);
+                }
+            }
+            d.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (d[100], d[20], d[180])
+        };
+        let (m1, lo1, hi1) = median(1.0);
+        assert!((600.0..1500.0).contains(&m1) && lo1 > 250.0 && hi1 < 3000.0, "{m1} {lo1} {hi1}");
+        let (m5, _, _) = median(0.5);
+        assert!((2000.0..4500.0).contains(&m5), "{m5}");
+    }
+
+    /// The flash flickers with its return strokes, then goes dark well before the sound.
+    #[test]
+    fn flash_follows_the_strokes() {
+        let mut w = Weather::new(&EnvironmentDesc::default(), 3);
+        let env = Environment { storm: 1.0, ..Default::default() };
+        let dt = 64.0 / 48_000.0;
+        let mut seen = 0;
+        for _ in 0..(200.0 / dt) as usize {
+            w.step(dt, &env);
+            if !w.struck() {
+                continue;
+            }
+            let (flash, _) = w.last_flash();
+            let d = w.strike_position().1;
+            let mut peak = 0.0f32;
+            let mut rises = 0;
+            let (mut prev, mut falling) = (w.flash(), false);
+            // Until the thunder arrives (≥ 200 m: ≥ 0.6 s), at least a second.
+            for _ in 0..((d / 340.0).max(1.0) / dt) as usize {
+                w.step(dt, &Environment { storm: 0.0, ..env });
+                let v = w.flash();
+                peak = peak.max(v);
+                if v > prev + 1e-4 && falling {
+                    rises += 1;
+                }
+                falling = v < prev - 1e-5;
+                prev = v;
+            }
+            assert!(peak > 0.0 && peak <= 1.0);
+            if !flash.cloud && flash.n >= 2 && d < 2000.0 {
+                assert!(rises + 1 >= flash.n, "{rises} rises for {} strokes", flash.n);
+                assert!(peak > 0.5, "near strike {d} m: {peak}");
+            }
+            // Dark again before the thunder arrives.
+            assert!(w.flash() < 0.02, "{} at {d} m", w.flash());
+            seen += 1;
+        }
+        assert!(seen > 3);
     }
 }

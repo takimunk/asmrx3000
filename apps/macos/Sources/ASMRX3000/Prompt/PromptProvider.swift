@@ -258,7 +258,21 @@ struct MockProvider: PromptProvider {
         }
         if has("больше птиц", "more birds") { set("birds.activity", min(1, (values["birds.activity"] ?? 0.6) + 0.3)); said.append("больше птиц") }
         if loud && !water { scaled("master.volume", 1.2); said.append("громче") }
-        if has("ветер", "ветр", "wind") && !has("гроз", "storm") { set("wind.speed", 9); said.append("ветер") }
+        // Where it blows from (compound sides first).
+        let sides: [(words: [String], deg: Double, ru: String)] = [
+            (["северо-запад", "northwest", "north-west"], 315, "с северо-запада"), (["северо-восток", "northeast", "north-east"], 45, "с северо-востока"),
+            (["юго-запад", "southwest", "south-west"], 225, "с юго-запада"), (["юго-восток", "southeast", "south-east"], 135, "с юго-востока"),
+            (["с севера", "северн", "from the north", "northerly"], 0, "с севера"), (["с юга", "южн", "from the south", "southerly"], 180, "с юга"),
+            (["с запада", "западн", "from the west", "westerly"], 270, "с запада"), (["с востока", "восточн", "from the east", "easterly"], 90, "с востока"),
+        ]
+        let side = sides.first(where: { s in s.words.contains { t.contains($0) } })
+        // A side alone ("ветер с севера") turns the wind; it gets stronger only when asked.
+        if has("ветер", "ветр", "wind") && !has("гроз", "storm") && (side == nil || has("сильн", "strong", "ветрен", "windy")) {
+            set("wind.speed", 9); said.append("ветер")
+        }
+        if let side {
+            set("env.wind_direction", side.deg); said.append("ветер \(side.ru)")
+        }
         // Places: the first landscape whose words match and that exists.
         let places: [(words: [String], biomes: [String])] = [
             (["пустын", "desert"], ["desert", "meadows"]),
@@ -267,6 +281,7 @@ struct MockProvider: PromptProvider {
             (["озер", "озёр", "lake"], ["lake_shore", "taiga"]),
             (["тайг", "taiga"], ["taiga"]),
             (["луг", "поле", "meadow"], ["meadows"]),
+            (["путешеств", "journey", "travel"], ["journey"]),
         ]
         let options = scene.options["flight.biome"] ?? []
         if let place = places.first(where: { p in p.words.contains { t.contains($0) } }),
@@ -277,7 +292,8 @@ struct MockProvider: PromptProvider {
         } else if has("полет", "полёт", "лети", "летим", "fly") {
             set("flight.on", "on"); if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 8) }; said.append("полёт")
         }
-        if has("приземл", "land", "стоп") { set("flight.on", "off"); said.append("на земле") }
+        if has("домой", "home") { set("flight.on", "off"); said.append("дома") }
+        else if has("приземл", "land", "стоп", "останов", "завис") { set("flight.on", "stand"); said.append("стоим") }
 
         let explanation = said.isEmpty ? "" : "Мок: " + said.joined(separator: ", ") + "."
         let patch: [String: Any] = ["explanation": explanation, "glide_s": glide, "changes": changes]
@@ -293,7 +309,8 @@ struct SceneState {
     var ranges: [String: ClosedRange<Double>] = [:]
     /// `<group>.level` controls (dB loudness of one group).
     var loudness: Set<String> = []
-    var switches: [String: Bool] = [:]
+    /// Switch states by key ("flight.on": "off" home, "on" flying, "stand" standing in the world).
+    var switches: [String: String] = [:]
     var trees: [(id: Int, pos: [Double])] = []
     /// Object kinds present ("tree", "river", "fire", …).
     var kinds: Set<String> = []
@@ -309,7 +326,7 @@ struct SceneState {
             if c["loudness"] as? Bool == true { loudness.insert(k) }
         }
         for s in o["switches"] as? [[String: Any]] ?? [] {
-            if let k = s["key"] as? String { switches[k] = s["value"] as? String == "on" }
+            if let k = s["key"] as? String { switches[k] = s["value"] as? String ?? "off" }
         }
         for obj in o["objects"] as? [[String: Any]] ?? [] {
             if let k = obj["kind"] as? String { kinds.insert(k) }
@@ -330,7 +347,7 @@ struct SceneState {
                 s[k] = String(format: "%g", (v * 100).rounded() / 100) + ((units[k] ?? "").isEmpty ? "" : " " + units[k]!)
             }
         }
-        for (k, on) in switches { s[k] = on ? "on" : "off" }
+        for (k, v) in switches { s[k] = v }
         return s
     }
 

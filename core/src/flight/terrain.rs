@@ -18,7 +18,8 @@
 //! a 5 m grid when the tile is made (≈80 µs per tile) and looks heights up bilinearly. The UI
 //! samples it at a finer grid through `asmr_terrain_sample` (its own macro cache).
 
-use super::land::{hash, Biome, Feature, FeatureKind};
+use super::journey::{self, Blend};
+use super::land::{biome, hash, Biome, Feature, FeatureKind};
 
 /// Sea level, m (absolute heights are relative to it).
 pub const SEA_LEVEL: f32 = 0.0;
@@ -207,16 +208,48 @@ pub struct Params {
     pub biome: Biome,
     /// User relief scale (`flight.relief`, 0 = flat .. 2 = twice as steep).
     pub relief: f32,
+    /// The `journey` preset: the biome is a function of place (journey.rs).
+    pub journey: bool,
 }
 
 impl Params {
     pub fn new(seed: u64, biome: &Biome, relief: f32) -> Self {
-        Self { seed, biome: *biome, relief: relief.clamp(0.0, 2.0) }
+        Self { seed, biome: *biome, relief: relief.clamp(0.0, 2.0), journey: biome.name == journey::NAME }
+    }
+
+    /// The biomes at (x, y) in a journey (`look`: see [`journey::blend`]).
+    pub fn blend(&self, x: f64, y: f64, look: f32) -> Blend {
+        journey::blend(self.seed, x, y, look)
     }
 
     /// The base relief at (x, y).
     pub fn base(&self, x: f64, y: f64) -> Base {
-        let r = &self.biome.relief;
+        if self.journey {
+            return self.base_in(&self.blend(x, y, 0.0), x, y);
+        }
+        self.base_of(&self.biome.relief, x, y)
+    }
+
+    /// The base relief at (x, y) for the biomes of `bl` (journey): each biome's own relief,
+    /// the heights lerped (never the noise scales). Without a journey, the preset's.
+    pub fn base_in(&self, bl: &Blend, x: f64, y: f64) -> Base {
+        if !self.journey {
+            return self.base_of(&self.biome.relief, x, y);
+        }
+        if bl.n <= 1 {
+            return self.base_of(&biome(bl.dominant()).relief, x, y);
+        }
+        let (mut h, mut low) = (0.0f32, 0.0f32);
+        for (b, w) in bl.parts() {
+            let one = self.base_of(&b.relief, x, y);
+            h += w * one.h;
+            low += w * one.low;
+        }
+        Base { h, low, coast: f32::INFINITY }
+    }
+
+    /// The base relief at (x, y) of one relief.
+    fn base_of(&self, r: &Relief, x: f64, y: f64) -> Base {
         let k = self.relief;
         let s = self.seed;
         let hs = r.hills_scale.max(50.0) as f64;
@@ -230,7 +263,7 @@ impl Params {
             h += r.mountains * k * mask * (m * m * 1.3 - 0.15);
         }
         if r.dunes > 0.0 {
-            h += self.dunes(x, y) * k;
+            h += self.dunes(r, x, y) * k;
         }
         let mut coast = f32::INFINITY;
         if r.sea > 0.0 {
@@ -261,8 +294,7 @@ impl Params {
 
     /// Transverse dunes: asymmetric crests across the wind (gentle windward slope, steep slip
     /// face), domain-warped into crescents, with slow draa swells under them.
-    fn dunes(&self, x: f64, y: f64) -> f32 {
-        let r = &self.biome.relief;
+    fn dunes(&self, r: &Relief, x: f64, y: f64) -> f32 {
         let s = self.seed;
         let th = 0.6 + (hash(s, 0, 0, 0xD0E) >> 40) as f64 / 16_777_216.0 * 0.8;
         let (c, sn) = (th.cos(), th.sin());
@@ -311,13 +343,27 @@ impl Params {
 
     /// Full sample at (x, y), with the macro features in `features` (indices into `all`).
     pub fn sample(&self, all: &[Feature], features: &[usize], x: f64, y: f64) -> Sample {
-        let b = self.base(x, y);
+        if self.journey {
+            return self.sample_in(&self.blend(x, y, 0.0), all, features, x, y);
+        }
+        self.sample_core(self.base(x, y), self.biome.relief.valley, all, features, x, y)
+    }
+
+    /// [`Self::sample`] with the biomes there already looked up (journey).
+    pub fn sample_in(&self, bl: &Blend, all: &[Feature], features: &[usize], x: f64, y: f64) -> Sample {
+        if !self.journey {
+            return self.sample(all, features, x, y);
+        }
+        let valley = bl.lerp(|b| b.relief.valley);
+        self.sample_core(self.base_in(bl, x, y), valley, all, features, x, y)
+    }
+
+    fn sample_core(&self, b: Base, valley: f32, all: &[Feature], features: &[usize], x: f64, y: f64) -> Sample {
         let mut h = b.h;
         let mut water = DRY;
         let mut flow = [0.0f32; 2];
         let mut kind = 0u8;
         let mut shore = f32::INFINITY;
-        let valley = self.biome.relief.valley;
 
         // Sea.
         if b.coast.is_finite() {
@@ -427,7 +473,11 @@ impl Params {
     /// Ground surface for acoustics and rain, from a sample, its slope (rise per metre), the
     /// forest cover there and the frozen state of the biome.
     pub fn surface(&self, s: &Sample, slope: f32, cover: f32) -> Surface {
-        let b = &self.biome;
+        Self::surface_of(&self.biome, s, slope, cover)
+    }
+
+    /// [`Self::surface`] for the biome `b` (the local one in a journey).
+    pub fn surface_of(b: &Biome, s: &Sample, slope: f32, cover: f32) -> Surface {
         if s.wet() {
             // Lakes freeze in the snow; rivers and the sea keep flowing.
             return if b.snow > 0.5 && s.kind == 1 { Surface::Snow } else { Surface::Water };

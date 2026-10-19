@@ -16,7 +16,8 @@ struct AudioStateCheck {
         try checks.testPatchUndoRestoresOriginalValueAndFollower()
         checks.testSnapshotPreservesLatestEditsBeyondOldHistoryLimit()
         checks.testSnapshotPreservesGlideTargetAndPendingObjectPosition()
-        print("3 audio state checks passed")
+        checks.testFlightSwitchHasThreePlaces()
+        print("4 audio state checks passed")
     }
 
     private func patch(_ audio: AudioEngine, _ key: String, _ value: Any, glide: Double = 0) -> [String: Any] {
@@ -68,6 +69,28 @@ struct AudioStateCheck {
         XCTAssertEqual(control(restored, "flight.speed")["value"] as! Double, 18, accuracy: 0.001)
         XCTAssertEqual(control(restored, "water.gain")["value"] as! Double, 1.5, accuracy: 0.001)
         XCTAssertEqual(control(restored, "water.gain")["overridden"] as? Bool, false)
+    }
+
+    func testFlightSwitchHasThreePlaces() {
+        let audio = AudioEngine()
+        XCTAssertEqual(audio.place, .home)
+        audio.toggleFlight()
+        XCTAssertEqual(audio.place, .flying)
+        audio.toggleFlight()
+        XCTAssertEqual(audio.place, .standing)
+        XCTAssertEqual(audio.flying, true)
+        audio.toggleFlight()
+        XCTAssertEqual(audio.place, .flying)
+        // The prompt layer: "стоп" stands still in the world, "домой" goes home.
+        _ = patch(audio, "flight.on", "стоп")
+        XCTAssertEqual(audio.place, .standing)
+        let sw = (state(audio)["switches"] as! [[String: Any]]).first { $0["key"] as? String == "flight.on" }!
+        XCTAssertEqual(sw["value"] as? String, "stand")
+        _ = patch(audio, "flight.on", "домой")
+        XCTAssertEqual(audio.place, .home)
+        XCTAssertEqual(audio.flying, false)
+        audio.setMoves(forward: 1, strafe: 0, turn: 0, run: false)
+        audio.setMoves(forward: 0, strafe: 0, turn: 0, run: false)
     }
 
     func testSnapshotPreservesGlideTargetAndPendingObjectPosition() {

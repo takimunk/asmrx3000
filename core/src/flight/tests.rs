@@ -4,9 +4,14 @@ use crate::controls::id;
 use crate::engine::{param, telemetry, Engine};
 use crate::scene::{ObjectInfo, ObjectKind, SceneDesc};
 
+/// A flight over the mixed forest (the default was `mixed` before the `journey` preset).
 fn flying_engine(speed: f32, seed: u32) -> Engine {
+    flying_over("mixed", speed, seed)
+}
+
+fn flying_over(biome: &str, speed: f32, seed: u32) -> Engine {
     let mut desc = SceneDesc::default_scene();
-    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), stops: Some(0.0), ..Default::default() });
+    desc.flight = Some(FlightDesc { start: true, speed: Some(speed), seed: Some(seed), biome: Some(biome.into()), stops: Some(0.0), ..Default::default() });
     let e = Engine::with_scene(48_000.0, &desc).unwrap();
     e.set_param(param::PLAYING, 1.0);
     e
@@ -42,8 +47,20 @@ fn trees_near(l: &Land, x: f64, y: f64, r: f64) -> Vec<(i64, i64, u8, u32)> {
 fn landscape_is_a_function_of_place() {
     // Arrive at (600, 0) straight along x, and by a wide loop from the other side: the same
     // trees and features stand there. Another seed, another forest.
+    landscape_is_a_function_of_place_in(0, 7);
+    // A journey too, where two biomes meet at (600, 0).
+    let seed = (1..400u64)
+        .find(|&s| {
+            let bl = Land::new(s, super::journey::JOURNEY).params.blend(600.0, 0.0, 0.0);
+            bl.n > 1 && bl.w[1] > 0.3 && bl.parts().all(|(b, _)| b.forest > 0.3)
+        })
+        .unwrap();
+    landscape_is_a_function_of_place_in(super::journey::JOURNEY, seed);
+}
+
+fn landscape_is_a_function_of_place_in(biome: u32, seed: u64) {
     let fly = |seed: u64, path: &[(f64, f64)]| {
-        let mut l = Land::new(seed, 0);
+        let mut l = Land::new(seed, biome);
         l.stream(path[0].0, path[0].1, usize::MAX);
         for w in path.windows(2) {
             let n = ((w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) / 0.4).ceil() as usize;
@@ -57,8 +74,8 @@ fn landscape_is_a_function_of_place() {
         }
         l
     };
-    let straight = fly(7, &[(0.0, 0.0), (600.0, 0.0)]);
-    let looped = fly(7, &[(0.0, 0.0), (0.0, 500.0), (1100.0, 500.0), (1100.0, 0.0), (600.0, 0.0)]);
+    let straight = fly(seed, &[(0.0, 0.0), (600.0, 0.0)]);
+    let looped = fly(seed, &[(0.0, 0.0), (0.0, 500.0), (1100.0, 500.0), (1100.0, 0.0), (600.0, 0.0)]);
     let a = trees_near(&straight, 600.0, 0.0, 60.0);
     assert!(a.len() > 50, "{} trees", a.len());
     assert_eq!(a, trees_near(&looped, 600.0, 0.0, 60.0));
@@ -68,7 +85,7 @@ fn landscape_is_a_function_of_place() {
         v
     };
     assert_eq!(feats(&straight), feats(&looped));
-    assert_ne!(a, trees_near(&fly(8, &[(0.0, 0.0), (600.0, 0.0)]), 600.0, 0.0, 60.0));
+    assert_ne!(a, trees_near(&fly(seed + 1, &[(0.0, 0.0), (600.0, 0.0)]), 600.0, 0.0, 60.0));
     // Bounded: nothing far away survives.
     for t in straight.tiles.iter().filter(|t| t.alive) {
         let (cx, cy) = land::tile_centre(t.i, t.j);
@@ -219,7 +236,7 @@ fn controls_and_toggle() {
     // Scene objects until flight mode is on, streamed ones after the cross-fade.
     let mut objs = [ObjectInfo::default(); 512];
     let scene = e.objects(&mut objs);
-    assert_eq!(scene, 34);
+    assert_eq!(scene, 36);
     e.set_param(param::FLIGHT, 1.0);
     run(&e, 2.0);
     assert_eq!(e.telemetry(telemetry::FLIGHT), 1.0);
@@ -552,4 +569,322 @@ fn frame_tells_the_ui_where_and_what() {
     let mut out = [0.0f32; terrain::SAMPLE_FLOATS];
     s.grid(f.x, f.y, 1.0, 1, 1, &mut out);
     assert!((out[0].max(out[1]) - f.ground_z).abs() < 0.6, "sampler {} engine {}", out[0], f.ground_z);
+}
+
+/// Position in the landscape (m) and heading (rad).
+fn where_(e: &Engine) -> (f64, f64, f32) {
+    let f = e.flight_frame().unwrap();
+    (f.x, f.y, f.heading)
+}
+
+/// Displacement since `a` in the frame of `a`'s heading: (forward, left), m.
+fn moved(a: (f64, f64, f32), b: (f64, f64, f32)) -> (f64, f64) {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (s, c) = (a.2 as f64).sin_cos();
+    (c * dx + s * dy, -s * dx + c * dy)
+}
+
+fn standing_engine(speed: f32) -> Engine {
+    let e = flying_engine(speed, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    run(&e, 1.0);
+    e.set_param(param::FLIGHT, 2.0);
+    run(&e, 4.0);
+    e
+}
+
+#[test]
+fn holding_stops_and_stays_put() {
+    let e = flying_engine(12.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    run(&e, 2.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > 11.0);
+    e.set_param(param::FLIGHT, 2.0);
+    // 12 m/s at 4 m/s² stops in 3 s; it stays in the world (no cross-fade home).
+    run(&e, 3.5);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) < 0.05, "still {} m/s", e.telemetry(telemetry::FLIGHT_SPEED));
+    assert!(e.telemetry(telemetry::FLIGHT) > 0.99);
+    let a = where_(&e);
+    run(&e, 6.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!(f.hypot(l) < 0.01 && turned(a.2, b.2).abs() < 1e-3, "drifted {f} {l}");
+    // Down to standing height.
+    let alt = e.telemetry(telemetry::FLIGHT_ALTITUDE);
+    assert!(alt < 2.5, "altitude {alt}");
+    assert!(e.flight_frame().unwrap().linger > 0.9);
+    // Flying on resumes the cruise.
+    e.set_param(param::FLIGHT, 1.0);
+    run(&e, 6.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > 11.0);
+}
+
+#[test]
+fn walking_goes_where_the_head_looks() {
+    let e = standing_engine(6.0);
+    // Without head tracking: W walks along the course at 1.5 m/s, S walks back.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!((f - 3.0).abs() < 0.1 && l.abs() < 0.05, "walked {f} {l}");
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 1.5).abs() < 0.01);
+    // Shift runs.
+    e.set_param(param::MOVE_RUN, 1.0);
+    run(&e, 2.5);
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 5.0).abs() < 0.01);
+    e.set_param(param::MOVE_RUN, 0.0);
+    e.set_param(param::MOVE_FORWARD, -1.0);
+    run(&e, 2.0);
+    let a = where_(&e);
+    run(&e, 1.0);
+    let (f, _) = moved(a, where_(&e));
+    assert!((f + 1.5).abs() < 0.1, "backwards {f}");
+    // With AirPods: along the gaze (30° left), while the course turns towards it.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    look(&e, 30.0, 0.0, 2.0);
+    let a = where_(&e);
+    look(&e, 30.0, 0.0, 0.2);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    let mid = 0.5 * turned(a.2, b.2) as f64;
+    let dir = l.atan2(f) - mid;
+    assert!((f.hypot(l) / 0.2 - 1.5).abs() < 0.1, "speed {}", f.hypot(l) / 0.2);
+    assert!((dir.to_degrees() - 30.0).abs() < 4.0, "walked towards {}°", dir.to_degrees());
+    assert!(turned(a.2, b.2) > 0.02, "course did not follow the gaze");
+    // Standing (no keys) and looking around does not turn the course.
+    e.set_param(param::MOVE_FORWARD, 0.0);
+    look(&e, 30.0, 0.0, 2.0);
+    let a = where_(&e);
+    look(&e, 30.0, 0.0, 2.0);
+    let b = where_(&e);
+    assert!(turned(a.2, b.2).abs() < 1e-3 && moved(a, b).0.hypot(moved(a, b).1) < 0.01);
+}
+
+#[test]
+fn strafing_keeps_the_heading() {
+    let e = standing_engine(6.0);
+    e.set_param(param::MOVE_STRAFE, 1.0);
+    run(&e, 1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!((l + 3.0).abs() < 0.1 && f.abs() < 0.05, "stepped {f} {l}");
+    assert!(turned(a.2, b.2).abs() < 1e-4);
+    // Diagonals are not faster.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 1.0);
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 1.5).abs() < 0.01);
+}
+
+#[test]
+fn turning_keys_turn() {
+    let e = standing_engine(6.0);
+    // Q: turn left on the spot at ~60°/s.
+    e.set_param(param::MOVE_TURN, -1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let t = turned(a.2, b.2);
+    assert!(t > 1.6 && t < 2.1, "turned {t} rad in 2 s");
+    assert!(moved(a, b).0.hypot(moved(a, b).1) < 0.01);
+    // E: right.
+    e.set_param(param::MOVE_TURN, 1.0);
+    run(&e, 1.0);
+    let c = where_(&e);
+    run(&e, 1.0);
+    assert!(turned(c.2, where_(&e).2) < -0.9);
+    e.set_param(param::MOVE_TURN, 0.0);
+    // Flying: D turns right at flight.turn_rate (30°/s), W raises the cruise.
+    e.set_param(param::FLIGHT, 1.0);
+    run(&e, 5.0);
+    let h = where_(&e).2;
+    e.set_param(param::MOVE_STRAFE, 1.0);
+    run(&e, 3.0);
+    assert!(turned(h, where_(&e).2) < -0.9, "flight turn {}", turned(h, where_(&e).2));
+    e.set_param(param::MOVE_STRAFE, 0.0);
+    let v = e.telemetry(telemetry::FLIGHT_SPEED);
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 2.0);
+    e.set_param(param::MOVE_FORWARD, 0.0);
+    run(&e, 3.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > v + 4.0, "{v} -> {}", e.telemetry(telemetry::FLIGHT_SPEED));
+}
+
+// ---------------------------------------------------------------------------------------
+// Journey: the biome as a function of place
+// ---------------------------------------------------------------------------------------
+
+/// Points every 2.5 m along a 6 km straight line from the origin, heading by seed.
+fn journey_line(seed: u64) -> impl Iterator<Item = (f64, f64)> {
+    let th = seed as f64 * 0.9;
+    (0..=2400).map(move |k| (k as f64 * 2.5 * th.cos(), k as f64 * 2.5 * th.sin()))
+}
+
+#[test]
+fn journey_crosses_biomes() {
+    // Any 6 km of a journey crosses at least three biomes, and what the listener feels
+    // (temperature, wind) changes along the way, smoothly.
+    for seed in 0..10u64 {
+        let l = Land::new(seed, super::journey::JOURNEY);
+        let mut seen: Vec<u32> = Vec::new();
+        let (mut t_lo, mut t_hi, mut w_lo, mut w_hi) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        let mut prev: Option<(f32, f32)> = None;
+        for (x, y) in journey_line(seed) {
+            let (b, dom) = l.local(x, y);
+            if !seen.contains(&dom) {
+                seen.push(dom);
+            }
+            assert!(dom != 9 && dom != 10 && dom != super::journey::JOURNEY, "no sea coast or big river in a journey");
+            if let Some((t, w)) = prev {
+                assert!((b.temperature - t).abs() < 0.3 && (b.wind - w).abs() < 0.02, "a step at ({x}, {y}): {t} -> {}", b.temperature);
+            }
+            prev = Some((b.temperature, b.wind));
+            (t_lo, t_hi, w_lo, w_hi) = (t_lo.min(b.temperature), t_hi.max(b.temperature), w_lo.min(b.wind), w_hi.max(b.wind));
+        }
+        let names: Vec<&str> = seen.iter().map(|&b| land::BIOMES[b as usize].name).collect();
+        println!("seed {seed}: {names:?}, {t_lo:+.1}..{t_hi:+.1} °C, wind x{w_lo:.2}..{w_hi:.2}");
+        assert!(seen.len() >= 3, "seed {seed}: only {names:?}");
+        assert!(t_hi - t_lo > 1.5 || w_hi - w_lo > 0.15, "seed {seed}: the air never changes");
+    }
+}
+
+#[test]
+fn journey_heights_are_continuous_across_borders() {
+    // Across region borders the relief blends: between gentle biomes (no mountains or
+    // dunes) no step over 0.5 m per 2.5 m, and everywhere the height is continuous (refined
+    // to 2.5 cm, no jump over 10 cm).
+    let (mut borders, mut gentle, mut worst_gentle) = (0, 0, 0.0f32);
+    for seed in 0..10u64 {
+        let l = Land::new(seed, super::journey::JOURNEY);
+        let p = l.params;
+        let mut prev: Option<(f64, f64, f32, bool)> = None;
+        for (x, y) in journey_line(seed) {
+            let bl = p.blend(x, y, 0.0);
+            let h = p.base(x, y).h;
+            let soft = bl.parts().all(|(b, _)| b.relief.mountains == 0.0 && b.relief.dunes == 0.0);
+            if let Some((px, py, ph, was_border)) = prev {
+                if bl.n > 1 || was_border {
+                    borders += 1;
+                    let dh = (h - ph).abs();
+                    if soft {
+                        gentle += 1;
+                        worst_gentle = worst_gentle.max(dh);
+                        assert!(dh < 0.5, "seed {seed}: step {dh} m at ({x:.1}, {y:.1})");
+                    }
+                    if dh > 0.25 {
+                        let mut last = ph;
+                        for k in 1..=100 {
+                            let t = k as f64 / 100.0;
+                            let hk = p.base(px + (x - px) * t, py + (y - py) * t).h;
+                            assert!((hk - last).abs() < 0.1, "seed {seed}: jump {} m near ({x:.1}, {y:.1})", hk - last);
+                            last = hk;
+                        }
+                    }
+                }
+            }
+            prev = Some((x, y, h, bl.n > 1));
+        }
+    }
+    println!("{borders} border steps, {gentle} between gentle biomes, worst {worst_gentle:.2} m");
+    assert!(borders > 500 && gentle > 100, "{borders} {gentle}");
+}
+
+#[test]
+fn journey_sampler_sees_the_same_relief() {
+    // The UI's sampler (no tile caches) and the streamed tiles agree, also on borders.
+    let seed = 3;
+    let mut l = Land::new(seed, super::journey::JOURNEY);
+    let mut s = terrain::Sampler::new(seed, super::journey::JOURNEY, 1.0);
+    let mut out = [0.0f32; terrain::SAMPLE_FLOATS];
+    let mut checked = (0, 0);
+    for (x, y) in journey_line(seed).step_by(40).take(50) {
+        l.stream(x, y, usize::MAX);
+        let (x, y) = (x + 1.25, y + 1.25);
+        s.grid(x, y, 1.0, 1, 1, &mut out);
+        let (g, w, _) = l.nearest(x, y);
+        let border = !l.params.blend(x, y, 0.0).uniform();
+        checked.0 += 1;
+        checked.1 += border as usize;
+        assert!((out[0] - l.ground(x, y)).abs() < 0.6 || w > g, "sampler {} engine {} at ({x}, {y})", out[0], l.ground(x, y));
+    }
+    assert!(checked.0 == 50, "{checked:?}");
+}
+
+#[test]
+fn journey_audio_is_deterministic_and_the_frame_names_the_place() {
+    let take = || {
+        let e = flying_over("journey", 25.0, 4);
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        let mut out = Vec::new();
+        for _ in 0..(48_000 * 3 / 512) {
+            e.render(&mut l, &mut r);
+            out.extend_from_slice(&l);
+        }
+        (out, e.flight_frame().unwrap())
+    };
+    let (a, f) = take();
+    assert_eq!(a, take().0);
+    assert_eq!(f.biome, super::journey::JOURNEY);
+    let land = Land::new(f.seed, f.biome);
+    assert_eq!(f.local_biome, land.local(f.x, f.y).1, "the frame tells the biome under the listener");
+}
+
+#[test]
+fn wind_direction_is_world_fixed_in_flight() {
+    // The wind stays where it is in the world while the course turns: relative to the
+    // course it turns the other way, and the gusts still arrive from the same compass side.
+    let e = flying_engine(10.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    e.set_control(id::ENV_WIND_DIRECTION, 0.0); // from the north (turns from the west over ~10 s)
+    look(&e, 0.0, 0.0, 30.0);
+    let rel = |e: &Engine| e.telemetry(telemetry::WIND_FROM);
+    let (h0, w0) = (heading(&e), rel(&e));
+    // From the north = world +x: relative to the course that is -heading.
+    assert!(turned(-h0, w0).abs() < 0.05, "heading {h0}, wind from {w0}");
+    look(&e, 40.0, 0.0, 4.0);
+    let (h1, w1) = (heading(&e), rel(&e));
+    let dh = turned(h0, h1);
+    assert!(dh > 1.0, "did not turn: {dh}");
+    assert!((turned(w0, w1) + dh).abs() < 0.05, "course turned {dh:.2} rad, wind turned {:.2} rad relative to it", turned(w0, w1));
+}
+
+/// Storms are heard in flight too: the thunder slot sounds after the director's strikes,
+/// from the strike's bearing in the landscape, which stays put while the course turns.
+#[test]
+fn thunder_in_flight_keeps_its_bearing_in_the_landscape() {
+    let e = flying_engine(20.0, 5);
+    e.set_param(param::STORM, 1.0);
+    let mut src = [crate::SourceInfo::default(); crate::MAX_SOURCES];
+    let (mut loud, mut strikes, mut turned) = (0.0f32, 0, 0.0f32);
+    let mut last: Option<(f32, f32)> = None;
+    for _ in 0..240 {
+        run(&e, 0.5);
+        let n = e.sources(&mut src);
+        let Some(t) = src[..n].iter().find(|s| s.kind == SourceKind::Thunder as u32) else { continue };
+        if e.telemetry(telemetry::FLIGHT) < 1.0 {
+            continue;
+        }
+        let r = t.world_x.hypot(t.world_y).hypot(t.world_z);
+        assert!((r - crate::director::THUNDER_PROXY_M).abs() < 0.1, "proxy at {r} m");
+        loud = loud.max(t.level);
+        let rel = t.world_y.atan2(t.world_x);
+        let world = wrap(rel + e.telemetry(telemetry::FLIGHT_HEADING));
+        if let Some((w, r)) = last {
+            if wrap(world - w).abs() > 0.002 {
+                strikes += 1;
+            } else {
+                turned += wrap(rel - r).abs();
+            }
+        }
+        last = Some((world, rel));
+    }
+    assert!(loud > 0.0, "thunder never sounded in flight");
+    // The bearing changes only with a new strike (~4 a minute); between strikes the course
+    // turned under it (the listener-relative direction moved, the landscape one did not).
+    assert!((1..=16).contains(&strikes), "{strikes} bearing changes");
+    assert!(turned > 0.15, "turned {turned} rad between strikes");
 }

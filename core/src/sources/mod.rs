@@ -65,6 +65,12 @@ pub struct Ambient {
     pub strike: u32,
     /// Horizontal distance of the latest strike, m.
     pub strike_distance_m: f32,
+    /// Return strokes of the latest flash: 0 = intracloud, 1..=5 cloud-to-ground (with
+    /// `strike` it fixes the flash's timing, `thunder::Flash::new`).
+    pub strike_strokes: u8,
+    /// Bearing of the latest strike, radians (0 = +x, +π/2 = +y of the world the director
+    /// works in; flight mode takes it in its landscape frame).
+    pub strike_bearing: f32,
 }
 
 impl Default for Ambient {
@@ -84,6 +90,8 @@ impl Default for Ambient {
             storm: 0.0,
             strike: 0,
             strike_distance_m: 0.0,
+            strike_strokes: 0,
+            strike_bearing: 0.0,
         }
     }
 }

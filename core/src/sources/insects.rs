@@ -14,6 +14,32 @@
 //!
 //! Rate laws are linear in temperature (Q₁₀ ≈ 2 is a 4–5 %/°C slope near 20 °C). Each species
 //! has a temperature floor, active hours, and stops in heavy rain or strong wind.
+//!
+//! The same model voices the other small rhythmic animals of the evening and the wood, which
+//! follow the same pattern (a pulse rate set by a muscle, temperature-dependent, grouped into
+//! notes and calls) but excite resonators instead of a file of teeth. Each pulse is a short
+//! burst (a clean impulse mixed with noise: the cords, the bill on wood), differentiated,
+//! low-passed and rung through three formants (`voice`); the shapes were fitted to xeno-canto
+//! and Freesound recordings (docs/references.md, `ml/asmr_ml/refcompare.py`):
+//! * **Marsh frog** (Pelophylax ridibundus, Schneider 2005): the territorial call is a train of
+//!   6-10 "notes" of ~50 ms at ~9/s (an onset every ~110 ms, a call ~0.8 s, quiet ~1 s between
+//!   calls), each note a hump of ~11 pulses at ~200 Hz; narrow bands at 1.7-1.8 kHz and ~3.7 kHz
+//!   (and a weak one near 800 Hz), little above 5 kHz.
+//! * **Tree frog** (Hyla arborea): "krak" notes of ~80 ms at ~4/s with a sharp attack and slow
+//!   decay, narrow bands at 2.7 kHz (strongest) and ~1.4 / 4.5 kHz, almost nothing under 1 kHz;
+//!   several males overlap into a continuous chorus (so no synchrony).
+//! * **Common frog** (Rana temporaria): a purr, trains of ~16 soft pulses (3 ms bursts) at
+//!   ~25/s that grow in loudness, centred near 500 Hz with a breathy broadband floor; trains
+//!   ~0.65 s long, a few per call.
+//! * **Woodpecker drumming** (great spotted, Dendrocopos major): 10-16 bill strikes in ~0.5-0.7 s
+//!   at ~26/s (timing jitter, slowing and fading a little at the end), each a few ms of
+//!   broadband knock (broad formants at 1.1, 1.9, 3.5 kHz: the branch is not a ringing bell);
+//!   the recordings are of drumming, so a drum comes every ~15 s here (4 per minute).
+//! Call and pulse rates rise with temperature like the insects' (Gerhardt & Huber 2002).
+//! Distance to the reference recordings (refcompare, 18 °C), before -> after: marsh 1.55 ->
+//! 0.83, tree 2.24 -> 1.10, common 1.00 -> ~1.1 (a purr now, not clicks: pulses 25/s), woodpecker
+//! 2.28 -> 2.19 (spectrum 1.8 -> 0.7; the rest is the digital silence between drums, which the
+//! recordings, with their noise bed, do not have).
 
 use core::f32::consts::TAU;
 
@@ -35,6 +61,10 @@ pub enum InsectKind {
     BushCricket,
     Grasshopper,
     Cicada,
+    MarshFrog,
+    TreeFrog,
+    CommonFrog,
+    Woodpecker,
 }
 
 /// Species song parameters at 20 °C and their temperature slopes.
@@ -58,7 +88,71 @@ pub fn song_law(kind: InsectKind) -> SongLaw {
         InsectKind::BushCricket => SongLaw { carrier_hz: 10_000.0, pulse_hz: 30.0, pulse_slope: 0.04, pulses_per_chirp: 0, q: 2.5 },
         InsectKind::Grasshopper => SongLaw { carrier_hz: 8000.0, pulse_hz: 20.0, pulse_slope: 0.04, pulses_per_chirp: 12, q: 1.5 },
         InsectKind::Cicada => SongLaw { carrier_hz: 5200.0, pulse_hz: 220.0, pulse_slope: 0.03, pulses_per_chirp: 0, q: 8.0 },
+        // Frogs: carrier = dominant (sac) frequency, pulse_hz = pulses within a note,
+        // pulses_per_chirp = notes per call.
+        InsectKind::MarshFrog => SongLaw { carrier_hz: 1800.0, pulse_hz: 220.0, pulse_slope: 0.03, pulses_per_chirp: 8, q: 7.0 },
+        InsectKind::TreeFrog => SongLaw { carrier_hz: 2700.0, pulse_hz: 160.0, pulse_slope: 0.03, pulses_per_chirp: 14, q: 14.0 },
+        InsectKind::CommonFrog => SongLaw { carrier_hz: 500.0, pulse_hz: 25.0, pulse_slope: 0.03, pulses_per_chirp: 3, q: 6.0 },
+        // Woodpecker: carrier = main resonance of the knock, pulse_hz = strikes per second, strikes per drum.
+        InsectKind::Woodpecker => SongLaw { carrier_hz: 1100.0, pulse_hz: 26.0, pulse_slope: 0.0, pulses_per_chirp: 13, q: 5.0 },
     }
+}
+
+/// Notes per second within a frog's call, and seconds of pulsing per note (temperature-free
+/// values at 20 °C; scaled with the pulse rate).
+fn note_law(kind: InsectKind) -> (f32, f32) {
+    match kind {
+        InsectKind::MarshFrog => (9.0, 0.05),
+        InsectKind::TreeFrog => (4.0, 0.08),
+        InsectKind::CommonFrog => (1.0, 0.65),
+        _ => (1.0, 0.1),
+    }
+}
+
+/// Loudness contour of the pulses of one note.
+#[derive(Clone, Copy, PartialEq)]
+enum NoteShape {
+    /// Swells and fades (marsh frog).
+    Hump,
+    /// Sharp attack, slow decay (tree frog "krak").
+    Saw,
+    /// Crescendo, then stops (the purr of the common frog).
+    Ramp,
+}
+
+/// The vocal tract of a frog (or the knock of a drumming bill) as three resonances excited by
+/// each pulse: formant frequency (relative to the carrier), Q, gain; the length of the noisy
+/// burst a pulse makes, and the share of its raw (differentiated) noise heard directly.
+struct Voice {
+    ratio: [f32; 3],
+    q: [f32; 3],
+    gain: [f32; 3],
+    burst_ms: f32,
+    /// Share of the pulse that is noise (0 = a clean impulse, so a pure ringing tone).
+    noise: f32,
+    direct: f32,
+    /// Breath noise through the whole note (turbulence), high-passed, relative to the pulses.
+    breath: f32,
+    /// Two-pole lowpass on the excitation, cutoff relative to the carrier (calls have little above their formants).
+    lp_ratio: f32,
+    shape: NoteShape,
+}
+
+fn voice(kind: InsectKind) -> Voice {
+    match kind {
+        // Marsh frog: loud band at 1.7-2 kHz, a second at ~3.7 kHz, a weak one near 800 Hz.
+        InsectKind::MarshFrog => Voice { ratio: [1.0, 2.08, 0.45], q: [18.0, 25.0, 8.0], gain: [1.0, 0.6, 0.2], burst_ms: 1.0, noise: 0.5, direct: 0.002, breath: 0.0, lp_ratio: 2.2, shape: NoteShape::Hump },
+        // Tree frog: narrow at 2.7 kHz, a lower band ~1.4 kHz, a thin one at 4.5 kHz, little under 1 kHz.
+        InsectKind::TreeFrog => Voice { ratio: [1.0, 0.55, 1.65], q: [20.0, 14.0, 25.0], gain: [1.0, 0.15, 0.2], burst_ms: 0.8, noise: 0.1, direct: 0.004, breath: 0.0, lp_ratio: 1.5, shape: NoteShape::Saw },
+        // Common frog: a soft low purr around 500 Hz, a faint upper part.
+        InsectKind::CommonFrog => Voice { ratio: [1.0, 2.0, 5.0], q: [8.0, 5.0, 2.5], gain: [1.0, 0.3, 0.1], burst_ms: 3.0, noise: 0.6, direct: 0.01, breath: 0.08, lp_ratio: 12.0, shape: NoteShape::Ramp },
+        // Bill on wood: a broad hump from 1 to 5 kHz.
+        _ => Voice { ratio: [1.0, 1.7, 3.2], q: [4.0, 4.0, 3.0], gain: [0.45, 1.0, 1.0], burst_ms: 3.0, noise: 0.9, direct: 0.03, breath: 0.0, lp_ratio: 6.0, shape: NoteShape::Hump },
+    }
+}
+
+fn is_frog(kind: InsectKind) -> bool {
+    matches!(kind, InsectKind::MarshFrog | InsectKind::TreeFrog | InsectKind::CommonFrog)
 }
 
 /// Chirps (or echemes) per minute at `t_c` °C; 0 below the activity threshold.
@@ -71,6 +165,12 @@ pub fn chirps_per_min(kind: InsectKind, t_c: f32) -> f32 {
         // Chorthippus: one echeme every few seconds, faster when warm.
         InsectKind::Grasshopper => (1.0 * (t_c - 10.0)).max(0.0),
         InsectKind::BushCricket | InsectKind::Cicada => 0.0,
+        // Calls per minute of a frog in a chorus (each call several notes).
+        InsectKind::MarshFrog => (1.9 * (t_c - 8.0)).max(0.0),
+        InsectKind::TreeFrog => (1.3 * (t_c - 8.0)).max(0.0),
+        InsectKind::CommonFrog => (0.5 * (t_c - 3.0)).max(0.0),
+        // Drums per minute: a bird, not an ectotherm.
+        InsectKind::Woodpecker => 4.0,
     }
 }
 
@@ -148,6 +248,17 @@ struct Individual {
     res: Mode,
     tymbal: bool,
     swell: f32,
+    /// Frogs and drumming: three formants, the pulse burst in progress (samples left, amplitude,
+    /// previous noise sample) and per-call variation (notes in this call, strength of this note).
+    fm: [Mode; 3],
+    burst: u32,
+    burst_amp: f32,
+    prev: f32,
+    fnorm: [f32; 3],
+    lpk: f32,
+    lp: [f32; 2],
+    notes: u32,
+    strength: f32,
 }
 
 pub struct Insects {
@@ -207,6 +318,22 @@ impl Insects {
     pub fn cicada() -> InsectConfig {
         InsectConfig { kind: InsectKind::Cicada, count: 3, min_temp_c: 22.0, active_from_h: 9.0, active_to_h: 19.0, temperature_offset_c: 2.0, ..Default::default() }
     }
+    /// A chorus of marsh frogs at a lake or a slow river, dusk into the night.
+    pub fn marsh_frogs() -> InsectConfig {
+        InsectConfig { kind: InsectKind::MarshFrog, count: 2, min_temp_c: 12.0, active_from_h: 19.5, active_to_h: 2.0, spread: 0.12, gain: 1.6, ..Default::default() }
+    }
+    /// Tree frogs in the reeds and bushes by the water: loud, rapid, at night.
+    pub fn tree_frogs() -> InsectConfig {
+        InsectConfig { kind: InsectKind::TreeFrog, count: 6, min_temp_c: 12.0, active_from_h: 21.0, active_to_h: 3.0, spread: 0.1, synchrony: 0.0, gain: 1.4, ..Default::default() }
+    }
+    /// Common frogs purring softly in a pond (cool nights are enough for them).
+    pub fn common_frogs() -> InsectConfig {
+        InsectConfig { kind: InsectKind::CommonFrog, count: 3, min_temp_c: 5.0, active_from_h: 18.0, active_to_h: 5.0, spread: 0.12, gain: 1.0, ..Default::default() }
+    }
+    /// A great spotted woodpecker drumming on a dead branch, in the morning.
+    pub fn woodpecker() -> InsectConfig {
+        InsectConfig { kind: InsectKind::Woodpecker, count: 1, min_temp_c: -5.0, active_from_h: 6.0, active_to_h: 12.0, spread: 0.1, gain: 3.0, ..Default::default() }
+    }
 
     pub fn preset(name: &str) -> Option<InsectConfig> {
         Some(match name {
@@ -215,11 +342,15 @@ impl Insects {
             "bush_cricket" => Self::bush_cricket(),
             "grasshopper" => Self::grasshopper(),
             "cicada" => Self::cicada(),
+            "marsh_frogs" => Self::marsh_frogs(),
+            "tree_frogs" => Self::tree_frogs(),
+            "common_frogs" => Self::common_frogs(),
+            "woodpecker" => Self::woodpecker(),
             _ => return None,
         })
     }
 
-    pub const PRESETS: &'static [&'static str] = &["field_cricket", "tree_cricket", "bush_cricket", "grasshopper", "cicada"];
+    pub const PRESETS: &'static [&'static str] = &["field_cricket", "tree_cricket", "bush_cricket", "grasshopper", "cicada", "marsh_frogs", "tree_frogs", "common_frogs", "woodpecker"];
 
     fn update(&mut self, c: &Controls, len: usize) {
         let sr = self.sample_rate;
@@ -263,9 +394,121 @@ impl Insects {
             match cfg.kind {
                 InsectKind::BushCricket | InsectKind::Grasshopper => i.band.set(f, law.q, sr),
                 InsectKind::Cicada => i.res.tune(f, core::f32::consts::PI * f / law.q, sr),
+                k if is_frog(k) || k == InsectKind::Woodpecker => {
+                    let v = voice(k);
+                    for j in 0..3 {
+                        let fj = f * v.ratio[j];
+                        i.fm[j].tune(fj, core::f32::consts::PI * fj / v.q[j], sr);
+                        let w = TAU * fj / sr;
+                        i.lpk = one_pole_coef(f * v.lp_ratio, sr);
+                        i.fnorm[j] = 1.0 / (1.0 - 2.0 * 0.85 * w.cos() + 0.7225).sqrt();
+                    }
+                }
                 _ => {}
             }
         }
+    }
+}
+
+impl Insects {
+    /// One sample of a frog's call or a woodpecker's drum: calls (chirp clock) of `notes`
+    /// notes (syl), each note a train of pulses (carrier_phase) ringing the resonators.
+    #[allow(clippy::too_many_arguments)]
+    fn call_sample(i: &mut Individual, kind: InsectKind, law: &SongLaw, v: &Voice, pulse_hz: f32, calls_hz: f32, rate: f32, sr: f32, rng: &mut Rng, count: &mut u32) -> f32 {
+        let drum = kind == InsectKind::Woodpecker;
+        i.chirp += calls_hz * i.rate_jit / sr * if drum { 1.0 } else { rng.range(0.6, 1.4) };
+        if i.chirp >= 1.0 {
+            i.chirp -= 1.0;
+            if i.singing && i.syl == u32::MAX {
+                i.syl = 0;
+                i.syl_phase = 0.0;
+                i.carrier_phase = 1.0;
+                // Calls vary: a short laugh or a long one, a drum of 10 or 16 strikes.
+                let n = law.pulses_per_chirp as f32;
+                i.notes = (n * rng.range(0.6, 1.35)).round().max(1.0) as u32;
+                i.strength = rng.range(0.6, 1.0);
+                *count += 1;
+            }
+        }
+        let burst_n = (v.burst_ms * 1e-3 * sr).max(1.0) as u32;
+        let mut x = 0.0;
+        if i.syl != u32::MAX {
+            if drum {
+                // One bill strike per period; strikes slow a little and fade towards the end.
+                if i.carrier_phase >= 1.0 {
+                    let u = i.syl as f32 / i.notes.max(1) as f32;
+                    i.burst = burst_n;
+                    i.burst_amp = i.strength * (1.0 - 0.5 * u * u) * rng.range(0.7, 1.0);
+                    i.syl += 1;
+                    i.carrier_phase -= 1.0 + 0.08 * rng.bipolar();
+                    if i.syl >= i.notes {
+                        i.syl = u32::MAX;
+                    }
+                }
+                let u = i.syl.min(i.notes) as f32 / i.notes.max(1) as f32;
+                i.carrier_phase += law.pulse_hz * i.rate_jit * (1.0 - 0.08 * u * u) / sr;
+            } else {
+                let (note_hz, note_len) = note_law(kind);
+                let period = 1.0 / (note_hz * rate * i.rate_jit);
+                let active = note_len / rate;
+                i.syl_phase += 1.0 / sr;
+                i.swell = 0.0;
+                if i.syl_phase < active {
+                    // Pulses of the vocal cords within the note, shaped by the note's contour.
+                    let u = i.syl_phase / active;
+                    let env = match v.shape {
+                        NoteShape::Hump => (core::f32::consts::PI * u).sin().max(0.15),
+                        NoteShape::Saw => (u / 0.1).clamp(0.3, 1.0) * (-1.6 * u).exp(),
+                        NoteShape::Ramp => 0.25 + 0.75 * u,
+                    };
+                    i.swell = i.strength * env;
+                    i.carrier_phase += pulse_hz * i.rate_jit / sr;
+                    if i.carrier_phase >= 1.0 {
+                        i.carrier_phase -= 1.0 + 0.12 * rng.bipolar();
+                        i.burst = burst_n;
+                        i.burst_amp = i.swell * rng.range(0.7, 1.0);
+                    }
+                }
+                if i.syl_phase >= period {
+                    i.syl_phase -= period;
+                    i.syl += 1;
+                    i.carrier_phase = 1.0;
+                    i.strength *= rng.range(0.85, 1.12);
+                    if i.syl >= i.notes {
+                        i.syl = u32::MAX;
+                    }
+                }
+            }
+        } else {
+            i.swell = 0.0;
+        }
+        // A pulse is a short burst of noise (the cords, the bill on wood) rung through the formants.
+        // The excitation is differentiated (no energy at 0 Hz: the bare modes leak a flat
+        // low-frequency skirt) and each formant is scaled to unit gain at its own frequency.
+        let mut s = 0.0;
+        if i.burst > 0 {
+            let taper = i.burst as f32 / burst_n as f32;
+            s = i.burst_amp * v.noise * taper * rng.bipolar() / (burst_n as f32).sqrt();
+            if i.burst == burst_n {
+                s += i.burst_amp * 0.6 * (1.0 - v.noise);
+            }
+            i.burst -= 1;
+        }
+        if v.breath > 0.0 && i.swell > 0.0 {
+            s += v.breath * i.swell * 0.3 * rng.bipolar();
+        }
+        let d0 = s - 0.85 * i.prev;
+        i.lp[0] += i.lpk * (d0 - i.lp[0]);
+        i.lp[1] += i.lpk * (i.lp[0] - i.lp[1]);
+        let d = i.lp[1];
+        i.prev = s;
+        {
+            for j in 0..3 {
+                i.fm[j].strike(v.gain[j] * i.fnorm[j] * d);
+            }
+            x += v.direct * d;
+        }
+        x + i.fm[0].tick() + i.fm[1].tick() + i.fm[2].tick()
     }
 }
 
@@ -300,6 +543,7 @@ impl Generator for Insects {
         let carrier = if self.cfg.carrier_hz > 0.0 { self.cfg.carrier_hz } else { law.carrier_hz };
         let carrier = carrier * (1.0 + 0.004 * (t - 20.0));
         let g = self.cfg.gain * 0.6;
+        let voice_ = voice(kind);
         for i in self.ind.iter_mut().take(n) {
             if i.level.value < 1e-5 && i.level_ramp.cur < 1e-5 {
                 i.level_ramp.settle(0.0);
@@ -360,6 +604,9 @@ impl Generator for Insects {
                         let env = if x < 0.35 { (core::f32::consts::PI * x / 0.35).sin() } else if (0.45..0.7).contains(&x) { 0.6 * (core::f32::consts::PI * (x - 0.45) / 0.25).sin() } else { 0.0 };
                         let (_, bp, _) = i.band.process(self.rng.bipolar());
                         v = bp * env * 2.0;
+                    }
+                    InsectKind::MarshFrog | InsectKind::TreeFrog | InsectKind::CommonFrog | InsectKind::Woodpecker => {
+                        v = Self::call_sample(i, kind, &law, &voice_, pulse_hz, chirp_hz, rate_factor, sr, &mut self.rng, &mut self.chirps);
                     }
                     InsectKind::Cicada => {
                         // Tymbal clicks ring the abdominal resonator; the two tymbals alternate.
@@ -432,5 +679,30 @@ mod tests {
             e += buf.iter().map(|v| v * v).sum::<f32>();
         }
         assert_eq!(e, 0.0);
+    }
+
+    fn energy(cfg: InsectConfig, hour: f32, t_c: f32, seconds: f32) -> (f32, u32) {
+        let mut ins = Insects::new(48_000.0, 9, cfg);
+        let c = Controls { env: Ambient { temperature_c: t_c, hour, ..Default::default() }, ..Default::default() };
+        let mut buf = [0.0f32; 64];
+        let mut e = 0.0f32;
+        for _ in 0..(seconds * 48_000.0 / 64.0) as usize {
+            ins.render(&mut buf, &c);
+            assert!(buf.iter().all(|v| v.is_finite()));
+            e += buf.iter().map(|v| v * v).sum::<f32>();
+        }
+        (e, ins.chirps())
+    }
+
+    #[test]
+    fn frogs_call_at_night_and_woodpeckers_drum_in_the_morning() {
+        for cfg in [Insects::marsh_frogs(), Insects::tree_frogs(), Insects::common_frogs()] {
+            let (night, calls) = energy(cfg, 23.0, 18.0, 60.0);
+            let (noon, _) = energy(cfg, 13.0, 18.0, 20.0);
+            assert!(night > 1.0 && calls > 3, "{:?}: {night} {calls}", cfg.kind);
+            assert_eq!(noon, 0.0, "{:?} silent at noon", cfg.kind);
+        }
+        let (morning, drums) = energy(Insects::woodpecker(), 8.0, 10.0, 120.0);
+        assert!(morning > 0.1 && (1..=8).contains(&drums), "woodpecker {morning} {drums}");
     }
 }

@@ -177,6 +177,53 @@ impl Ou {
     }
 }
 
+/// The recent history of the gust arriving at an extended source (a crown, a stretch of
+/// forest), so its parts can hear the same gust at different times: an element `x` metres
+/// downwind inside the source hears it x / U later (frozen turbulence). Sampled at 100 Hz,
+/// ~10 s deep; fixed size, no allocation.
+#[derive(Clone, Copy)]
+pub struct GustTrail {
+    hist: [f32; GustTrail::N],
+    pos: usize,
+    acc: f32,
+    filled: bool,
+}
+
+impl Default for GustTrail {
+    fn default() -> Self {
+        Self { hist: [0.0; Self::N], pos: 0, acc: 0.0, filled: false }
+    }
+}
+
+impl GustTrail {
+    const N: usize = 1024;
+    const DT: f32 = 0.01;
+
+    /// Records the gust now; call once per block with the block's duration.
+    pub fn push(&mut self, g: f32, dt: f32) {
+        if !self.filled {
+            self.filled = true;
+            self.hist.fill(g);
+        }
+        self.acc += dt;
+        while self.acc >= Self::DT {
+            self.acc -= Self::DT;
+            self.pos = (self.pos + 1) % Self::N;
+            self.hist[self.pos] = g;
+        }
+    }
+
+    /// The gust `delay_s` seconds ago (linear interpolation, clamped to the history).
+    pub fn at(&self, delay_s: f32) -> f32 {
+        let x = (delay_s.max(0.0) / Self::DT).min((Self::N - 2) as f32);
+        let k = x as usize;
+        let f = x - k as f32;
+        let a = self.hist[(self.pos + Self::N - k) % Self::N];
+        let b = self.hist[(self.pos + Self::N - k - 1) % Self::N];
+        a + (b - a) * f
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // Smoothing
 // ---------------------------------------------------------------------------------------
@@ -353,11 +400,18 @@ impl<const N: usize> BubbleBank<N> {
     /// larger for bubbles pinched off right at the surface), start `delay` in samples from
     /// the start of the next rendered block.
     pub fn spawn(&mut self, r: f32, amp: f32, xi: f32, delay: u32, sr: f32) -> bool {
+        self.spawn_damped(r, amp, xi, delay, sr, 1.0)
+    }
+
+    /// As `spawn`, with the damping multiplied by `damp`: large bubbles pinched off right at
+    /// the surface wobble out of shape and break up, so they ring far shorter than a free
+    /// spherical bubble would.
+    pub fn spawn_damped(&mut self, r: f32, amp: f32, xi: f32, delay: u32, sr: f32, damp: f32) -> bool {
         let f = minnaert_hz(r);
         if self.n >= N || f > 0.45 * sr || f < 20.0 {
             return false;
         }
-        let d = bubble_damping(f);
+        let d = bubble_damping(f) * damp.max(0.1);
         let mut b = Bubble { mode: Mode::default(), freq: f, dfreq: f * xi * d * BUBBLE_UPDATE as f32 / sr, damping: d, delay, sub: BUBBLE_UPDATE };
         b.mode.tune(f, d, sr);
         b.mode.strike(amp);
