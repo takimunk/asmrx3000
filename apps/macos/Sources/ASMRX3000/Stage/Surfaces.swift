@@ -95,9 +95,34 @@ final class SceneStageView: StageView {
     private lazy var renderer = SceneRenderer(stage: stage)
     private var downAt: SIMD2<Float>?
     private var dragged = false
+    private var moves = MoveKeys()
+    private var resignObserver: NSObjectProtocol?
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        releaseMoves()
+        guard let window else { return }
+        // Keys held when the window loses focus never send their key-up here: let go of them.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in self?.releaseMoves() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseMoves()
+        return super.resignFirstResponder()
+    }
+
+    private func releaseMoves() {
+        guard moves.active else { return }
+        moves = MoveKeys()
+        moves.send(to: stage.audio)
+    }
 
     override func windowBecameVisible() {
         stage.focusScene = { [weak self] in
@@ -169,7 +194,65 @@ final class SceneStageView: StageView {
 
     override func keyDown(with event: NSEvent) {
         stage.poke()
+        if moves.press(event, inWorld: stage.audio.flying) {
+            moves.send(to: stage.audio)
+            return
+        }
         if !Keys.handle(event, stage: stage) { super.keyDown(with: event) }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if moves.release(event) {
+            moves.send(to: stage.audio)
+        } else {
+            super.keyUp(with: event)
+        }
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        if moves.shift(event.modifierFlags.contains(.shift)) { moves.send(to: stage.audio) }
+        super.flagsChanged(with: event)
+    }
+}
+
+/// Movement keys held in the scene, by key position (so they work in any layout, Russian
+/// included): W/S forward and back, A/D sideways (turn while flying), Q/E turn, Shift runs.
+/// Only in the generated world; at home the letters do what they did before.
+struct MoveKeys {
+    /// Key codes: W 13, S 1, A 0, D 2, Q 12, E 14.
+    private static let codes: Set<UInt16> = [13, 1, 0, 2, 12, 14]
+    private var held: Set<UInt16> = []
+    private var run = false
+
+    var active: Bool { !held.isEmpty || run }
+
+    /// A key-down of a movement key (repeats included): true when it is ours.
+    mutating func press(_ event: NSEvent, inWorld: Bool) -> Bool {
+        guard Self.codes.contains(event.keyCode),
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+        if !inWorld && !held.contains(event.keyCode) { return false }
+        held.insert(event.keyCode)
+        run = event.modifierFlags.contains(.shift)
+        return true
+    }
+
+    mutating func release(_ event: NSEvent) -> Bool {
+        held.remove(event.keyCode) != nil
+    }
+
+    /// Shift pressed or released: true when it changes anything.
+    mutating func shift(_ down: Bool) -> Bool {
+        guard down != run else { return false }
+        run = down
+        return true
+    }
+
+    private func axis(_ plus: UInt16, _ minus: UInt16) -> Float {
+        (held.contains(plus) ? 1 : 0) - (held.contains(minus) ? 1 : 0)
+    }
+
+    func send(to audio: AudioEngine) {
+        audio.setMoves(forward: axis(13, 1), strafe: axis(2, 0), turn: axis(14, 12), run: run)
     }
 }
 
@@ -180,7 +263,11 @@ final class SceneStageView: StageView {
 ///   ⌥ + any    fine steps (5 cm instead of 25 cm)
 ///   tab        select the next object (⇧tab previous), esc releases the selection (then closes a drawer)
 ///   space      play / pause
-///   F          fly / land       H   head tracking on / off       C   recenter
+///   F          in the world: stop here / fly on; at home: take off
+///   H          head tracking on / off       C   recenter
+///   W S        in the world: walk forward / back (flying: faster / slower)
+///   A D        step left / right (flying: turn)      Q E   turn left / right
+///   ⇧ + W/S    run
 ///   return, /  write to the prompt
 enum Keys {
     static func handle(_ event: NSEvent, stage: Stage) -> Bool {
@@ -200,8 +287,10 @@ enum Keys {
         case 36, 76: stage.focusPrompt?()
         default:
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "f": stage.audio.flying.toggle()
+            // F by key position too, so it works in the Russian layout ("а").
+            let key = event.keyCode == 3 ? "f" : event.charactersIgnoringModifiers?.lowercased()
+            switch key {
+            case "f": stage.audio.toggleFlight()
             case "h": stage.head.enabled.toggle()
             case "c": stage.head.recenter()
             case "/": stage.focusPrompt?()

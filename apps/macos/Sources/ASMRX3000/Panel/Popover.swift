@@ -164,7 +164,7 @@ private extension View {
 
 // MARK: - Transport
 
-/// Play, volume, where the listener is (on the ground or flying), head tracking and recenter;
+/// Play, volume, where the listener is (home, standing in the world or flying), head tracking and recenter;
 /// the status text on the right names whatever the pointer is over, with its key.
 private struct Transport: View {
     @ObservedObject var model: AppModel
@@ -187,8 +187,8 @@ private struct Transport: View {
                 }
                 .padding(.trailing, Grid.x2)
             }
-            ModeSwitch(flying: audio.flying, hint: $hint) { fly in
-                act { if audio.flying != fly { audio.flying = fly } }()
+            ModeSwitch(place: audio.place, hint: $hint) { to in
+                act { if audio.place != to { audio.place = to } }()
             }
             .padding(.trailing, Grid.x1)
             LabeledToggle(icon: .head, title: "Голова", on: head.enabled,
@@ -247,18 +247,21 @@ private struct Transport: View {
     }
 }
 
-/// Where the listener is: "На земле | Полёт", the current one raised. Clicking the other one
-/// switches; F toggles. Says plainly which mode is on and what a click does.
+/// Where the listener is: "Дома | Стоим | Летим", the current one raised. Clicking another
+/// one switches; F stops / flies on in the world and takes off from home. Says plainly which
+/// mode is on and what a click does.
 private struct ModeSwitch: View {
-    let flying: Bool
+    typealias Place = AudioEngine.Place
+    let place: Place
     @Binding var hint: String?
-    let set: (Bool) -> Void
-    @State private var hovered: Bool?
+    let set: (Place) -> Void
+    @State private var hovered: Place?
 
     var body: some View {
         HStack(spacing: 2) {
-            segment(fly: false, title: "На земле")
-            segment(fly: true, title: "Полёт")
+            segment(.home, title: "Дома")
+            segment(.standing, title: "Стоим")
+            segment(.flying, title: "Летим")
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
@@ -266,27 +269,42 @@ private struct ModeSwitch: View {
         .accessibilityLabel("Режим")
     }
 
-    private func segment(fly: Bool, title: String) -> some View {
-        let on = flying == fly
-        return Button { set(fly) } label: {
+    /// What hovering a segment says: the current mode, or what a click does (and its key).
+    private func describe(_ to: Place) -> String {
+        if to == place {
+            switch to {
+            case .home: return "Сейчас: дома, лес у реки"
+            case .standing: return "Сейчас: стоим, идти   W A S D,  бежать   ⇧"
+            case .flying: return "Сейчас: летим, рулить   A D,  быстрее   W"
+            }
+        }
+        switch to {
+        case .home: return "Вернуться домой"
+        case .standing: return place == .flying ? "Остановиться здесь   F" : "Выйти в мир и стоять"
+        case .flying: return place == .standing ? "Лететь дальше   F" : "Взлететь над лесом   F"
+        }
+    }
+
+    private func segment(_ to: Place, title: String) -> some View {
+        let on = place == to
+        return Button { set(to) } label: {
             HStack(spacing: Grid.x1) {
                 Text(title)
                     .font(Ink.text(Ink.Size.caption))
-                    .foregroundStyle(on ? Ink.paper : hovered == fly ? Ink.paper : Ink.graphite)
+                    .foregroundStyle(on ? Ink.paper : hovered == to ? Ink.paper : Ink.graphite)
                     .fixedSize()
             }
             .padding(.horizontal, Grid.x2 - 1)
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(on ? Ink.pressed : hovered == fly ? Ink.raised : .clear))
+                .fill(on ? Ink.pressed : hovered == to ? Ink.raised : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
         .onHover { h in
-            hovered = h ? fly : (hovered == fly ? nil : hovered)
-            hint = h ? (on ? (fly ? "Сейчас: полёт над лесом" : "Сейчас: на земле")
-                           : (fly ? "Взлететь над лесом   F" : "Приземлиться   F")) : nil
+            hovered = h ? to : (hovered == to ? nil : hovered)
+            hint = h ? describe(to) : nil
         }
         .accessibilityLabel(title)
         .accessibilityAddTraits(on ? .isSelected : [])

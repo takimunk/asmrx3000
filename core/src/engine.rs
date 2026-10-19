@@ -94,10 +94,17 @@ pub mod param {
     pub const HEAD_PREDICTION: u32 = 42;
     /// 1 = the head turns about the neck (ears translate: motion parallax), 0 = pure rotation.
     pub const HEAD_PARALLAX: u32 = 43;
-    /// Flight mode on (1) / off (0): cross-fades the scene into an endless streamed landscape
-    /// the listener travels through (flight/, docs/flight-mode.md).
+    /// Flight mode: 0 = the scene (home), 1 = flying through an endless streamed landscape,
+    /// 2 = in that landscape, holding still (walking with the MOVE_* keys). 1 and 2 are both
+    /// "in the world" for the cross-fade (flight/, docs/flight-mode.md).
     pub const FLIGHT: u32 = 44;
-    pub const COUNT: usize = 45;
+    /// Movement keys held in the app, −1..1: W/S (+ = forward), A/D (+ = right), Q/E (+ = turn
+    /// right); MOVE_RUN 0/1 (Shift). Standing they walk; flying they steer and set the cruise.
+    pub const MOVE_FORWARD: u32 = 45;
+    pub const MOVE_STRAFE: u32 = 46;
+    pub const MOVE_TURN: u32 = 47;
+    pub const MOVE_RUN: u32 = 48;
+    pub const COUNT: usize = 49;
 }
 
 pub mod telemetry {
@@ -938,7 +945,7 @@ impl Dsp {
         // Scene focus: where the head points, and whether the listener travels (flight speed;
         // the scene's listener stands still).
         let travel = match self.flight.as_deref() {
-            Some(f) if self.flight_mix > 0.5 => f.pose().speed,
+            Some(f) if self.flight_mix > 0.5 => f.pose().ground_speed(),
             _ => 0.0,
         };
         self.mix.set_listener(&head, travel);
@@ -1045,6 +1052,13 @@ impl Dsp {
                 gustiness,
                 water,
                 neural,
+                hold: p(param::FLIGHT) > 1.5,
+                moves: flight::Moves::new(
+                    p(param::MOVE_FORWARD),
+                    p(param::MOVE_STRAFE),
+                    p(param::MOVE_TURN),
+                    p(param::MOVE_RUN) > 0.5,
+                ),
             };
             let bed = match self.bed_mode {
                 0 => None,
@@ -1142,7 +1156,7 @@ impl Dsp {
         }
         if let Some(f) = self.flight.as_deref() {
             let pose = f.pose();
-            t[telemetry::FLIGHT_SPEED as usize].store(pose.speed);
+            t[telemetry::FLIGHT_SPEED as usize].store(pose.ground_speed());
             t[telemetry::FLIGHT_ALTITUDE as usize].store(pose.height);
             t[telemetry::FLIGHT_ODOMETER as usize].store((pose.s % 10_000.0) as f32);
             t[telemetry::FLIGHT_TURN as usize].store(pose.turn);

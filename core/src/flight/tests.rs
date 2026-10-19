@@ -553,3 +553,146 @@ fn frame_tells_the_ui_where_and_what() {
     s.grid(f.x, f.y, 1.0, 1, 1, &mut out);
     assert!((out[0].max(out[1]) - f.ground_z).abs() < 0.6, "sampler {} engine {}", out[0], f.ground_z);
 }
+
+/// Position in the landscape (m) and heading (rad).
+fn where_(e: &Engine) -> (f64, f64, f32) {
+    let f = e.flight_frame().unwrap();
+    (f.x, f.y, f.heading)
+}
+
+/// Displacement since `a` in the frame of `a`'s heading: (forward, left), m.
+fn moved(a: (f64, f64, f32), b: (f64, f64, f32)) -> (f64, f64) {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (s, c) = (a.2 as f64).sin_cos();
+    (c * dx + s * dy, -s * dx + c * dy)
+}
+
+fn standing_engine(speed: f32) -> Engine {
+    let e = flying_engine(speed, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    run(&e, 1.0);
+    e.set_param(param::FLIGHT, 2.0);
+    run(&e, 4.0);
+    e
+}
+
+#[test]
+fn holding_stops_and_stays_put() {
+    let e = flying_engine(12.0, 1);
+    e.set_control(id::FLIGHT_CURVINESS, 0.0);
+    run(&e, 2.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > 11.0);
+    e.set_param(param::FLIGHT, 2.0);
+    // 12 m/s at 4 m/s² stops in 3 s; it stays in the world (no cross-fade home).
+    run(&e, 3.5);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) < 0.05, "still {} m/s", e.telemetry(telemetry::FLIGHT_SPEED));
+    assert!(e.telemetry(telemetry::FLIGHT) > 0.99);
+    let a = where_(&e);
+    run(&e, 6.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!(f.hypot(l) < 0.01 && turned(a.2, b.2).abs() < 1e-3, "drifted {f} {l}");
+    // Down to standing height.
+    let alt = e.telemetry(telemetry::FLIGHT_ALTITUDE);
+    assert!(alt < 2.5, "altitude {alt}");
+    assert!(e.flight_frame().unwrap().linger > 0.9);
+    // Flying on resumes the cruise.
+    e.set_param(param::FLIGHT, 1.0);
+    run(&e, 6.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > 11.0);
+}
+
+#[test]
+fn walking_goes_where_the_head_looks() {
+    let e = standing_engine(6.0);
+    // Without head tracking: W walks along the course at 1.5 m/s, S walks back.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!((f - 3.0).abs() < 0.1 && l.abs() < 0.05, "walked {f} {l}");
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 1.5).abs() < 0.01);
+    // Shift runs.
+    e.set_param(param::MOVE_RUN, 1.0);
+    run(&e, 2.5);
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 5.0).abs() < 0.01);
+    e.set_param(param::MOVE_RUN, 0.0);
+    e.set_param(param::MOVE_FORWARD, -1.0);
+    run(&e, 2.0);
+    let a = where_(&e);
+    run(&e, 1.0);
+    let (f, _) = moved(a, where_(&e));
+    assert!((f + 1.5).abs() < 0.1, "backwards {f}");
+    // With AirPods: along the gaze (30° left), while the course turns towards it.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    look(&e, 30.0, 0.0, 2.0);
+    let a = where_(&e);
+    look(&e, 30.0, 0.0, 0.2);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    let mid = 0.5 * turned(a.2, b.2) as f64;
+    let dir = l.atan2(f) - mid;
+    assert!((f.hypot(l) / 0.2 - 1.5).abs() < 0.1, "speed {}", f.hypot(l) / 0.2);
+    assert!((dir.to_degrees() - 30.0).abs() < 4.0, "walked towards {}°", dir.to_degrees());
+    assert!(turned(a.2, b.2) > 0.02, "course did not follow the gaze");
+    // Standing (no keys) and looking around does not turn the course.
+    e.set_param(param::MOVE_FORWARD, 0.0);
+    look(&e, 30.0, 0.0, 2.0);
+    let a = where_(&e);
+    look(&e, 30.0, 0.0, 2.0);
+    let b = where_(&e);
+    assert!(turned(a.2, b.2).abs() < 1e-3 && moved(a, b).0.hypot(moved(a, b).1) < 0.01);
+}
+
+#[test]
+fn strafing_keeps_the_heading() {
+    let e = standing_engine(6.0);
+    e.set_param(param::MOVE_STRAFE, 1.0);
+    run(&e, 1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let (f, l) = moved(a, b);
+    assert!((l + 3.0).abs() < 0.1 && f.abs() < 0.05, "stepped {f} {l}");
+    assert!(turned(a.2, b.2).abs() < 1e-4);
+    // Diagonals are not faster.
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 1.0);
+    assert!((e.telemetry(telemetry::FLIGHT_SPEED) - 1.5).abs() < 0.01);
+}
+
+#[test]
+fn turning_keys_turn() {
+    let e = standing_engine(6.0);
+    // Q: turn left on the spot at ~60°/s.
+    e.set_param(param::MOVE_TURN, -1.0);
+    let a = where_(&e);
+    run(&e, 2.0);
+    let b = where_(&e);
+    let t = turned(a.2, b.2);
+    assert!(t > 1.6 && t < 2.1, "turned {t} rad in 2 s");
+    assert!(moved(a, b).0.hypot(moved(a, b).1) < 0.01);
+    // E: right.
+    e.set_param(param::MOVE_TURN, 1.0);
+    run(&e, 1.0);
+    let c = where_(&e);
+    run(&e, 1.0);
+    assert!(turned(c.2, where_(&e).2) < -0.9);
+    e.set_param(param::MOVE_TURN, 0.0);
+    // Flying: D turns right at flight.turn_rate (30°/s), W raises the cruise.
+    e.set_param(param::FLIGHT, 1.0);
+    run(&e, 5.0);
+    let h = where_(&e).2;
+    e.set_param(param::MOVE_STRAFE, 1.0);
+    run(&e, 3.0);
+    assert!(turned(h, where_(&e).2) < -0.9, "flight turn {}", turned(h, where_(&e).2));
+    e.set_param(param::MOVE_STRAFE, 0.0);
+    let v = e.telemetry(telemetry::FLIGHT_SPEED);
+    e.set_param(param::MOVE_FORWARD, 1.0);
+    run(&e, 2.0);
+    e.set_param(param::MOVE_FORWARD, 0.0);
+    run(&e, 3.0);
+    assert!(e.telemetry(telemetry::FLIGHT_SPEED) > v + 4.0, "{v} -> {}", e.telemetry(telemetry::FLIGHT_SPEED));
+}

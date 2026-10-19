@@ -5,7 +5,7 @@ import Foundation
 /// adapter asks one Choice per control in a single request ("fan-out"): keep it, move it a
 /// little / plainly / a lot either way, or jump to a physical anchor ("gale", "03:00",
 /// "small_waterfall"). Besides the controls it asks what kind of request it is (change the
-/// scene, describe it, off topic), which topic a question is about, flight on / off, the
+/// scene, describe it, off topic), which topic a question is about, flight (fly / stand here / home), the
 /// landscape (presets read from the state, never hardcoded), the pace, the side for birds
 /// and what to listen to. Code turns the answers into the core's patch and writes the line
 /// for the user itself (Jev writes no prose: answers about the scene come from the core's
@@ -63,7 +63,7 @@ struct TypeSafeProvider: PromptProvider {
 
         func collect(maxUnchanged: Double, presetMax: Double) {
             for k in knobs where !touched.contains(k.key) && !(k.loudness && physical.contains(k.group)) {
-                guard let current = k.key == "flight.on" ? ((scene.switches["flight.on"] ?? false) ? 1 : 0) : scene.values[k.key] else { continue }
+                guard let current = k.key == "flight.on" ? Double(Knob.flightStates.firstIndex(of: scene.switches["flight.on"] ?? "off") ?? 0) : scene.values[k.key] else { continue }
                 let target: Knob.Target?
                 if k.key == "env.time_of_day" {
                     target = hour(answers[k.key], maxUnchanged: maxUnchanged).map { Knob.Target(value: $0, label: String(format: "%02d:%02d", Int($0), Int(($0 - $0.rounded(.down)) * 60)), relative: nil) }
@@ -76,7 +76,7 @@ struct TypeSafeProvider: PromptProvider {
                 touched.insert(k.key)
                 if k.amount { physical.insert(k.group) }
                 // Already so: say it instead of "nothing found".
-                let same = k.preset ? (k.key == "flight.on" ? (target.label == "on") == (current > 0.5) : scene.option(k.key) == target.label)
+                let same = k.preset ? (k.key == "flight.on" ? target.label == (scene.switches["flight.on"] ?? "off") : scene.option(k.key) == target.label)
                     : abs(target.value - current) < 1e-3
                 if same {
                     already.append((k.alreadyRu[target.label] != nil || k.key == "flight.biome", k.already(target, russian)))
@@ -102,15 +102,16 @@ struct TypeSafeProvider: PromptProvider {
 
         // A landscape lives in flight mode: start flying, at a gentle pace if hovering.
         let keys = Set(changes.compactMap { $0["key"] as? String })
-        if keys.contains("flight.biome") && !(scene.switches["flight.on"] ?? false) && !keys.contains("flight.on") {
+        let inWorld = (scene.switches["flight.on"] ?? "off") != "off"
+        if keys.contains("flight.biome") && !inWorld && !keys.contains("flight.on") {
             changes.insert(["key": "flight.on", "value": "on"], at: 0)
         }
         // "Landing" together with a new landscape is a contradiction: a place means flying.
         if keys.contains("flight.biome"), let i = changes.firstIndex(where: { $0["key"] as? String == "flight.on" && $0["value"] as? String == "off" }) {
             changes[i]["value"] = "on"
-            said.removeAll { $0 == "приземлились" || $0 == "landed" }
+            said.removeAll { $0 == "домой" || $0 == "home" }
         }
-        let flyingAfter = keys.contains("flight.on") ? changes.contains { $0["key"] as? String == "flight.on" && $0["value"] as? String == "on" } : (scene.switches["flight.on"] ?? false) || keys.contains("flight.biome")
+        let flyingAfter = keys.contains("flight.on") ? changes.contains { $0["key"] as? String == "flight.on" && $0["value"] as? String == "on" } : scene.switches["flight.on"] == "on" || (!inWorld && keys.contains("flight.biome"))
         if flyingAfter && !keys.contains("flight.speed") && (scene.values["flight.speed"] ?? 0) < 1 {
             changes.append(["key": "flight.speed", "value": 5.0])
         }
@@ -301,6 +302,8 @@ struct TypeSafeProvider: PromptProvider {
 /// One control (or switch) as a Choice: relative steps, physical anchors, or presets.
 struct Knob {
     enum Step { case add(Double), times(Double) }
+    /// States of the flight.on switch, by ASMR_PARAM_FLIGHT value.
+    static let flightStates = ["off", "on", "stand"]
 
     let key: String
     let what: String
@@ -381,7 +384,13 @@ struct Knob {
 
     func describe(_ t: Target, _ current: Double, _ russian: Bool) -> String {
         let name = russian ? ru : en
-        if key == "flight.on" { return russian ? (t.label == "on" ? "летим" : "приземлились") : (t.label == "on" ? "flying" : "landed") }
+        if key == "flight.on" {
+            switch t.label {
+            case "on": return russian ? "летим" : "flying"
+            case "stand": return russian ? "стоим здесь" : "standing here"
+            default: return russian ? "домой" : "home"
+            }
+        }
         if key == "flight.biome" { return russian ? Self.biomeRu(t.label) : t.label.replacingOccurrences(of: "_", with: " ") }
         if preset {
             let label = russian ? (Self.presetRu[t.label] ?? t.label.replacingOccurrences(of: "_", with: " ")) : t.label.replacingOccurrences(of: "_", with: " ")
@@ -453,17 +462,18 @@ struct Knob {
             }
         }
         if scene.switches["flight.on"] != nil {
-            out.append(Knob(key: "flight.on", what: "flight mode (flying through generated landscapes instead of standing in the forest by the river)", ru: "полёт",
-                            presets: [("on", "Start flying or travel somewhere else: 'полетели', 'летим', 'перенеси меня в …', 'в пустыню', 'к морю', 'в горы'."),
-                                      ("off", "Stop flying, land, come back to the forest by the river: 'приземлись', 'стоп', 'домой'.")],
-                            alreadyRu: ["on": "уже летим", "off": "и так стоим на земле"]))
+            out.append(Knob(key: "flight.on", what: "where we are: flying through generated landscapes, standing still in one, or home in the forest by the river", ru: "полёт",
+                            presets: [("on", "Start flying, fly on, or travel somewhere else: 'полетели', 'летим', 'дальше', 'перенеси меня в …', 'в пустыню', 'к морю', 'в горы'."),
+                                      ("stand", "Stop right here and stand on the ground in this landscape: 'стоп', 'остановись', 'зависни', 'постоим', 'приземлись здесь'."),
+                                      ("off", "Go home, back to the forest by the river: 'домой', 'приземлись домой', 'вернись домой'.")],
+                            alreadyRu: ["on": "уже летим", "stand": "и так стоим", "off": "и так дома"]))
         }
         if let biomes = scene.options["flight.biome"], !biomes.isEmpty {
             out.append(Knob(key: "flight.biome", what: "the landscape to be in (a place request: desert, mountains, sea, lake, taiga…)", ru: "место",
                             presets: biomes.map { ($0, biomeCriteria($0)) }))
         }
         if scene.values["flight.speed"] != nil {
-            out.append(Knob(key: "flight.speed", what: "the flight speed (only while flying: 'быстрее', 'медленнее', 'зависни')", ru: "скорость",
+            out.append(Knob(key: "flight.speed", what: "the flight speed (only while flying: 'быстрее', 'медленнее'; 'стоп' / 'зависни' is flight.on stand)", ru: "скорость",
                             step: .times(1.6), floor: 2, range: 0...25,
                             anchors: [("hover", 0, "hover in place"), ("walk", 1.5, "walking pace"), ("glide", 8, "gentle glide"), ("fast", 20, "fast flight")],
                             upDown: ("быстрее", "медленнее")))

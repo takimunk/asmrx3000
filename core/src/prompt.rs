@@ -308,7 +308,7 @@ pub(crate) fn state_json(v: &View) -> String {
             Value::Object(m)
         })
         .collect();
-    let switches: Vec<Value> = Switch::ALL.iter().map(|s| json!({"key": s.key(), "value": if s.on(v) { "on" } else { "off" }, "options": ["off", "on"]})).collect();
+    let switches: Vec<Value> = Switch::ALL.iter().map(|s| json!({"key": s.key(), "value": s.state(v), "options": s.options()})).collect();
     let (facts, parts) = scene_facts(v);
     json!({
         "controls": ctl,
@@ -331,10 +331,12 @@ pub(crate) fn state_json(v: &View) -> String {
 /// Sound-director per-group loudness controls (`<group>.level`, dB) carry this flag.
 const LEVEL_FLAG: u32 = 1 << 4;
 
-/// On/off switches a patch may flip besides the controls (they are engine parameters).
+/// Switches a patch may flip besides the controls (they are engine parameters); their states
+/// are named by `options` in the order of the parameter's values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Switch {
-    /// Flight mode (`ASMR_PARAM_FLIGHT`): the listener travels through generated landscapes.
+    /// Flight mode (`ASMR_PARAM_FLIGHT`): "off" = home (the scene), "on" = flying through
+    /// generated landscapes, "stand" = in that landscape, holding still.
     Flight,
 }
 
@@ -353,8 +355,26 @@ impl Switch {
         }
     }
 
-    fn on(self, v: &View) -> bool {
-        v.params[self.param() as usize].load() > 0.5
+    /// Names of the states, by parameter value.
+    pub(crate) fn options(self) -> &'static [&'static str] {
+        match self {
+            Switch::Flight => &["off", "on", "stand"],
+        }
+    }
+
+    /// Index of the current state.
+    fn value(self, v: &View) -> u8 {
+        let x = v.params[self.param() as usize].load();
+        if x.is_finite() { x.round().clamp(0.0, (self.options().len() - 1) as f32) as u8 } else { 0 }
+    }
+
+    fn state(self, v: &View) -> &'static str {
+        self.name(self.value(v))
+    }
+
+    fn name(self, value: u8) -> &'static str {
+        let o = self.options();
+        o[(value as usize).min(o.len() - 1)]
     }
 }
 
@@ -738,13 +758,16 @@ fn convert(op: Op, conv: Conv) -> Op {
     }
 }
 
-fn parse_switch(val: &Value) -> Option<bool> {
+/// A switch state: 0 off (home), 1 on (flying), 2 stand (holding still in the world).
+fn parse_switch(val: &Value) -> Option<u8> {
     match val {
-        Value::Bool(b) => Some(*b),
-        Value::Number(n) => n.as_f64().map(|x| x > 0.5),
+        Value::Bool(b) => Some(*b as u8),
+        Value::Number(n) => n.as_f64().filter(|x| x.is_finite()).map(|x| x.round().clamp(0.0, 2.0) as u8),
         Value::String(s) => match norm(s).as_str() {
-            "on" | "true" | "yes" | "start" | "fly" | "go" | "1" | "вкл" | "да" => Some(true),
-            "off" | "false" | "no" | "stop" | "land" | "0" | "выкл" | "нет" => Some(false),
+            "on" | "true" | "yes" | "start" | "fly" | "go" | "1" | "вкл" | "да" | "летим" | "лети" => Some(1),
+            "off" | "false" | "no" | "land" | "home" | "0" | "выкл" | "нет" | "домой" | "дома" => Some(0),
+            "stand" | "stop" | "hold" | "halt" | "pause" | "hover" | "2" | "стоп" | "стоим" | "стой" | "остановись"
+            | "зависни" | "пауза" => Some(2),
             _ => None,
         },
         Value::Object(o) => o.get("value").and_then(parse_switch),
@@ -839,7 +862,7 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
 
     // Parse everything first.
     let mut list: Vec<Change> = Vec::new();
-    let mut switches: Vec<(Switch, bool)> = Vec::new();
+    let mut switches: Vec<(Switch, u8)> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     for c in &changes {
         let Some(o) = c.as_object() else {
@@ -865,7 +888,10 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
                         switches.retain(|(x, _)| *x != s);
                         switches.push((s, on));
                     }
-                    None => errs.push(format!("{}: expected \"on\" or \"off\"", s.key()), format!("«{}»: нужно on или off", s.key())),
+                    None => errs.push(
+                        format!("{}: expected one of {}", s.key(), s.options().join(", ")),
+                        format!("«{}»: нужно {}", s.key(), s.options().join(", ")),
+                    ),
                 }
                 continue;
             }
@@ -924,7 +950,7 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         undo.push(json!({"key": m.key, "value": back}));
     }
     for (s, _) in &switches {
-        undo.push(json!({"key": s.key(), "value": if s.on(v) { "on" } else { "off" }}));
+        undo.push(json!({"key": s.key(), "value": s.state(v)}));
     }
 
     let mut applied = Vec::new();
@@ -984,10 +1010,10 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
     // Switches: engine parameters, set by the caller after this transaction.
     let mut params = Vec::new();
     let mut switched = Map::new();
-    for (s, on) in &switches {
-        params.push((s.param(), if *on { 1.0 } else { 0.0 }));
-        switched.insert(s.key().into(), json!(if *on { "on" } else { "off" }));
-        applied.push(json!({"key": s.key(), "value": if *on { "on" } else { "off" }, "from": if s.on(v) { "on" } else { "off" }}));
+    for (s, x) in &switches {
+        params.push((s.param(), *x as f32));
+        switched.insert(s.key().into(), json!(s.name(*x)));
+        applied.push(json!({"key": s.key(), "value": s.name(*x), "from": s.state(v)}));
     }
 
     // Object moves (immediate; the stage animates its own way).
@@ -1222,6 +1248,7 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
 
     // Place.
     let flying = p(param::FLIGHT) > 0.5;
+    let standing = p(param::FLIGHT) > 1.5;
     let playing = p(param::PLAYING) > 0.5;
     let biome = opt("flight.biome").unwrap_or("mixed");
     let kinds = |k: u32| v.live.objects.iter().filter(|o| o.kind == k && o.flags & object_flags::ABSENT == 0).count();
@@ -1231,14 +1258,19 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     let speed = t(telemetry::FLIGHT_SPEED);
     let altitude = t(telemetry::FLIGHT_ALTITUDE);
     let place = if flying {
-        json!({"mode": "flight", "biome": biome, "speed_m_s": r3(speed), "altitude_m": r3(altitude), "set_speed_m_s": r3(get("flight.speed").unwrap_or(0.0))})
+        json!({"mode": if standing { "stand" } else { "flight" }, "biome": biome, "speed_m_s": r3(speed), "altitude_m": r3(altitude), "set_speed_m_s": r3(get("flight.speed").unwrap_or(0.0))})
     } else {
         json!({"mode": "scene", "trees": trees, "rivers": rivers, "lakes": lakes, "fire": fire})
     };
     if flying {
-        let pace = if speed < 0.3 { "зависли на месте".to_string() } else { format!("{:.0} м/с", speed) };
-        let height = if altitude >= 0.5 { format!(", высота {:.0} м", altitude) } else { String::new() };
-        parts.push(("place", format!("Полёт, ландшафт «{}»: {pace}{height}.", biome_ru(biome))));
+        if standing {
+            let pace = if speed < 0.3 { "стоим".to_string() } else { format!("идём, {:.1} м/с", speed) };
+            parts.push(("place", format!("Остановились в ландшафте «{}»: {pace}.", biome_ru(biome))));
+        } else {
+            let pace = if speed < 0.3 { "зависли на месте".to_string() } else { format!("{:.0} м/с", speed) };
+            let height = if altitude >= 0.5 { format!(", высота {:.0} м", altitude) } else { String::new() };
+            parts.push(("place", format!("Полёт, ландшафт «{}»: {pace}{height}.", biome_ru(biome))));
+        }
     } else {
         let mut what: Vec<&str> = Vec::new();
         if trees > 0 {
@@ -1529,9 +1561,11 @@ louder) if it exists, else `<group>.gain` (linear multiplier). Change the physic
 rain.rate, wind.speed, birds.activity) only when the thing itself should change: \"река \
 полноводнее\", \"дождь сильнее\", \"больше птиц\", \"убери дождь\". \"тише\" alone (no object) = calmer \
 scene. master.volume is the overall volume only.
-- Switches: `flight.on` (\"on\" / \"off\") starts or stops flight mode. \"полетели\", \"летим\", \
-\"fly\" → on (and a flight.speed if none is set: 8 m/s); \"приземлись\", \"стоп\", \"land\" → off. \
-flight.* controls only act while flying.
+- Switches: `flight.on` (\"on\" / \"stand\" / \"off\"). \"полетели\", \"летим\", \"дальше\", \
+\"fly\" → on (and a flight.speed if none is set: 8 m/s); \"стоп\", \"остановись\", \"зависни\", \
+\"постоим тут\", \"приземлись здесь\", \"stop\" → stand (stops where we are, on the ground, in the same \
+landscape); \"домой\", \"приземлись домой\", \"вернись в лес у реки\", \"home\" → off. \
+flight.* controls only act in the landscape (on or stand).
 - Scene recipes. A place request (\"перенеси меня в пустыню\", \"в горы, где идёт снег\", \"к морю\", \
 \"на озеро ночью в дождь\") is one patch built from blocks: place (flight.on on + flight.biome, the \
 closest preset; while flying, keep a gentle flight.speed 3–8 unless asked to stop) + weather \
@@ -1664,8 +1698,11 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 {{\"key\":\"env.time_of_day\",\"value\":23}},{{\"key\":\"rain.rate\",\"value\":4}},{{\"key\":\"birds.activity\",\"value\":0.15}},\
 {{\"key\":\"insects.activity\",\"value\":0.6}},{{\"key\":\"mix.focus.rain\",\"value\":0.4}}]}}
 
-«приземлись» →
-{{\"explanation\":\"Приземлились, снова лес у реки.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"off\"}}]}}
+«стоп» →
+{{\"explanation\":\"Остановились здесь, стоим на земле.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"stand\"}}]}}
+
+«домой» →
+{{\"explanation\":\"Вернулись домой, снова лес у реки.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"off\"}}]}}
 
 «больше птиц слева» (tree 4 is movable at [6, -3, 0]) →
 {{\"explanation\":\"Больше птиц, дерево с птицами слева.\",\"changes\":[\
@@ -1714,7 +1751,8 @@ fn context_text(v: &View) -> String {
     }
     let _ = writeln!(s, "[switches]");
     for sw in state["switches"].as_array().into_iter().flatten() {
-        let _ = writeln!(s, "{} = {} (on / off)", sw["key"].as_str().unwrap_or(""), sw["value"].as_str().unwrap_or(""));
+        let opts: Vec<&str> = sw["options"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let _ = writeln!(s, "{} = {} ({})", sw["key"].as_str().unwrap_or(""), sw["value"].as_str().unwrap_or(""), opts.join(" / "));
     }
     let e = &state["environment"];
     let _ = writeln!(
@@ -1738,7 +1776,7 @@ fn system_text() -> String {
         let m = controls::meta(i);
         let _ = writeln!(s, "- {}{}: {}", m.key, if m.unit.is_empty() { String::new() } else { format!(" [{}]", m.unit) }, describe(m.key));
     }
-    let _ = writeln!(s, "- flight.on: switch, \"on\" / \"off\": flight mode (the listener flies through generated landscapes; off = the scene where the user stands).");
+    let _ = writeln!(s, "- flight.on: switch, \"on\" / \"stand\" / \"off\": flight mode. on = flying through generated landscapes; stand = stopped in that landscape, standing on the ground (the user walks with the keys); off = home, the forest by the river.");
     s.push('\n');
     s.push_str(&examples());
     s
@@ -1748,7 +1786,7 @@ fn system_text() -> String {
 pub fn tool_schema() -> Value {
     let mut keys: Vec<&str> = (0..COUNT).map(|i| controls::meta(i).key).collect();
     keys.extend(Switch::ALL.iter().map(|s| s.key()));
-    let mut names: Vec<&str> = vec!["reset", "on", "off"];
+    let mut names: Vec<&str> = vec!["reset", "on", "off", "stand"];
     for i in 0..COUNT {
         let m = controls::meta(i);
         if m.flags & flags::DISCRETE != 0 {
@@ -1775,7 +1813,7 @@ pub fn tool_schema() -> Value {
                                 {"type": "number"},
                                 {"type": "string", "enum": names}
                             ],
-                            "description": "Target in the control's units, a preset name for preset controls, \"on\"/\"off\" for switches, or \"reset\"."
+                            "description": "Target in the control's units, a preset name for preset controls, \"on\"/\"stand\"/\"off\" for switches, or \"reset\"."
                         }
                     },
                     "required": ["key", "value"],
@@ -2165,6 +2203,16 @@ mod tests {
         let undo = r["undo"].to_string();
         assert!(undo.contains("flight.on"));
         e.apply_patch_json(&undo);
+        assert!(e.param(crate::param::FLIGHT) < 0.5);
+        // "Stop" stands still in the world; "home" goes back to the scene.
+        e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"on"}]}"#);
+        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"стоп"}]}"#));
+        assert_eq!(r["switched"]["flight.on"], "stand", "{r}");
+        assert!((e.param(crate::param::FLIGHT) - 2.0).abs() < 1e-6);
+        assert_eq!(parse(&e.state_json())["switches"][0]["value"], "stand");
+        assert!(r["undo"].to_string().contains("\"on\""));
+        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"домой"}]}"#));
+        assert_eq!(r["switched"]["flight.on"], "off");
         assert!(e.param(crate::param::FLIGHT) < 0.5);
         // Bad switch values are reported.
         let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"maybe"}]}"#));

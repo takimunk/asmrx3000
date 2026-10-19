@@ -81,8 +81,27 @@ final class AudioEngine: ObservableObject {
     @Published var birds: Float = 0.6 { didSet { set(ASMR_PARAM_BIRDS, birds) } }
     @Published var water: Float = 0.6 { didSet { set(ASMR_PARAM_WATER, water) } }
     @Published var orbit: Float = 0 { didSet { set(ASMR_PARAM_ORBIT, orbit) } }
-    /// Flight mode: the listener travels through an endless landscape (speed: flight.speed).
-    @Published var flying = false { didSet { set(ASMR_PARAM_FLIGHT, flying ? 1 : 0) } }
+    /// Where the listener is (ASMR_PARAM_FLIGHT): home (the forest by the river), flying through
+    /// an endless generated landscape (speed: flight.speed), or standing in it (walk with WASD).
+    enum Place: Int { case home = 0, flying = 1, standing = 2 }
+    @Published var place: Place = .home { didSet { set(ASMR_PARAM_FLIGHT, Float(place.rawValue)) } }
+    /// In the generated world, flying or standing (flight levers, streamed objects). Setting it
+    /// takes off (true) or goes home (false).
+    var flying: Bool {
+        get { place != .home }
+        set { if newValue != flying { place = newValue ? .flying : .home } }
+    }
+    /// F: in the world, stop here / fly on; at home, take off.
+    func toggleFlight() { place = place == .flying ? .standing : .flying }
+
+    /// Movement keys held in the scene (ASMR_PARAM_MOVE_*): forward (W +1, S -1), strafe
+    /// (D +1, A -1), turn (E +1, Q -1), run (Shift).
+    func setMoves(forward: Float, strafe: Float, turn: Float, run: Bool) {
+        set(ASMR_PARAM_MOVE_FORWARD, forward)
+        set(ASMR_PARAM_MOVE_STRAFE, strafe)
+        set(ASMR_PARAM_MOVE_TURN, turn)
+        set(ASMR_PARAM_MOVE_RUN, run ? 1 : 0)
+    }
 
     private let engine = AVAudioEngine()
     private var node: AVAudioSourceNode?
@@ -366,8 +385,8 @@ final class AudioEngine: ObservableObject {
         // A patch may switch flight on or off (the core already set the parameter): keep the
         // published state, the transport button and rebuilds in step.
         if let f = (parsed["switched"] as? [String: Any])?["flight.on"] as? String {
-            let on = f == "on"
-            let sync = { [weak self] in if let self, self.flying != on { self.flying = on } }
+            let to: Place = f == "on" ? .flying : f == "stand" ? .standing : .home
+            let sync = { [weak self] in if let self, self.place != to { self.place = to } }
             if Thread.isMainThread { sync() } else { DispatchQueue.main.async(execute: sync) }
         }
         return parsed
@@ -433,7 +452,7 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_BIRDS, birds)
         set(ASMR_PARAM_WATER, water)
         set(ASMR_PARAM_ORBIT, orbit)
-        set(ASMR_PARAM_FLIGHT, flying ? 1 : 0)
+        set(ASMR_PARAM_FLIGHT, Float(place.rawValue))
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
         if let s = lastHead {

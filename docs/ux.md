@@ -190,8 +190,11 @@ given the screen's contents scale) when built. Animation still runs on hover onl
   "0 мм/ч", "09:00", "×1.0") and the chevron to its drawer. Nothing is hover-only any more.
 - Master volume stays in the transport.
 
-**Transport**: flight is a two-segment switch "На земле | Полёт": the current mode is raised,
-the other is what a click does (hint: "Взлететь над лесом F" / "Приземлиться F"). Head tracking
+**Transport**: where the listener is, a three-segment switch "Дома | Стоим | Летим" (home scene,
+standing in the generated world, flying through it): the current mode is raised, the others are
+what a click does (hints "Остановиться здесь F", "Лететь дальше F", "Взлететь над лесом F",
+"Вернуться домой"; the current one tells the keys: "идти W A S D", "рулить A D"). F stops / flies
+on in the world and takes off from home; W A S D Q E (+⇧) walk and steer (docs/flight-mode.md). Head tracking
 is a labelled toggle "Голова" with a new pictogram (a head with an AirPod in each ear and a turn
 arc), struck through when off, a violet dot when on. The status shows the gaze as arrows
 ("← 35° ↑ 15°"); the hour moved to the world's "Время суток" lever when head tracking is on.
