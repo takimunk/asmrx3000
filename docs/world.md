@@ -264,6 +264,15 @@ Levels (raw generators, unit gain; brook segment −43.9 dB): sea surf (40 m of 
 −13.7 dB RMS with 16 dB swing between breakers, rock surf −10.6, big river −39.9, bank
 −42.3; dune sand −55 dB at 2 m/s, −24 at 9 m/s; ridge howl −15, blowing snow −21 at 9 m/s.
 
+## Frogs and woodpeckers
+
+Two new voices of the insects model (docs/physical-models.md) live in the world: every open
+lake gets two or three frog choruses in its shallows (marsh frogs, tree frogs or common frogs,
+by the lake's hash), a slow river now and then a marsh-frog chorus on its bank, and one forest
+tile in ten a great spotted woodpecker drumming 5–11 m up. They are voiced by the insects pool
+(within 90 m) and keep their own hours: frogs from dusk into the night, the woodpecker in the
+morning. Their choices use their own hashes, so nothing else in a cell changes.
+
 ## Stops and slow-downs (`flight.stops`)
 
 Places worth lingering carry a `scenic` flag: lake shores, waterfalls, campfires, a quarter of

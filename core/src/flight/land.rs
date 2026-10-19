@@ -685,6 +685,13 @@ impl Bird {
 /// Object ids of the streamed world start here (static scene ids are small).
 pub const ID_BASE: u32 = 0x4000_0000;
 
+/// Insect-model presets of the frogs and the woodpecker (indices into `sources::Insects::PRESETS`).
+const FROG_MARSH: u8 = 5;
+const FROG_TREE: u8 = 6;
+const FROG_COMMON: u8 = 7;
+const WOODPECKER: u8 = 8;
+const _: () = assert!(crate::sources::Insects::PRESETS.len() == 9);
+
 /// Wind presets used for air sites (indices into `sources::Wind::PRESETS`).
 pub fn air_preset(name: &str) -> u8 {
     crate::sources::Wind::PRESETS.iter().position(|p| *p == name).unwrap_or(0) as u8
@@ -1224,6 +1231,11 @@ impl Land {
                 if !in_sea(sx, sy) {
                     let site = Site { kind: SiteKind::Water, x: sx, y: sy, z: 0.1, preset, weight, length: 15.0, variation, ..Default::default() };
                     self.put_site(s0, SITES_PER_MACRO, site);
+                    // Marsh frogs along a slow river, here and there.
+                    if preset == 2 && unit(hash(self.seed, sx as i64, sy as i64, 0xF407)) < 0.2 {
+                        let site = Site { kind: SiteKind::Insects, x: sx - 0.5 * width as f64 * dy, y: sy + 0.5 * width as f64 * dx, z: 0.1, preset: FROG_MARSH, weight: 1.0, length: 10.0, variation: [1.0, 1.0, 0.0], ..Default::default() };
+                        self.put_site(s0, SITES_PER_MACRO, site);
+                    }
                 }
                 t += 15.0;
             }
@@ -1258,6 +1270,17 @@ impl Land {
                     for k in 0..n {
                         let q = ell(core::f64::consts::TAU * (k as f64 + 0.5) / n as f64, 1.5);
                         let site = Site { kind: SiteKind::Water, x: q[0], y: q[1], z: 0.05, preset: 1, weight: 0.7, length: 16.0, variation: [1.0, 1.0, 0.0], scenic: true, ..Default::default() };
+                        self.put_site(s0, SITES_PER_MACRO, site);
+                    }
+                    // Frogs in the shallows: a few choruses round the shore (own hash, so the
+                    // rest of the cell is unchanged).
+                    let hf = hash(self.seed, cx as i64, cy as i64, 0xF406);
+                    let kind = unit(hf);
+                    let preset = if kind < 0.5 { FROG_MARSH } else if kind < 0.8 { FROG_TREE } else { FROG_COMMON };
+                    let m = 2 + (hf >> 50) as usize % 2;
+                    for k in 0..m {
+                        let q = ell(core::f64::consts::TAU * (k as f64 + unit(hf >> 8) as f64) / m as f64, -2.0);
+                        let site = Site { kind: SiteKind::Insects, x: q[0], y: q[1], z: 0.1, preset, weight: 1.0, length: 10.0, variation: [1.0, 1.0, 0.0], ..Default::default() };
                         self.put_site(s0, SITES_PER_MACRO, site);
                     }
                 }
@@ -1444,6 +1467,16 @@ impl Land {
                 self.put_site(s0, SITES_PER_TILE, site);
             }
             break;
+        }
+
+        // A woodpecker drumming on a dead branch somewhere in the forest (own hash).
+        let hw = hash(self.seed, i as i64, j as i64, 0xD0CC);
+        if unit(hw) < 0.1 {
+            let (x, y) = (x0 + unit(hw >> 8) as f64 * TILE, y0 + unit(hw >> 32) as f64 * TILE);
+            if self.base_cover(x, y) > 0.5 && !carved(self, x, y, 2.0) {
+                let site = Site { kind: SiteKind::Insects, x, y, z: 5.0 + 6.0 * unit(hw >> 16), preset: WOODPECKER, weight: 1.0, length: 1.0, variation: [1.0, 1.0, 0.0], ..Default::default() };
+                self.put_site(s0, SITES_PER_TILE, site);
+            }
         }
 
         // Surf where the sea meets the land: the shore sample nearest the tile's centre.
