@@ -152,7 +152,10 @@ pub mod telemetry {
     pub const SOLOISTS: u32 = 26;
     /// Share of the soloists' loudness lost to masking by the bed, 0..1 (after ducking).
     pub const MASKING: u32 = 27;
-    pub const COUNT: usize = 28;
+    /// Where the wind comes from relative to the listener's forward (the scene's x axis; in
+    /// flight the course), rad, counter-clockwise (+π/2 = from the left).
+    pub const WIND_FROM: u32 = 28;
+    pub const COUNT: usize = 29;
 }
 
 #[repr(u32)]
@@ -906,7 +909,12 @@ impl Dsp {
         let head = pose.rotation;
         self.acoustics.set_listener_offset(pose.offset);
 
+        self.wind.set_direction(st.get(controls::id::ENV_WIND_DIRECTION));
         self.wind.step(wind, dt, &mut self.rng);
+        // Wind refraction and turbulence on every path (propagation.rs): the mean wind and
+        // the gust at the listener (the profile near the ground follows the gusts).
+        let (wx, wy) = self.wind.blow_to();
+        self.acoustics.set_wind(wx, wy, crate::sources::common::wind_speed_ms(wind), crate::sources::common::wind_speed_ms(self.wind.local(0.0)));
         // Scene: user moves in, director moves the animals, emitters follow their owners.
         shared.objects.apply_moves(&mut self.world);
         let env = Environment {
@@ -955,7 +963,7 @@ impl Dsp {
             controls.water = water * em.flow;
             controls.neural = neural;
             controls.legacy_levels = self.mix.bypass;
-            controls.gust = (wind + (self.wind.local(em.position.y) - wind) * gustiness).max(0.0);
+            controls.gust = (wind + (self.wind.at(em.position.x, em.position.y) - wind) * gustiness).max(0.0);
             let flying = em.kind == SourceKind::Bird && self.world.entities[em.owner].flags & object_flags::MOVING != 0;
             let view = EmitterView {
                 key: idx as u64,
@@ -1166,6 +1174,11 @@ impl Dsp {
         }
         t[telemetry::FLIGHT as usize].store(self.flight_mix);
         t[telemetry::GUST as usize].store(self.wind.gust());
+        let (wx, wy) = match flight {
+            Some(f) => f.acoustics.context().wind_to,
+            None => self.acoustics.context().wind_to,
+        };
+        t[telemetry::WIND_FROM as usize].store((-wy).atan2(-wx));
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
         t[telemetry::TIME as usize].store((self.time % 86_400.0) as f32);
         t[telemetry::OUTPUT_LEVEL as usize].store(self.out_level);

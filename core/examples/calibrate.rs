@@ -131,7 +131,7 @@ fn main() {
         e.set_param(param::BIRDS, 0.0);
         e.set_param(param::WATER, 0.6);
         e.set_param(param::WIND, 0.45);
-    }, 10.0, 40.0);
+    }, 10.0, 300.0); // long: wind gusts are intermittent (one every ~25 s at 5 m/s)
     report(SoundClass::Water, pow_mean(p.iter().filter(|q| q.0 == SoundClass::Water).map(|q| q.1)));
     report(SoundClass::Foliage, at_ear(&p, SoundClass::Foliage));
     report(SoundClass::Wind, at_ear(&p, SoundClass::Wind));

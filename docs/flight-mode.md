@@ -237,6 +237,21 @@ forest cover c gets exposure 1.1 − 0.45·c, and an aggregate stand 0.7. Lone a
 get the full wind. With this, the near crowns in flight are as loud as the scene's trees
 (within 1 dB), and the stands add the distant roar of the forest.
 
+### The wind is fixed to the world
+
+The wind has one direction for the whole world (`env.wind_direction`, where it blows from,
+clockwise from north; the flight world's x is north). It does not turn with the course: the
+gust field is sampled at each source's world offset from the listener (the listener-relative
+position turned back by the heading, `WindField::at_heading`), so gusts sweep in from the
+upwind compass side whatever the heading, and the propagation gets the wind vector turned into
+the heading frame (`blow_to_heading`): sounds carried downwind reach further, sounds upwind of
+the listener's path fall into the refraction shadow and darken, distant ones wander with the
+turbulence (docs/spatial-engine.md). Flying a U-turn swaps which side the gusts arrive from.
+Telemetry `WIND_FROM` gives the wind's side relative to the course (rad, +left). The biome's
+wind factor scales the speed the propagation sees. Limitation: the listener's own motion
+through the frozen gust pattern is not Doppler-shifted (the history is time-indexed around the
+listener), so flying upwind does not make gusts pass faster.
+
 ## Birds
 
 Streamed birds perch in their tree's crown and sing by species and hour (the director's song
@@ -358,6 +373,8 @@ the left (`ASMRX3000 --snapshot out.png --flight 10 --steer 45 --select none --e
 * `streaming_survives_turning_around`: a full U-turn at 20 m/s by head; objects and voices
   stay bounded and there is landscape ahead.
 * `flight_reaches_the_bed_output`: the flight sounds in the 7.1.4 bed path.
+* `wind_direction_is_world_fixed_in_flight`: a northerly stays north while the course turns
+  by ~1.5 rad; relative to the course it turns by the opposite angle.
 * `core/tests/flight_alloc.rs`: no allocation in the render path.
 * `chunk_generation_cost` (tiles; ignored; `-- --ignored --nocapture`): per-block streaming cost.
 

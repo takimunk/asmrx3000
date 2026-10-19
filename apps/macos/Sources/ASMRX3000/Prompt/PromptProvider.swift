@@ -258,7 +258,21 @@ struct MockProvider: PromptProvider {
         }
         if has("больше птиц", "more birds") { set("birds.activity", min(1, (values["birds.activity"] ?? 0.6) + 0.3)); said.append("больше птиц") }
         if loud && !water { scaled("master.volume", 1.2); said.append("громче") }
-        if has("ветер", "ветр", "wind") && !has("гроз", "storm") { set("wind.speed", 9); said.append("ветер") }
+        // Where it blows from (compound sides first).
+        let sides: [(words: [String], deg: Double, ru: String)] = [
+            (["северо-запад", "northwest", "north-west"], 315, "с северо-запада"), (["северо-восток", "northeast", "north-east"], 45, "с северо-востока"),
+            (["юго-запад", "southwest", "south-west"], 225, "с юго-запада"), (["юго-восток", "southeast", "south-east"], 135, "с юго-востока"),
+            (["с севера", "северн", "from the north", "northerly"], 0, "с севера"), (["с юга", "южн", "from the south", "southerly"], 180, "с юга"),
+            (["с запада", "западн", "from the west", "westerly"], 270, "с запада"), (["с востока", "восточн", "from the east", "easterly"], 90, "с востока"),
+        ]
+        let side = sides.first(where: { s in s.words.contains { t.contains($0) } })
+        // A side alone ("ветер с севера") turns the wind; it gets stronger only when asked.
+        if has("ветер", "ветр", "wind") && !has("гроз", "storm") && (side == nil || has("сильн", "strong", "ветрен", "windy")) {
+            set("wind.speed", 9); said.append("ветер")
+        }
+        if let side {
+            set("env.wind_direction", side.deg); said.append("ветер \(side.ru)")
+        }
         // Places: the first landscape whose words match and that exists.
         let places: [(words: [String], biomes: [String])] = [
             (["пустын", "desert"], ["desert", "meadows"]),

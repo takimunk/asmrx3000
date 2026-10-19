@@ -110,7 +110,7 @@ fn main() {
         })
         .collect();
     let all = Features::default();
-    let none = Features { ground: false, reverb: false, early_reflections: false, occlusion: false, forest: false, near_field: false };
+    let none = Features { ground: false, reverb: false, early_reflections: false, occlusion: false, forest: false, near_field: false, wind: false };
     if let Some(mode) = args.get(3) {
         // Single long run for profiling: "static" or "moving".
         let t = run_once(n, secs, all, mode == "moving", &noise);

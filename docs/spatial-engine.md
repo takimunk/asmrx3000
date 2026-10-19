@@ -164,11 +164,49 @@ aarch64, portable fallback elsewhere).
   D = pinv(Y)·Y(R·d) over 36 directions, equivalent to Ivanic–Ruedenberg but convention-proof),
   interpolated per sample. Reflections and the diffuse tail turn with the head too.
 
+### Wind: refraction and turbulence (`physics/wind.rs`)
+The wind has a world-fixed direction (`env.wind_direction`, where it blows from, clockwise
+from north; x = north, y = west; flight passes the vector turned into the heading frame), and
+it acts on every path, scene and flight alike.
+
+- **Refraction.** Sound travels at c + u(z)·cos φ (effective sound speed, φ between the
+  propagation direction source → listener and the wind). With a logarithmic wind profile
+  (z₀ = 0.1 m, the WIND control at 10 m) the gradient at the mean path height z̄ is
+  cos φ·U / (z̄ ln(10/z₀)). Rays are taken as circles of radius R = c/|gradient| (linearised
+  profile; Pierce 1981 §8.3, Embleton 1996, Salomons 2001 ch. 7):
+  - **upwind** (cos φ < 0, rays bend up): a shadow zone starts at
+    r_s = √(2R)(√h_s + √h_r) — 97 m at 3 m/s, 75 m at 5 m/s, 53 m at 10 m/s for 1.5 m
+    heights; a 20-m-high listener (flight over the canopy) pushes it out ~2×. Penetration
+    1 − exp(−3 (r/r_s − 0.6)²) (penumbra from 0.6 r_s, full by ~1.6 r_s); excess attenuation
+    depth 20 dB · x/(1+x), x = f/600 Hz: low frequencies diffract into the shadow, high ones
+    do not, and the 20 dB floor stands for turbulent scattering into the shadow (measured
+    shadow-zone excess attenuation 10–25 dB: Wiener & Keast 1959, Embleton, Piercy & Olson
+    1976). At 300 m, 6 m/s: −3.4 dB at 125 Hz, −12.5 dB at 1 kHz, −17.4 dB at 4 kHz;
+  - **downwind** (cos φ > 0, rays bend down): the ground-effect dip fills in and energy
+    that would leave upwards comes back: +2 dB broadband plus up to +3 dB around 500 Hz
+    (1.2-octave bump), weighted by x²/(1+x²) with x = r/(√(2R)(√h_s+√h_r)). +4.7 dB at
+    500 Hz at 300 m, 6 m/s. ISO 9613-2 is written for this favourable case; its long-term
+    C_met of 0–5 dB is the same order;
+  - **crosswind** nothing (R → ∞). Steep paths (flight) automatically see |cos φ| < 1.
+  The term is one more spectral factor of the path filter (`Context::wind_shadow_db`,
+  `wind_favour_db` are fixed shapes; a path's wind EQ is shadow·S + favour·F, so per block only
+  two scalars are computed and a refit happens when they move by ~0.75 dB). The speed driving
+  refraction follows the gust at the listener with a 2 s lag: in a gust the shadow moves
+  closer and far upwind sounds fade, in the lull after it they come back.
+- **Turbulence.** Each propagator multiplies both paths by a lognormal gain whose dB value
+  is an OU process (τ = 10 m / U, 0.5–4 s) with σ = 5.6 dB · tanh((r/250 m)^0.92 · U/6 m/s ·
+  (1 + 0.5·shadow)), normalised to keep the mean power: weak scattering grows with distance
+  (Rytov variance ∝ r^{11/6}), saturates at 5.6 dB (Rayleigh; Daigle et al. 1983, Wilson
+  2000). 0.15 dB at 5 m, 2.3 dB at 100 m, 4.6 dB at 300 m (6 m/s): distant sounds come and go.
+  Seeded per emitter index, deterministic.
+- **Not modelled:** temperature gradients (day lapse = upwind everywhere, night inversion =
+  downwind everywhere), phase/coherence loss (the ground dip is not smeared by turbulence),
+  frequency dependence of the fluctuations, wind noise at the microphone.
+
 ### Not implemented yet (later), with reasons
 | Item | Why later |
 |---|---|
-| Atmospheric turbulence (amplitude/phase fluctuation of distant sources) | Needs a wind-field-coupled stochastic model; small effect at < 100 m. Next on the outdoor list. |
-| Refraction (wind/temperature gradients) | Matters beyond ~200 m, which our scene doesn't reach. |
+| Temperature-gradient refraction, turbulent phase/coherence loss | Wind refraction and turbulent level fluctuation are in (above); temperature lapse/inversion and the smearing of the ground dip by turbulence are next. |
 | Direct HRIR rendering of the closest source(s), bypassing the bus | Above ~2 kHz order 3 can't resolve near-field parallax. MagLS keeps timbre, and NFC gets the low-frequency ILD. |
 | BiMagLS / head-tracking-aware MagLS, HRTF personalisation | Decoder upgrade; needs listening tests. |
 | Per-region ground types, heightfield terrain | Needs the scene graph (director session). The API already takes per-emitter ground and arbitrary obstacles. |
@@ -197,6 +235,9 @@ aarch64, portable fallback elsewhere).
 | Head rotation | SH rotation vs rotated encoding; 90° turn moves a frontal source to the right ear | 1e-4; ILD < −8 dB |
 | Reverb | FDN T60 (Schroeder, T20) | 1.196 s for a 1.2 s target |
 | Decoders | measured vs analytic loudness | within 3 dB |
+| Wind refraction | source 150 m, 6 m/s: 4 kHz re 250 Hz upwind / crosswind / downwind | −15.0 / −3.9 / −5.4 dB; 4 kHz level −65.8 / −48.2 / −46.5 dB |
+| Wind turbulence | level SD over 40 s, 6 m/s | 5 m 0.14 dB, 150 m 2.9 dB |
+| Shadow boundary | 1.5 m heights, upwind | 3 m/s 97 m, 5 m/s 75 m, 10 m/s 53 m |
 | Partitioned convolution | vs direct convolution, irregular block sizes | 1e-3 |
 
 ## 4. CPU budget
