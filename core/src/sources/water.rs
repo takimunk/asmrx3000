@@ -341,7 +341,7 @@ pub struct Water {
     flow: Smooth,
     hyd: Hydraulics,
     law: RadiusLaw,
-    bubbles: BubbleBank<72>,
+    bubbles: BubbleBank<192>,
     ev_bubble: Events,
     resolved: f32,
     bed_lo: NoiseBand,
@@ -656,8 +656,17 @@ impl Water {
         // glug now and then.)
         self.snag_rate = (cfg.width_m * cfg.length_m * 0.025 * u * (1.0 - smoothstep(0.05, 0.2, hyd.u_turb))).min(0.7);
         let total = hyd.bubbles_per_s;
-        self.resolved = total.min(self.resolved_per_s) / sr;
-        let bed_rate = (total - self.resolved_per_s).max(0.0) / sr;
+        // The budget follows the flow: about three quarters of the bubbles are rendered one by
+        // one at any flow (up to 6× the base), the rest is bed. With a fixed 500/s budget,
+        // WATER 0.8–1.0 turned 80–90 % of the bubbles into noise: a steady hiss with crest
+        // 2.5 dB against 5–6 in the recordings, 0.2 onsets/s against ~3, every modulation band
+        // 2–6 dB short; rendering all of them makes a sparse brook too tonal and clicky
+        // (flatness −16 against −7 dB). ~72 % resolved matches the references best (brook
+        // distance 0.4–0.6 from WATER 0.4 to 1.0).
+        let base = self.resolved_per_s;
+        let budget = (0.72 * total).min(12.0 * base).max(base.min(total) * 0.72);
+        self.resolved = total.min(budget) / sr;
+        let bed_rate = (total - budget).max(0.0) / sr;
         // Energy and spectral centre of the bubble population (deterministic quantiles).
         let (mut e_sum, mut lf_sum) = (0.0f32, 0.0f32);
         for i in 0..12 {
@@ -721,7 +730,13 @@ impl Water {
         // less than a brook.
         let v_imp = if p > 0.0 { (2.0 * G * cfg.drop_height_m + u * u).sqrt() } else { u };
         let chatter = (0.3 * smoothstep(0.03, 0.15, hyd.u_turb) + 0.7 * smoothstep(0.1, 0.5, hyd.u_turb)) * (1.0 - 0.3 * smoothstep(0.6, 1.4, hyd.u_turb));
-        self.babble.tune(v_imp, cfg.rock_d50_m, 0.6 * chatter);
+        // The more bubbles, the more their sum averages out: a swollen gentle brook keeps its
+        // audible surging only if its bursts are deeper (×1 at ~700 bubbles/s, up to ×1.8, but
+        // no deeper than 0.35). Rocky brooks and rapids already chatter that much (deeper made
+        // them too jerky: distance 0.7 → 1.3–1.5).
+        let dense = (hyd.bubbles_per_s / 700.0).max(1.0).powf(0.35).min(1.8);
+        let depth = 0.6 * chatter;
+        self.babble.tune(v_imp, cfg.rock_d50_m, depth.max((depth * dense).min(0.35)));
         let q = u * cfg.depth_m * cfg.width_m;
         let r_cloud = (0.12 + 0.25 * q.sqrt()).clamp(0.08, 1.5);
         let beta = 0.05;
