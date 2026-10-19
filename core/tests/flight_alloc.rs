@@ -70,6 +70,17 @@ fn flight_render_does_not_allocate() {
             engine.set_control(id::FLIGHT_BIOME, 9.0);
             engine.set_control(id::FLIGHT_STOPS, 1.0);
         }
+        if i == 3 * blocks / 4 {
+            // Keys in flight, then stop and walk (ASMR_PARAM_FLIGHT = 2, MOVE_*).
+            engine.set_param(param::MOVE_STRAFE, 1.0);
+            engine.set_param(param::MOVE_FORWARD, 1.0);
+        }
+        if i == 5 * blocks / 6 {
+            engine.set_param(param::FLIGHT, 2.0);
+            engine.set_param(param::MOVE_STRAFE, -1.0);
+            engine.set_param(param::MOVE_TURN, 1.0);
+            engine.set_param(param::MOVE_RUN, 1.0);
+        }
         engine.render(&mut l, &mut r);
     }
     WATCH.with(|w| w.set(false));

@@ -47,13 +47,30 @@ enum {
     ASMR_PARAM_HEAD_PARALLAX = 43,   /* 1 = head turns about the neck: the ears translate (motion parallax) [1] */
 
     /* Flight mode (docs/flight-mode.md): 1 = the listener travels forward through an endless,
-     * procedurally generated landscape; 0 = back to the scene. Cross-fades over 1.5 s. The first
+     * procedurally generated landscape; 2 = in that landscape, holding still: the speed comes
+     * down to 0 at 4 m/s^2, the flight level comes down to standing height, stops are suspended
+     * (back to 1 flies on at flight.speed); 0 = back to the scene (home). 1 and 2 are both "in
+     * the world": switching between them does not cross-fade; 0 <-> 1/2 cross-fades over 1.5 s. The first
      * switch-on builds the landscape and its voices on the calling thread (tens of ms, allocates;
      * call it from the UI thread, never from the audio thread). Speed, altitude, path and landscape
      * are the ASMR_GROUP_FLIGHT controls. While flying, asmr_get_objects / asmr_get_sources report
      * the streamed world instead of the scene (see ASMR_OBJECT_LAKE / ROCK, asmr_get_object_path),
      * and ASMR_PARAM_EAR_HEIGHT is replaced by the flight altitude. */
-    ASMR_PARAM_FLIGHT = 44,       /* 0 or 1 [0] */
+    ASMR_PARAM_FLIGHT = 44,       /* 0 home, 1 flying, 2 standing in the world [0] */
+
+    /* Free movement in flight mode (45..48): the keys the app holds (W A S D Q E, Shift).
+     * Set on key down / up; clear them all on focus loss. Values -1..1, 0 = released.
+     * Standing (FLIGHT = 2): W/S walk forward / back along where the head looks (the course,
+     * plus the head yaw when steering by head with AirPods), 1.5 m/s, 5 m/s with RUN; A/D step
+     * sideways (the course is kept); Q/E turn the course at 60 deg/s. Walking forward with the
+     * head turned, the course turns towards the gaze as in head steering.
+     * Flying (FLIGHT = 1): A/D and Q/E turn at flight.turn_rate (on top of head steering,
+     * instead of the wandering course); W/S raise / lower the cruise by 3 m/s per second held
+     * (an offset on flight.speed, dropped when flight.speed changes or on a stop). */
+    ASMR_PARAM_MOVE_FORWARD = 45, /* W = +1, S = -1 [0] */
+    ASMR_PARAM_MOVE_STRAFE = 46,  /* D = +1 (right), A = -1 (left) [0] */
+    ASMR_PARAM_MOVE_TURN = 47,    /* E = +1 (turn right), Q = -1 (turn left) [0] */
+    ASMR_PARAM_MOVE_RUN = 48,     /* 1 = Shift held: run (5 m/s) instead of walk [0] */
 };
 
 /* Values of ASMR_PARAM_GROUND (effective flow resistivity in brackets). */
@@ -84,7 +101,7 @@ enum {
     ASMR_TELEMETRY_HEAD_RATE = 13,       /* head-pose samples per second arriving */
     /* Flight mode. */
     ASMR_TELEMETRY_FLIGHT = 14,          /* cross-fade 0 (scene) .. 1 (flying); objects switch at 0.5 */
-    ASMR_TELEMETRY_FLIGHT_SPEED = 15,    /* current speed, m/s (ramps to flight.speed at 2.5 m/s^2) */
+    ASMR_TELEMETRY_FLIGHT_SPEED = 15,    /* current speed over the ground, m/s (ramps to flight.speed at 2.5 m/s^2) */
     ASMR_TELEMETRY_FLIGHT_ALTITUDE = 16, /* ears above the ground, m (follows flight.altitude, gentle swells) */
     ASMR_TELEMETRY_FLIGHT_ODOMETER = 17, /* distance flown along the path, m, wraps at 10 km (scroll the ground with it) */
     ASMR_TELEMETRY_FLIGHT_TURN = 18,     /* turn rate of the course, rad/s, + = turning left */

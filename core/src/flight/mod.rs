@@ -75,6 +75,17 @@ const MAX_RANGE: f32 = 220.0;
 const MID_BAND: usize = 22;
 /// Deceleration when easing into a stop, m/s².
 const STOP_DECEL: f32 = 1.0;
+/// Holding still in the world (ASMR_PARAM_FLIGHT = 2), and walking: deceleration, m/s².
+/// Firm enough that a stop feels immediate, soft enough not to jolt (25 m/s → 0 in ~6 s).
+const HOLD_DECEL: f32 = 4.0;
+/// Walking and running pace on foot (W/S/A/D, with Shift), m/s.
+const WALK: f32 = 1.5;
+const RUN: f32 = 5.0;
+/// Turning on foot with Q/E, rad/s (60°/s), and its slew limit, rad/s².
+const KEY_TURN: f32 = 1.047;
+const KEY_TURN_ACCEL: f32 = 3.0;
+/// In flight, W/S change the cruise by this much per second held, m/s².
+const KEY_CRUISE_RATE: f32 = 3.0;
 
 /// Ids of objects reported to the UI that have a shape: see `asmr_get_object_path`.
 pub use bridge::PATH_POINTS;
@@ -228,6 +239,32 @@ pub struct Inputs<'a> {
     pub gustiness: f32,
     pub water: f32,
     pub neural: bool,
+    /// Holding still in the world (ASMR_PARAM_FLIGHT = 2): no cruise and no stops, down to
+    /// standing height; the keys walk.
+    pub hold: bool,
+    /// Movement keys (ASMR_PARAM_MOVE_*).
+    pub moves: Moves,
+}
+
+/// Movement keys held in the app (ASMR_PARAM_MOVE_*), each −1..1.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Moves {
+    /// W / S: + = forward. Standing: walk along where the head looks. Flying: cruise up / down.
+    pub forward: f32,
+    /// A / D: + = right. Standing: step sideways. Flying: turn.
+    pub strafe: f32,
+    /// Q / E: + = right. Turns the course.
+    pub turn: f32,
+    /// Shift: run (5 m/s) instead of walk (1.5 m/s).
+    pub run: bool,
+}
+
+impl Moves {
+    /// Clamped to −1..1, NaN as 0.
+    pub fn new(forward: f32, strafe: f32, turn: f32, run: bool) -> Self {
+        let c = |v: f32| if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 };
+        Self { forward: c(forward), strafe: c(strafe), turn: c(turn), run }
+    }
 }
 
 /// Listener pose in the world.
@@ -240,7 +277,10 @@ pub struct Pose {
     pub heading: f64,
     /// Ears above the ground, m.
     pub height: f32,
+    /// Speed along the course, m/s (negative walking backwards).
     pub speed: f32,
+    /// Sideways speed, m/s (+ = to the left of the course; stepping aside on foot).
+    pub side: f32,
     /// Turn rate, rad/s (+ = turning left).
     pub turn: f32,
     /// Vertical speed, m/s.
@@ -253,6 +293,13 @@ pub struct Pose {
     /// sin / cos of the heading.
     sin: f64,
     cos: f64,
+}
+
+impl Pose {
+    /// Speed over the ground, m/s (along and across the course).
+    pub fn ground_speed(&self) -> f32 {
+        self.speed.hypot(self.side)
+    }
 }
 
 pub struct Flight {
@@ -332,11 +379,29 @@ struct Route {
     next_visited: usize,
     /// How far the flight level comes down to standing height (0..1, smoothed).
     down: f32,
+    /// Holding still in the world (ASMR_PARAM_FLIGHT = 2) as of the last block.
+    hold: bool,
+    /// Cruise added by W / S in flight, m/s (reset by a new flight.speed or a stop).
+    cruise_offset: f32,
+    /// flight.speed the offset applies to.
+    cruise_ctl: f32,
 }
 
 impl Route {
     fn new() -> Self {
-        Self { visit: Visit::Cruise, at: (0.0, 0.0), id: 0, timer: 0.0, cooldown: 20.0, visited: [0; 16], next_visited: 0, down: 0.0 }
+        Self {
+            visit: Visit::Cruise,
+            at: (0.0, 0.0),
+            id: 0,
+            timer: 0.0,
+            cooldown: 20.0,
+            visited: [0; 16],
+            next_visited: 0,
+            down: 0.0,
+            hold: false,
+            cruise_offset: 0.0,
+            cruise_ctl: f32::NAN,
+        }
     }
 }
 
@@ -561,7 +626,7 @@ impl Flight {
         let p = &self.pose;
         Vec3::new(
             -p.speed + p.turn * rel.y + c * own[0] + s * own[1],
-            -p.turn * rel.x - s * own[0] + c * own[1],
+            -p.side - p.turn * rel.x - s * own[0] + c * own[1],
             -p.climb + own[2],
         )
     }
@@ -711,7 +776,8 @@ impl Flight {
 
         // Wind noise of motion, at the ears.
         let wind_ms = inp.ambient.wind_ms;
-        let airspeed = (self.pose.speed * self.pose.speed + 0.16 * wind_ms * wind_ms).sqrt();
+        let ground_speed = self.pose.ground_speed();
+        let airspeed = (ground_speed * ground_speed + 0.16 * wind_ms * wind_ms).sqrt();
         self.airflow.render(airspeed, inp.st.get(id::FLIGHT_AIRFLOW), inp.head_yaw, sr, &mut self.left[..len], &mut self.right[..len]);
 
         let (gs, gf) = ((mix * core::f32::consts::FRAC_PI_2).cos(), (mix * core::f32::consts::FRAC_PI_2).sin());
@@ -738,12 +804,17 @@ impl Flight {
             self.ctl = Some(*st);
             self.dirty = true;
         }
-        let cruise = st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0);
+        let cruise = self.cruise_speed(st.get(id::FLIGHT_SPEED).clamp(0.0, 30.0), inp, dt);
         let stops = st.get(id::FLIGHT_STOPS).clamp(0.0, 1.0);
-        self.update_route(dt, stops);
-        let target = self.route_speed(cruise);
-        let dv = (target - self.pose.speed).clamp(-ACCEL * dt, ACCEL * dt);
-        self.pose.speed += dv;
+        self.update_route(dt, stops, inp.hold);
+        if inp.hold {
+            self.walk(inp, dt);
+        } else {
+            let target = self.route_speed(cruise);
+            let dv = (target - self.pose.speed).clamp(-ACCEL * dt, ACCEL * dt);
+            self.pose.speed += dv;
+            self.pose.side -= self.pose.side.clamp(-HOLD_DECEL * dt, HOLD_DECEL * dt);
+        }
         let alt = st.get(id::FLIGHT_ALTITUDE).clamp(1.2, 40.0);
         // Standing at a place: down to standing height.
         let alt = alt + (alt.min(1.7) - alt) * self.route.down;
@@ -786,6 +857,46 @@ impl Flight {
         }
     }
 
+    /// The cruise: flight.speed plus what W / S added in flight (ramped at
+    /// KEY_CRUISE_RATE). The offset is dropped when flight.speed changes or on a stop, so
+    /// flying on after a stop resumes at flight.speed.
+    fn cruise_speed(&mut self, ctl: f32, inp: &Inputs, dt: f32) -> f32 {
+        let r = &mut self.route;
+        if ctl != r.cruise_ctl || inp.hold {
+            r.cruise_ctl = ctl;
+            r.cruise_offset = 0.0;
+        }
+        if !inp.hold {
+            r.cruise_offset = (r.cruise_offset + inp.moves.forward * KEY_CRUISE_RATE * dt).clamp(-ctl, 30.0 - ctl);
+        }
+        (ctl + r.cruise_offset).clamp(0.0, 30.0)
+    }
+
+    /// Standing in the world: the keys walk (W/S along where the head looks when steering by
+    /// head, else along the course; A/D sideways; Shift runs). Speeds up at ACCEL, slows down
+    /// at HOLD_DECEL; no keys = stand still.
+    fn walk(&mut self, inp: &Inputs, dt: f32) {
+        let m = inp.moves;
+        let pace = if m.run { RUN } else { WALK };
+        let g = if self.steering(inp) { self.gaze.0 } else { 0.0 };
+        let (s, c) = g.sin_cos();
+        let n = m.forward.hypot(m.strafe).max(1.0);
+        let (f, r) = (m.forward / n, m.strafe / n);
+        let tx = pace * (f * c + r * s);
+        let ty = pace * (f * s - r * c);
+        let (dx, dy) = (tx - self.pose.speed, ty - self.pose.side);
+        let d = dx.hypot(dy);
+        let rate = if tx.hypot(ty) < self.pose.ground_speed() { HOLD_DECEL } else { ACCEL };
+        let k = if d > rate * dt { rate * dt / d } else { 1.0 };
+        self.pose.speed += dx * k;
+        self.pose.side += dy * k;
+    }
+
+    /// Steering by head is live (a mode is on and AirPods poses arrive).
+    fn steering(&self, inp: &Inputs) -> bool {
+        inp.head_tracked && inp.st.get(id::FLIGHT_STEER).round() as u32 > 0
+    }
+
     /// Steers and moves the listener. With steering by head, the course turns towards where
     /// the head looks (yaw; pitch climbs and dives with `yaw_pitch`); otherwise it wanders
     /// along a gentle curve. Both go through the same turn-rate slew limit.
@@ -799,8 +910,21 @@ impl Flight {
         self.gaze.0 += (wrap(yaw) - self.gaze.0) * g;
         self.gaze.1 += (pitch - self.gaze.1) * g;
         let beyond = |a: f32| a.signum() * (a.abs() - DEAD_ZONE).max(0.0);
-        let target = if mode > 0 {
-            (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn
+        let by_head = (beyond(self.gaze.0) / FULL_TURN).clamp(-1.0, 1.0) * max_turn;
+        let m = inp.moves;
+        // Keys: + = right, the turn rate is + = left.
+        let keys = -(m.turn + if inp.hold { 0.0 } else { m.strafe }).clamp(-1.0, 1.0);
+        let target = if inp.hold {
+            // On foot: Q/E turn; walking forward with the head turned, the course follows the
+            // gaze (so the view, which looks along the course, stays behind you).
+            let follow = if mode > 0 && m.forward > 0.05 { by_head } else { 0.0 };
+            (follow + keys * KEY_TURN).clamp(-KEY_TURN, KEY_TURN)
+        } else if keys != 0.0 {
+            // Keyboard steering in flight, on top of the head.
+            let head = if mode > 0 { by_head } else { 0.0 };
+            (head + keys * max_turn).clamp(-max_turn, max_turn)
+        } else if mode > 0 {
+            by_head
         } else if self.route.visit == Visit::Approach {
             // Heading for a place to stop: turn towards it (gently).
             let r = self.rel(self.route.at.0, self.route.at.1, 0.0);
@@ -810,8 +934,9 @@ impl Flight {
             let k = curvature(self.land.seed, self.pose.s) * self.curviness as f64;
             (k * self.pose.speed as f64) as f32 + self.coast_bias()
         };
-        self.pose.turn += (target - self.pose.turn).clamp(-TURN_ACCEL * dt, TURN_ACCEL * dt);
-        if mode >= 2 {
+        let slew = if inp.hold { KEY_TURN_ACCEL } else { TURN_ACCEL } * dt;
+        self.pose.turn += (target - self.pose.turn).clamp(-slew, slew);
+        if mode >= 2 && !inp.hold {
             let climb = (beyond(self.gaze.1) / FULL_TURN).clamp(-1.0, 1.0) * CLIMB_PER_SPEED * self.pose.speed;
             self.climb_offset = (self.climb_offset + climb * dt).clamp(1.2 - self.altitude, 40.0 - self.altitude);
         } else {
@@ -819,11 +944,12 @@ impl Flight {
         }
 
         let mid = self.pose.heading + 0.5 * (self.pose.turn * dt) as f64;
-        let step = (self.pose.speed * dt) as f64;
-        self.pose.x += step * mid.cos();
-        self.pose.y += step * mid.sin();
+        let (fwd, side) = ((self.pose.speed * dt) as f64, (self.pose.side * dt) as f64);
+        let (ms, mc) = mid.sin_cos();
+        self.pose.x += fwd * mc - side * ms;
+        self.pose.y += fwd * ms + side * mc;
         self.pose.heading = (self.pose.heading + (self.pose.turn * dt) as f64).rem_euclid(core::f64::consts::TAU);
-        self.pose.s += step;
+        self.pose.s += fwd.hypot(side);
         self.locate();
         if self.regen == 0.0 {
             // Quicker right after a reseed, while the landscape is still filling in.
@@ -892,14 +1018,30 @@ impl Flight {
         }
     }
 
-    /// Advances the stop-and-go: approach → linger → fly on.
-    fn update_route(&mut self, dt: f32, stops: f32) {
+    /// Advances the stop-and-go: approach → linger → fly on. Holding still in the world
+    /// suspends it: the flight level comes down to standing height and no place is sought
+    /// until a while after flying on.
+    fn update_route(&mut self, dt: f32, stops: f32, hold: bool) {
         let (px, py) = (self.pose.x, self.pose.y);
         let speed = self.pose.speed;
         let seed = self.land.seed;
         let r = &mut self.route;
         r.cooldown -= dt;
         let ease = |x: &mut f32, to: f32, tau: f32| *x += (to - *x) * (1.0 - (-dt / tau).exp());
+        if hold != r.hold {
+            r.hold = hold;
+            if hold && r.visit == Visit::Linger {
+                r.visited[r.next_visited] = r.id;
+                r.next_visited = (r.next_visited + 1) % r.visited.len();
+            }
+            r.visit = Visit::Cruise;
+        }
+        if hold {
+            ease(&mut r.down, 1.0, 1.5);
+            r.cooldown = r.cooldown.max(15.0);
+            self.pose.linger += (1.0 - self.pose.linger) * (1.0 - (-dt / 1.5).exp());
+            return;
+        }
         match r.visit {
             Visit::Cruise => ease(&mut r.down, 0.0, 3.0),
             Visit::Approach => {
@@ -970,7 +1112,7 @@ impl Flight {
     fn step_birds(&mut self, dt: f32, inp: &Inputs) {
         let pose = self.pose;
         let (hs, hc) = (pose.sin, pose.cos);
-        let speed = pose.speed;
+        let speed = pose.ground_speed();
         let seed = self.land.seed;
         let threshold = 0.5 * (inp.birds / 0.6).clamp(0.0, 1.67);
         for i in 0..self.land.birds.len() {
