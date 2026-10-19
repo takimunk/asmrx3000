@@ -24,6 +24,22 @@ QUERIES = {
     "river": "river flowing water",
     "wind_trees": "wind trees forest leaves",
     "leaves": "leaves rustling",
+    # Reference set for asmr_ml.refcompare (see refs_fetch.py): category -> (queries, min seconds)
+    "thunder_close": "thunder close crack clap loud strike",
+    "thunder_distant": "distant thunder rumble rolling",
+    "lake_lapping": "lake waves lapping shore stones",
+    "still_lake_ambience": "lake ambience calm water",
+    "brook": "brook small stream pebbles babbling",
+    "slow_river": "slow river flowing calm",
+    "waterfall_small": "small waterfall",
+    "wind_trees": "wind in trees forest",
+    "wind_open": "wind over grass field open",
+    "wind_gusty": "gusty wind gusts",
+    "wings_pigeon": "pigeon take off wings flapping",
+    "wings_small": "bird flutter take off small wings",
+    "wings_large": "seagull crow swan wing beats flapping",
+    "rain_forest": "rain in forest leaves",
+    "frogs_common": "common frog pond",
 }
 
 
