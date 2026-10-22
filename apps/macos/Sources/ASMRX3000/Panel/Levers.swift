@@ -376,8 +376,8 @@ enum ControlText {
     // MARK: Clip groups (AudioEngine.clipGroups)
 
     /// Group titles and icon keys from the scene (`controls` block), set when a core is made.
-    static var clipTitles: [String: String] = [:]
-    static var clipIcons: [String: String] = [:]
+    static var clipTitles: [String: String] { ClipGroupLabels.titles }
+    static var clipIcons: [String: String] { ClipGroupLabels.icons }
 
     private static let clipFallbackTitles = [
         "current": "Течение", "whales": "Киты", "dolphins": "Дельфины", "bubbles": "Пузыри",

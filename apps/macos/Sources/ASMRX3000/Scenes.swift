@@ -204,3 +204,11 @@ enum Scenes {
         }
     }
 }
+
+/// Titles and icon keys of the current scene's clip groups, as the scene names them: written
+/// by the engine when it loads a scene, read by the levers (kept here, outside the UI, so the
+/// audio layer builds on its own).
+enum ClipGroupLabels {
+    static var titles: [String: String] = [:]
+    static var icons: [String: String] = [:]
+}

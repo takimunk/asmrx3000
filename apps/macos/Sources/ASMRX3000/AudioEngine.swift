@@ -215,8 +215,8 @@ final class AudioEngine: ObservableObject {
                 v.append(min(max(stored, r.min), r.max))
                 if g.has(p) { asmr_set_clip_group_param(core, idx, UInt32(p), v[p]) }
             }
-            ControlText.clipTitles[g.id] = g.title
-            ControlText.clipIcons[g.id] = g.icon
+            ClipGroupLabels.titles[g.id] = g.title
+            ClipGroupLabels.icons[g.id] = g.icon
             groups.append(g)
             values.append(v)
         }
