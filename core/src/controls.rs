@@ -702,8 +702,14 @@ pub(crate) fn apply(world: &mut World, st: &ControlState, bases: &Bases) {
     let surface = get(RAIN_SURFACE).round() as usize;
     for em in world.emitters.iter_mut() {
         let Some(base) = em.base else { continue };
+        // Clips with a physical model are configured by their group (clips.rs).
+        if matches!(world.entities[em.owner].geometry, crate::scene::Geometry::Clip { .. }) {
+            continue;
+        }
         let owner_is_source = world.entities[em.owner].kind == ObjectKind::Source;
         let cfg = match base {
+            // No panel controls of its own yet: keeps the scene's configuration.
+            ModelConfig::Plasma(own) => ModelConfig::Plasma(own),
             ModelConfig::Water(own) => {
                 let v = em.variation;
                 // Preset regime replaces the scene's; geometry (length) stays.

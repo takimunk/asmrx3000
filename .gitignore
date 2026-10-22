@@ -6,3 +6,5 @@
 .DS_Store
 
 /hrtf-src/
+.env
+/tools/fal/dl/

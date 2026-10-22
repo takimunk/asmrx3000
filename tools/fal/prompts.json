@@ -1,0 +1,212 @@
+[
+ {
+  "scene": "underwater",
+  "name": "dolphin_whistles",
+  "prompt": "A single bottlenose dolphin producing clear tonal whistles with pauses between them, recorded underwater with a hydrophone. Only one dolphin, no other sounds, no music, dry, no reverb.",
+  "duration": 20,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "dolphin_clicks",
+  "prompt": "A single dolphin echolocation click train, fast ticking clicks that speed up into a buzz then stop, underwater hydrophone recording. Only one animal, no other sounds, dry, no reverb.",
+  "duration": 15,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "dolphin_whistle_click_mix",
+  "prompt": "A single dolphin whistling and clicking alternately, playful chatter, underwater hydrophone recording. One dolphin only, no other sounds, no music, dry, no reverb.",
+  "duration": 25,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "dolphin_squeaks_young",
+  "prompt": "A single young dolphin making short high-pitched squeaks and chirps, underwater recording. Only one animal, no other sounds, dry, no reverb.",
+  "duration": 15,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 1,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "humpback_song",
+  "prompt": "Humpback whale song from a single whale: long low moans, groans and rising cries in repeating phrases, underwater hydrophone recording. Only one whale, no other sounds, no music, dry, no reverb.",
+  "duration": 30,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_calls_sparse",
+  "prompt": "A single large whale producing a few isolated deep low-frequency calls with long silences between them, underwater recording. No other sounds, no music, dry, no reverb.",
+  "duration": 30,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_distant",
+  "prompt": "A very distant whale moan heard faintly through deep water, muffled and low, mostly quiet water silence in between. Single whale, no other sounds, no music.",
+  "duration": 30,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 1,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "bubbles_rising",
+  "prompt": "Gentle air bubbles rising and popping underwater, close hydrophone recording. Only bubbles, no voices, no music, no other sounds, dry.",
+  "duration": 20,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 1,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "swimmer_strokes",
+  "prompt": "A single diver slowly swimming past underwater, soft water displacement from fin kicks, occasional regulator bubbles. Only this, no music, no other sounds, dry.",
+  "duration": 15,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 1,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "ocean_bed",
+  "prompt": "Quiet deep ocean underwater ambience, soft low hydrophone water rumble and faint distant hiss. Only water, no animals, no bubbles, no music, no melody, steady.",
+  "duration": 30,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "deep_drone_low",
+  "prompt": "A very low sub-bass drone, slowly evolving, steady hum with no rhythm and no melody. Single sustained tone only, no music, no voices, no other sounds.",
+  "duration": 30,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "sa25"
+ },
+ {
+  "scene": "space",
+  "name": "deep_drone_hollow",
+  "prompt": "A hollow dark low-pitched resonant drone like air in a huge empty metal chamber, very slow movement, no rhythm, no melody, no music, no other sounds.",
+  "duration": 30,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 1,
+  "model": "sa25"
+ },
+ {
+  "scene": "space",
+  "name": "cosmic_swell",
+  "prompt": "A slow, wide, soft swell of filtered noise rising and falling like a tide, one gentle wave every ten seconds. Only this, no melody, no music, no impacts, no other sounds.",
+  "duration": 30,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "sa25"
+ },
+ {
+  "scene": "space",
+  "name": "comet_pass",
+  "prompt": "A single fast whoosh of a large object passing by, smooth rising then falling airy rush with a soft low tail. One pass only, no impact, no music, no explosion, no other sounds, dry.",
+  "duration": 8,
+  "loop": false,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "pulsar_pulses",
+  "prompt": "Distant regular soft low pulses, one dull thump about every two seconds, steady and faint like a slow far-away heartbeat of a machine. Only the pulse, no melody, no music, no other sounds.",
+  "duration": 20,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "shimmer_high",
+  "prompt": "A quiet high shimmering texture of fine glassy airy noise, sparkling and slowly changing, no pitch, no melody, no rhythm, no music, no other sounds.",
+  "duration": 30,
+  "loop": true,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "sa25"
+ },
+ {
+  "scene": "space",
+  "name": "asteroid_whoosh",
+  "prompt": "A large dark object passing by in space: a deep, soft, low-frequency whoosh that swells slowly, peaks, and fades away, airy and smooth like a heavy wind-rush, no impact. One single sound, dry, mono, no music, no speech, no reverb, soft attack, calm.",
+  "duration": 16,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 3,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "satellite_flyby",
+  "prompt": "A distant satellite gliding past: a gentle tonal hum with a slow Doppler pitch glide from high to low, faint electronic shimmer, smooth and quiet. One single sound, dry, mono, no music, no speech, no reverb, soft attack, calm.",
+  "duration": 16,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 3,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "energy_beam",
+  "prompt": "A soft beam of energy sweeping past: a smooth tonal swell that rises then falls, glassy harmonic shimmer tail, ethereal and warm, NOT a laser, no pew, no zap. One single sound, dry, mono, no music, no speech, no reverb, soft attack, calm.",
+  "duration": 10,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 3,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "orbit_hum",
+  "prompt": "A slow orbiting moon or satellite: a low steady tonal hum with gentle slow beating between two close pitches, soft, continuous, meditative. One single sound, dry, mono, no music, no speech, no reverb, soft attack, calm.",
+  "duration": 20,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 2,
+  "model": "el2"
+ },
+ {
+  "scene": "space",
+  "name": "ray_glide",
+  "prompt": "A wide ethereal ray of light gliding across the sky: a long soft airy sweep with a faint chime-like harmonic overtone, slow rise and slow fall, smooth. One single sound, dry, mono, no music, no speech, no reverb, soft attack, calm.",
+  "duration": 14,
+  "loop": false,
+  "prompt_influence": 0.5,
+  "variations": 3,
+  "model": "el2"
+ }
+]

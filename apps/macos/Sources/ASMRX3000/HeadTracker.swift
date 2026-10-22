@@ -13,9 +13,23 @@ import simd
 final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDelegate {
     @Published private(set) var connected = false
     @Published private(set) var active = false
-    @Published var enabled = true {
-        didSet { enabled ? start() : stop() }
+    /// Remembered across launches ("headEnabled"): continuing onboarding without head tracking
+    /// turns it off, and the app then does not ask for motion access at the next launch.
+    @Published var enabled = UserDefaults.standard.object(forKey: "headEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(enabled, forKey: "headEnabled")
+            if enabled { deferred = false }
+            enabled ? start() : stop()
+        }
     }
+    /// The system refused motion access (Privacy & Security), or the request failed.
+    @Published private(set) var denied = false
+    /// Uptime of the last pose that reached the main thread (0 = none yet): onboarding watches it
+    /// to tell a live link from a stale one.
+    private(set) var lastSampleTime: TimeInterval = 0
+    /// Until onboarding has explained why, the tracker does not start (starting is what makes
+    /// the system ask for motion access). `requestAccess()` lifts it.
+    private var deferred = false
 
     /// For the UI (radar), radians, engine convention: yaw + = left, pitch + = up,
     /// roll + = right ear down. Updated on the main thread at <= 30 Hz (not published: the
@@ -73,15 +87,35 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         // terminal and abort the process.
         guard !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--bench") else { return }
         manager.delegate = self
+        denied = Self.authorization == .denied || Self.authorization == .restricted
+        deferred = Self.authorization == .notDetermined && Onboarding.pending
         start()
     }
 
     var available: Bool { manager.isDeviceMotionAvailable }
 
+    static var authorization: CMAuthorizationStatus { CMHeadphoneMotionManager.authorizationStatus() }
+
+    /// Starts tracking now, which makes the system ask for motion access the first time.
+    func requestAccess() {
+        deferred = false
+        if !enabled { enabled = true } else { start() }
+        if Self.authorization == .denied || Self.authorization == .restricted { denied = true }
+    }
+
     func start() {
-        guard enabled, manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
-        manager.startDeviceMotionUpdates(to: queue) { [weak self] motion, _ in
-            guard let self, let motion else { return }
+        guard enabled, !deferred, manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+        manager.startDeviceMotionUpdates(to: queue) { [weak self] motion, error in
+            guard let self else { return }
+            guard let motion else {
+                if error != nil {
+                    let status = Self.authorization
+                    DispatchQueue.main.async {
+                        if status == .denied || status == .restricted { self.denied = true }
+                    }
+                }
+                return
+            }
             self.process(motion)
         }
     }
@@ -172,6 +206,8 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
                 self.yaw = Double(y)
                 self.pitch = Double(p)
                 self.roll = Double(rl)
+                self.lastSampleTime = ProcessInfo.processInfo.systemUptime
+                if self.denied { self.denied = false }
                 if !self.active { self.active = true }
             }
         }

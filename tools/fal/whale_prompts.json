@@ -1,0 +1,62 @@
+[
+ {
+  "scene": "underwater",
+  "name": "whale_moan",
+  "prompt": "One long, low, pure tonal whale moan, slowly gliding in pitch, smooth and sustained for about five seconds. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 6,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_cry",
+  "prompt": "One higher-pitched plaintive mournful whale cry, a smooth tonal rising and falling wail lasting about four seconds. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 4,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_hoot",
+  "prompt": "One short, hollow, horn-like whale hoot, a brief low tonal blast lasting about one second. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 4,
+  "model": "el2"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_moan_x",
+  "prompt": "One long, low, pure tonal whale moan, slowly gliding in pitch, smooth and sustained for about five seconds. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 1,
+  "model": "sa25"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_cry_x",
+  "prompt": "One higher-pitched plaintive mournful whale cry, a smooth tonal rising and falling wail lasting about four seconds. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 1,
+  "model": "sa25"
+ },
+ {
+  "scene": "underwater",
+  "name": "whale_hoot_x",
+  "prompt": "One short, hollow, horn-like whale hoot, a brief low tonal blast lasting about one second. Single whale only, one clean call with silence before and after, underwater hydrophone recording, dry, no reverb, no echo, no clicks, no rattles, no grunts, no buzzing, no bubbles, no music, no other sounds.",
+  "duration": 12,
+  "loop": false,
+  "prompt_influence": 0.7,
+  "variations": 1,
+  "model": "sa25"
+ }
+]

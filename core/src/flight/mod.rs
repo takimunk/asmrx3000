@@ -528,6 +528,9 @@ impl Flight {
                         Some(c) => SoundClass::of_model(c.kind()),
                         None => SoundClass::Bird(species),
                     },
+                    muffle: [0.0; 2],
+                    enveloped: false,
+                    env: 0.0,
                 });
                 let target = match pool {
                     Pool::Rain => Target::Rain(j as u8),
@@ -546,7 +549,7 @@ impl Flight {
         let mut f = Self {
             sample_rate: sr,
             land,
-            world: World { entities, emitters, ground_z: -pose.height },
+            world: World { entities, emitters, ground_z: -pose.height, muffle_hz: 0.0 },
             acoustics,
             slots: slots.into_boxed_slice(),
             pose,

@@ -221,6 +221,7 @@ pub(crate) fn labels(world: &World) -> Vec<String> {
             Geometry::River { .. } => "river".to_string(),
             Geometry::Source { model, .. } => model.name().to_string(),
             Geometry::Point => "bird".to_string(),
+            Geometry::Clip { bank } => format!("clip {}", bank.names.first().map(String::as_str).unwrap_or("")),
         })
         .collect()
 }

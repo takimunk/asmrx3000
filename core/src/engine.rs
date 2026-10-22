@@ -104,7 +104,23 @@ pub mod param {
     pub const MOVE_STRAFE: u32 = 46;
     pub const MOVE_TURN: u32 = 47;
     pub const MOVE_RUN: u32 = 48;
-    pub const COUNT: usize = 49;
+    /// The screen in front of the listener (set by the host from the display's physical size
+    /// after the "look at the centre" calibration): visible width and height, metres, and the
+    /// distance from the eyes to its centre, metres. Scenes use it as a portal (sounds can be
+    /// drawn into it or pass through its frame).
+    pub const SCREEN_WIDTH: u32 = 49;
+    pub const SCREEN_HEIGHT: u32 = 50;
+    pub const SCREEN_DISTANCE: u32 = 51;
+    /// Clip scenes (clips.rs), 1 = as authored: speed of travelling sounds (0..3), how often
+    /// things happen (0..3), level of beds and textures (0..2), level of creatures and
+    /// events (0..2).
+    pub const SCENE_MOTION: u32 = 52;
+    pub const SCENE_EVENTS: u32 = 53;
+    pub const SCENE_BED: u32 = 54;
+    pub const SCENE_CREATURES: u32 = 55;
+    /// Elevation of the screen centre seen from the eyes, degrees (− = below eye level).
+    pub const SCREEN_ELEVATION: u32 = 56;
+    pub const COUNT: usize = 57;
 }
 
 pub mod telemetry {
@@ -242,12 +258,16 @@ struct Shared {
     clock: AtomicU64,
     /// Mix-layer telemetry (`asmr_get_mix`).
     mix: MixShared,
+    /// Per-group controls of the scene's clips (clips.rs).
+    clip_groups: std::sync::Arc<crate::clips::ClipGroups>,
 }
 
 struct Dsp {
     sample_rate: f32,
     world: World,
     director: Director,
+    /// Moves clip entities and cues their players (clips.rs).
+    choreo: crate::clips::Choreo,
     acoustics: Acoustics,
     scene_trees: Vec<Trunk>,
     scene_geometry_initialized: bool,
@@ -305,6 +325,8 @@ impl Engine {
         let rng = Rng::new(0xA5A5_3000 ^ desc.seed);
         let world = World::build(desc, sr)?;
         let director = Director::new(desc, &world);
+        let clip_groups = std::sync::Arc::new(crate::clips::ClipGroups::new(desc));
+        let choreo = crate::clips::Choreo::new(desc, &world, clip_groups.clone());
 
         let shared = Shared {
             params: atomics(param::COUNT),
@@ -331,6 +353,7 @@ impl Engine {
             head: HeadPoseInput::new(),
             clock: AtomicU64::new(0),
             mix: MixShared::new(),
+            clip_groups,
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -356,6 +379,14 @@ impl Engine {
             (param::OUTPUT_LATENCY, 0.15),
             (param::HEAD_PREDICTION, 1.0),
             (param::HEAD_PARALLAX, 1.0),
+            (param::SCREEN_WIDTH, 0.30),
+            (param::SCREEN_HEIGHT, 0.20),
+            (param::SCREEN_DISTANCE, 0.60),
+            (param::SCENE_MOTION, 1.0),
+            (param::SCENE_EVENTS, 1.0),
+            (param::SCENE_BED, 1.0),
+            (param::SCENE_CREATURES, 1.0),
+            (param::SCREEN_ELEVATION, -8.0),
         ] {
             shared.params[id as usize].store(v);
         }
@@ -371,6 +402,7 @@ impl Engine {
             sample_rate: sr,
             world,
             director,
+            choreo,
             acoustics,
             scene_trees: Vec::with_capacity(MAX_OBJECTS),
             scene_geometry_initialized: false,
@@ -530,6 +562,11 @@ impl Engine {
     /// Effective value of one control.
     pub fn control(&self, id: u32) -> f32 {
         self.shared.controls.state(&self.shared.params).get(id)
+    }
+
+    /// The clip groups of the scene (user controls for clip scenes; empty otherwise).
+    pub fn clip_groups(&self) -> &crate::clips::ClipGroups {
+        &self.shared.clip_groups
     }
 
     pub fn param(&self, id: u32) -> f32 {
@@ -937,6 +974,19 @@ impl Dsp {
             storm: p(param::STORM).clamp(0.0, 1.0),
         };
         self.director.step(dt, &env, &mut self.world);
+        let screen = crate::clips::Screen {
+            width: p(param::SCREEN_WIDTH).clamp(0.1, 3.0),
+            height: p(param::SCREEN_HEIGHT).clamp(0.1, 2.0),
+            distance: p(param::SCREEN_DISTANCE).clamp(0.2, 3.0),
+            elevation: p(param::SCREEN_ELEVATION).clamp(-60.0, 60.0).to_radians(),
+        };
+        let macros = crate::clips::Macros {
+            motion: p(param::SCENE_MOTION),
+            events: p(param::SCENE_EVENTS),
+            bed: p(param::SCENE_BED),
+            creatures: p(param::SCENE_CREATURES),
+        };
+        self.choreo.step(dt, &mut self.world, screen, macros);
         self.world.update_emitters();
         self.sync_scene_trees();
         self.acoustics.update_environment(&Acoustic {
@@ -991,6 +1041,24 @@ impl Dsp {
             }
             crate::profile::lap(crate::profile::Section::MixVoice);
             em.generator.render(tmp, &controls);
+            if self.world.muffle_hz > 0.0 && em.base.is_some() {
+                // Underwater: physical models (built for air) heard through water.
+                let a = 1.0 - (-core::f32::consts::TAU * self.world.muffle_hz / sr).exp();
+                for v in tmp.iter_mut() {
+                    em.muffle[0] += (*v - em.muffle[0]) * a;
+                    em.muffle[1] += (em.muffle[0] - em.muffle[1]) * a;
+                    *v = em.muffle[1];
+                }
+            }
+            if em.enveloped {
+                let target = controls.clip_env.clamp(0.0, 4.0);
+                let step = (target - em.env) * inv_len;
+                for v in tmp.iter_mut() {
+                    em.env += step;
+                    *v *= em.env;
+                }
+                em.env = target;
+            }
             crate::profile::lap(crate::profile::Section::Generate(em.kind as usize));
             self.mix.feed(idx, tmp, kind_gain, em.generator.busy());
 

@@ -1,0 +1,610 @@
+{
+ "name": "Underwater drift",
+ "seed": 4400,
+ "environment": {
+  "time_of_day": 12.0,
+  "rain_mm_h": 0.0,
+  "wind_ms": 0.0,
+  "storm": 0.0,
+  "temperature_c": 18.0,
+  "humidity": 1.0,
+  "ground_z": -30.0,
+  "medium": "water",
+  "muffle_hz": 1500
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 100,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.2,
+   "tunnel": true,
+   "fade": 7,
+   "first": 0,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.2,
+    "ahead": 30,
+    "behind": 30,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 101,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.6,
+   "tunnel": true,
+   "fade": 7,
+   "first": 3.1,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.6,
+    "ahead": 38,
+    "behind": 38,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 102,
+   "group": "current",
+   "emitters": 3,
+   "spread": 4.0,
+   "tunnel": true,
+   "fade": 7,
+   "first": 6.7,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 3.0,
+    "ahead": 34,
+    "behind": 34,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 103,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.2,
+   "tunnel": true,
+   "fade": 7,
+   "first": 9.4,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.4,
+    "ahead": 42,
+    "behind": 42,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 104,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.6,
+   "tunnel": true,
+   "fade": 7,
+   "first": 13.2,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.8,
+    "ahead": 28,
+    "behind": 28,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 105,
+   "group": "current",
+   "emitters": 3,
+   "spread": 4.0,
+   "tunnel": true,
+   "fade": 7,
+   "first": 16.1,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.0,
+    "ahead": 36,
+    "behind": 36,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 106,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.2,
+   "tunnel": true,
+   "fade": 7,
+   "first": 19.9,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 3.2,
+    "ahead": 32,
+    "behind": 32,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 107,
+   "group": "current",
+   "emitters": 3,
+   "spread": 3.6,
+   "tunnel": true,
+   "fade": 7,
+   "first": 22.6,
+   "interval": [
+    0.5,
+    3.0
+   ],
+   "sound": {
+    "model": "water",
+    "preset": "rapids",
+    "params": {
+     "gain": 0.36,
+     "flow_ms": 1.2,
+     "width_m": 3.0,
+     "turbulence": 0.2,
+     "rock_d50_m": 0.1,
+     "depth_m": 1.5
+    }
+   },
+   "motion": {
+    "type": "drift",
+    "speed": 2.5,
+    "ahead": 40,
+    "behind": 40,
+    "lateral": [
+     0,
+     0
+    ],
+    "height": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 110,
+   "group": "current",
+   "emitters": 4,
+   "spread": 7,
+   "fade": 6,
+   "first": 0,
+   "sound": {
+    "model": "water",
+    "preset": "big_river",
+    "params": {
+     "gain": 0.5
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0,
+     0,
+     -1
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "whales",
+   "class": "creature",
+   "level_db": 95,
+   "first": 6,
+   "interval": [
+    14,
+    35
+   ],
+   "fade": 2,
+   "rate": [
+    0.92,
+    1.04
+   ],
+   "echo": {
+    "delay": 0.42,
+    "feedback": 0.55,
+    "mix": 0.9,
+    "damp_hz": 1400
+   },
+   "files": [
+    "generated/underwater/whale_moan_el2_1.wav",
+    "generated/underwater/whale_moan_el2_2.wav",
+    "generated/underwater/whale_moan_el2_3.wav",
+    "generated/underwater/whale_moan_el2_5.wav",
+    "generated/underwater/whale_moan_el2_6.wav"
+   ],
+   "motion": {
+    "type": "drift",
+    "speed": 2.5,
+    "ahead": 70,
+    "behind": 40,
+    "lateral": [
+     35,
+     60
+    ],
+    "height": [
+     -15,
+     5
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 21,
+   "group": "whales",
+   "class": "creature",
+   "level_db": 91,
+   "first": 22,
+   "interval": [
+    30,
+    70
+   ],
+   "fade": 2,
+   "rate": [
+    0.95,
+    1.05
+   ],
+   "echo": {
+    "delay": 0.42,
+    "feedback": 0.55,
+    "mix": 0.9,
+    "damp_hz": 1400
+   },
+   "files": [
+    "generated/underwater/whale_cry_el2_1.wav",
+    "generated/underwater/whale_cry_el2_2.wav",
+    "generated/underwater/whale_cry_el2_4.wav"
+   ],
+   "motion": {
+    "type": "drift",
+    "speed": 2.5,
+    "ahead": 60,
+    "behind": 40,
+    "lateral": [
+     22,
+     40
+    ],
+    "height": [
+     -8,
+     6
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 22,
+   "group": "whales",
+   "class": "creature",
+   "level_db": 87,
+   "first": 40,
+   "interval": [
+    25,
+    60
+   ],
+   "fade": 1.5,
+   "rate": [
+    0.95,
+    1.05
+   ],
+   "echo": {
+    "delay": 0.3,
+    "feedback": 0.45,
+    "mix": 0.7,
+    "damp_hz": 1800
+   },
+   "files": [
+    "generated/underwater/whale_hoot_el2_1.wav",
+    "generated/underwater/whale_hoot_el2_2.wav",
+    "generated/underwater/whale_hoot_el2_3.wav"
+   ],
+   "motion": {
+    "type": "drift",
+    "speed": 2.5,
+    "ahead": 40,
+    "behind": 30,
+    "lateral": [
+     12,
+     22
+    ],
+    "height": [
+     -5,
+     4
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "dolphins",
+   "class": "creature",
+   "level_db": 52,
+   "first": 30,
+   "interval": [
+    35,
+    80
+   ],
+   "rate": [
+    0.96,
+    1.06
+   ],
+   "files": [
+    "generated/underwater/dolphin_whistles_el2_2.wav",
+    "generated/underwater/dolphin_squeaks_young_el2_1.wav"
+   ],
+   "motion": {
+    "type": "escort",
+    "offset": [
+     4.0,
+     3.0,
+     0.5
+    ],
+    "wander": 1.5
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "dolphins",
+   "class": "creature",
+   "level_db": 54,
+   "first": 90,
+   "interval": [
+    150,
+    300
+   ],
+   "fade": 1.5,
+   "files": [
+    "generated/underwater/dolphin_squeaks_young_el2_1.wav",
+    "generated/underwater/dolphin_whistles_el2_2.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     -14,
+     -5,
+     -1
+    ],
+    "to_screen": true,
+    "duration": 9,
+    "jitter": 1.5
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "bubbles",
+   "class": "event",
+   "level_db": 54,
+   "first": 20,
+   "interval": [
+    40,
+    100
+   ],
+   "fade": 1,
+   "rate": [
+    0.9,
+    1.15
+   ],
+   "files": [
+    "generated/underwater/bubbles_rising_el2_1.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     1.5,
+     -1.2,
+     -2.5
+    ],
+    "to": [
+     2.0,
+     -0.8,
+     3.0
+    ],
+    "duration": 7,
+    "jitter": 1.0
+   }
+  }
+ ],
+ "controls": [
+  {
+   "group": "current",
+   "title": "Течение",
+   "icon": "water"
+  },
+  {
+   "group": "whales",
+   "title": "Киты",
+   "icon": "whale",
+   "params": [
+    "level",
+    "events",
+    "motion",
+    "distance",
+    "pitch"
+   ]
+  },
+  {
+   "group": "dolphins",
+   "title": "Дельфины",
+   "icon": "dolphin"
+  },
+  {
+   "group": "bubbles",
+   "title": "Пузыри",
+   "icon": "bubbles"
+  }
+ ]
+}

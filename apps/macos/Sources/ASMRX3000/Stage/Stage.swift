@@ -4,9 +4,9 @@ import QuartzCore
 import simd
 
 /// Something the user can point at: the river (all water segments), a tree (a canopy wind
-/// source) or a bird.
+/// source), a bird, or in a clip scene one of its sounds.
 struct Thing {
-    enum Kind { case river, tree, bird }
+    enum Kind { case river, tree, bird, clip }
     enum Key: Hashable { case river, object(UInt32) }
 
     var key: Key
@@ -24,6 +24,9 @@ struct SelectionInfo: Equatable {
     var kind: Thing.Kind
     var position: SIMD3<Float>
     var movable: Bool
+    /// Clips: its name ("кит") and how it moves.
+    var title: String?
+    var detail: String?
 }
 
 final class SceneReadout: ObservableObject {
@@ -94,6 +97,13 @@ final class Stage {
     private(set) var sources: [SourceInfo] = []
     private(set) var objects: [AsmrObjectInfo] = []
     private(set) var things: [Thing] = []
+    /// Clip scenes: where each moving sound was over the last seconds, oldest first (ClipStage.swift).
+    private(set) var trails: [UInt32: [SIMD3<Float>]] = [:]
+    private var trailClock: Double = 0
+    static let trailStep = 0.15
+    static let trailLength = 40
+    /// The scene the stage was last set up for (a switch resets the camera and selection).
+    private var sceneID = ""
     private(set) var telemetry = Telemetry()
     /// Flight mode: telemetry and the shapes of the streamed water (see FlightStage.swift).
     var flight = FlightView()
@@ -184,11 +194,13 @@ final class Stage {
     func step(dt: Double) {
         time += dt
         telemetry = audio.readTelemetry(spectrum: &spectrum, windField: &wind, sources: &sources)
+        if audio.scene.entry.id != sceneID { sceneChanged() }
         audio.readObjects(&objects)
         readFlight()
         audio.readControls(&controlBuffer)
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
         rebuildThings()
+        recordTrails(dt: dt)
 
         columnClock += dt * Stage.columnsPerSecond
         var due = min(Int(columnClock), 8)
@@ -279,6 +291,46 @@ final class Stage {
         if meters.audible != audible { meters.audible = audible }
     }
 
+    // MARK: Scene
+
+    var isClipScene: Bool { audio.scene.isClip }
+
+    private func sceneChanged() {
+        let first = sceneID.isEmpty
+        sceneID = audio.scene.entry.id
+        selection = nil
+        hover = nil
+        trails.removeAll()
+        controls.expanded = nil
+        // Each kind of scene has its own framing; the first frame keeps an azimuth set by
+        // --azimuth (snapshots).
+        if !first || isClipScene {
+            let azimuth = camera.azimuth
+            camera = isClipScene ? ClipSpace.camera : OrbitCamera()
+            if first && azimuth != OrbitCamera().azimuth { camera.azimuth = azimuth }
+        }
+    }
+
+    /// Samples the moving clips' positions for their trails; a sound that leaves the stage
+    /// takes its trail with it.
+    private func recordTrails(dt: Double) {
+        guard isClipScene else { return }
+        trailClock += dt
+        let sample = trailClock >= Stage.trailStep
+        if sample { trailClock = 0 }
+        var seen = Set<UInt32>()
+        for o in objects where o.kind == UInt32(ASMR_OBJECT_SOURCE) {
+            guard o.flags & UInt32(ASMR_OBJECT_FLAG_ABSENT) == 0, audio.scene.clips[o.id]?.moves == true else { continue }
+            seen.insert(o.id)
+            guard sample else { continue }
+            var t = trails[o.id] ?? []
+            t.append(SIMD3(o.x, o.y, o.z))
+            if t.count > Stage.trailLength { t.removeFirst(t.count - Stage.trailLength) }
+            trails[o.id] = t
+        }
+        for id in trails.keys where !seen.contains(id) { trails[id] = nil }
+    }
+
     // MARK: Things
 
     private func rebuildThings() {
@@ -310,6 +362,10 @@ final class Stage {
                 let r: Float = 0.45
                 things.append(Thing(key: .object(o.id), kind: .bird, ids: [o.id], anchor: p, movable: movable,
                                     boxMin: p - r, boxMax: p + r))
+            case UInt32(ASMR_OBJECT_SOURCE) where audio.scene.clips[o.id] != nil:
+                let q = ClipSpace.map(p)
+                things.append(Thing(key: .object(o.id), kind: .clip, ids: [o.id], anchor: p, movable: false,
+                                    boxMin: q - 0.4, boxMax: q + 0.4))
             default:
                 break // generic sources (rain patches, crickets, fire) are not drawn yet
             }
@@ -341,6 +397,16 @@ final class Stage {
     /// The thing under a point in a view of `size` points, if any.
     func pick(at point: SIMD2<Float>, size: SIMD2<Float>) -> Thing.Key? {
         let proj = Projector(camera: viewCamera, size: size)
+        if isClipScene {
+            // Clips are drawn as glyphs at their mapped place: the nearest within a few cells.
+            var best: (Thing.Key, Float)?
+            for t in things where t.kind == .clip {
+                guard let s = proj.project(ClipSpace.map(t.anchor)) else { continue }
+                let d = simd_distance(s.point, point)
+                if d < 14, best == nil || d < best!.1 { best = (t.key, d) }
+            }
+            return best?.0
+        }
         let focal = size.y * 0.5 / tan(camera.fovY / 2)
         var best: (Thing.Key, Float)?
         func consider(_ key: Thing.Key, _ world: SIMD3<Float>, _ radius: Float) {
@@ -357,7 +423,7 @@ final class Stage {
                 consider(t.key, SIMD3(t.anchor.x, t.anchor.y, (g + t.anchor.z) / 2), 0.7)
             case .bird:
                 consider(t.key, t.anchor, 0.5)
-            case .river:
+            case .river, .clip:
                 break
             }
         }
@@ -412,7 +478,16 @@ final class Stage {
     }
 
     private func refreshReadout() {
-        let info = thing(selection).map { SelectionInfo(kind: $0.kind, position: $0.anchor, movable: $0.movable) }
+        let info = thing(selection).map { t -> SelectionInfo in
+            var info = SelectionInfo(kind: t.kind, position: t.anchor, movable: t.movable)
+            if t.kind == .clip, let id = t.ids.first, let clip = audio.scene.clips[id] {
+                info.title = clip.name
+                info.detail = clip.motionText
+                // Positions only to a metre: they move continuously.
+                info.position = t.anchor.rounded(.toNearestOrAwayFromZero)
+            }
+            return info
+        }
         if readout.selection != info { readout.selection = info }
     }
 

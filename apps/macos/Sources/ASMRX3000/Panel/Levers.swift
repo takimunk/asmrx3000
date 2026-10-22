@@ -20,6 +20,10 @@ extension Control {
 ///         hour, flight speed…). The slider's fill is the live waveform of that group, so the
 ///         lever shows what it does to the sound; its name and value are always written next to it.
 ///
+/// A clip scene (underwater, space) has none of the forest's groups: its section СЦЕНА holds the
+/// scene's own levers instead (motion, events, bed, creatures: ASMR_PARAM_SCENE_*), plus the
+/// loudness of any physical sources it also has.
+///
 /// Every lever shows its name and value with units at rest. A world lever's pictogram (or
 /// chevron) opens that group's drawer: its physical parameters, named, one group at a time.
 /// Generic over the tree: groups added to the engine later land behind "ещё"; while the engine
@@ -65,6 +69,18 @@ struct LeverPanel: View {
         return showAll ? s.shown + s.more : s.shown
     }
 
+    /// The clip scene's levers (AudioEngine.sceneControls), in their order.
+    /// The scene's clip groups first (one lever each, level), then the four scene-wide ones.
+    static func sceneLevers(_ macros: [Control]) -> [Control] {
+        func rank(_ c: Control) -> UInt32 { c.id >= AudioEngine.clipControlBase ? c.id : 0x10_0000 + c.id }
+        return macros.filter { $0.group >= AudioEngine.sceneGroup }.sorted { rank($0) < rank($1) }
+    }
+
+    /// The levers the lever section draws (the tracks behind their sliders follow them).
+    static func levers(_ macros: [Control], scene: SceneInfo, flying: Bool, showAll: Bool) -> [Control] {
+        scene.isClip ? sceneLevers(macros) : visible(macros, flying: flying, showAll: showAll)
+    }
+
     static func layout(_ levers: [Control]) -> [ScopeRow] {
         levers.enumerated().map { i, m in
             ScopeRow(top: Float(i) * Float(Popover.leverHeight), height: Float(Popover.leverHeight),
@@ -93,6 +109,11 @@ struct LeverPanel: View {
         if let id = drawer, let macro = controls.controls.first(where: { $0.id == id }) {
             Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: stills == nil,
                    set: set, close: { controls.expanded = nil })
+        } else if audio.scene.isClip {
+            VStack(alignment: .leading, spacing: 0) {
+                sound(hour: hour, only: audio.scene.groups)
+                clipScene(hour: hour)
+            }
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 sound(hour: hour)
@@ -113,9 +134,10 @@ struct LeverPanel: View {
 
     // MARK: Sound
 
-    @ViewBuilder private func sound(hour: Float?) -> some View {
-        let levels = Self.levels(controls.controls)
-        let mix = controls.macros.first { Int($0.group) == ASMR_GROUP_MIX }
+    /// `only`: the groups the scene has sounds of (a clip scene); the mix is the forest's.
+    @ViewBuilder private func sound(hour: Float?, only: Set<Int>? = nil) -> some View {
+        let levels = Self.levels(controls.controls).filter { only?.contains(Int($0.group)) ?? true }
+        let mix = only == nil ? controls.macros.first { Int($0.group) == ASMR_GROUP_MIX } : nil
         // Without level controls (an older core) the section keeps only the mix's clarity.
         if !levels.isEmpty || mix != nil {
             SectionHeader(title: "Звук", note: levels.isEmpty ? "микс" : "громкость групп, дБ")
@@ -161,30 +183,51 @@ struct LeverPanel: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 SectionHeader(title: "Мир", note: audio.flying ? "полёт: " + Self.biomeName(controls.controls, frame: audio.readFlightFrame()) : "что происходит в лесу")
             }
-            ZStack(alignment: .topLeading) {
-                Group {
-                    if let stills {
-                        Image(decorative: stills.tracks, scale: 2).resizable()
-                    } else {
-                        TracksSurface(stage: model.stage, rows: Self.layout(shown))
-                    }
-                }
-                .frame(width: Popover.sliderWidth, height: Popover.leverHeight * CGFloat(shown.count))
-                .opacity(0.8)
-                .padding(.leading, Popover.iconColumn + Popover.nameColumn)
-
-                VStack(spacing: 0) {
-                    ForEach(shown, id: \.id) { m in
-                        WorldRow(control: m, hour: hour, hasChildren: !drawerChildren(of: m.id).isEmpty,
-                                 meters: model.stage.meters, set: set, open: { controls.expanded = m.id })
-                            .frame(height: Popover.leverHeight)
-                    }
-                }
-            }
+            rows(shown, hour: hour)
             if !split.more.isEmpty {
                 MoreRow(more: split.more, hour: hour, showAll: showAll) { showAllStored.toggle() }
                     .frame(height: 24)
             }
+        }
+    }
+
+    /// The lever rows over the live waveforms of their groups.
+    private func rows(_ shown: [Control], hour: Float?) -> some View {
+        ZStack(alignment: .topLeading) {
+            Group {
+                if let stills {
+                    Image(decorative: stills.tracks, scale: 2).resizable()
+                } else {
+                    TracksSurface(stage: model.stage, rows: Self.layout(shown))
+                }
+            }
+            .frame(width: Popover.sliderWidth, height: Popover.leverHeight * CGFloat(shown.count))
+            .opacity(0.8)
+            .padding(.leading, Popover.iconColumn + Popover.nameColumn)
+
+            VStack(spacing: 0) {
+                ForEach(shown, id: \.id) { m in
+                    WorldRow(control: m, hour: hour, hasChildren: !drawerChildren(of: m.id).isEmpty,
+                             meters: model.stage.meters, set: set, open: { controls.expanded = m.id })
+                        .frame(height: Popover.leverHeight)
+                }
+            }
+        }
+    }
+
+    // MARK: Clip scene
+
+    private func clipScene(hour: Float?) -> some View {
+        let grouped = !audio.clipGroups.isEmpty
+        let plain: String = switch audio.scene.look {
+        case .underwater: "что происходит в воде"
+        case .space: "что происходит вокруг"
+        default: "звуки сцены"
+        }
+        let note = grouped ? "громкость групп; «всё» — на всех сразу" : plain
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(title: "Сцена", note: note)
+            rows(Self.sceneLevers(controls.macros), hour: hour)
         }
     }
 
@@ -225,6 +268,7 @@ enum ControlText {
     /// A parameter's name, in Russian: "water.rock_size" → "Размер камней". A macro is named by
     /// what it sets (see `lever`); a level by its group. Unknown keys fall back to the key itself.
     static func name(_ c: Control) -> String {
+        if let n = clipName(c) { return n }
         if c.isLevel { return group(c) }
         if c.isMacro { return group(c) }
         if let n = names[c.key] { return n }
@@ -236,10 +280,11 @@ enum ControlText {
 
     /// The name of a world lever: what the macro is, physically.
     static func lever(_ c: Control) -> String {
-        names[c.key] ?? group(c)
+        clipName(c) ?? names[c.key] ?? group(c)
     }
 
     static func group(_ c: Control) -> String {
+        if let t = clipTitle(c) { return t }
         switch Int(c.group) {
         case ASMR_GROUP_WATER: return "Вода"
         case ASMR_GROUP_WIND: return "Ветер"
@@ -261,6 +306,7 @@ enum ControlText {
     private static let groupNames = [
         "water": "Вода", "wind": "Ветер", "foliage": "Листва", "rain": "Дождь", "birds": "Птицы",
         "insects": "Насекомые", "fire": "Костёр", "flight": "Полёт", "mix": "Микс", "env": "Время и погода",
+        "scene": "Сцена",
     ]
 
     private static let names = [
@@ -269,6 +315,8 @@ enum ControlText {
         "rain.rate": "Сила дождя", "birds.activity": "Активность птиц", "env.time_of_day": "Время суток",
         "insects.activity": "Активность насекомых", "fire.heat": "Жар костра", "flight.speed": "Скорость полёта",
         "mix.clarity": "Ясность",
+        // Clip scenes (AudioEngine.SceneMacro).
+        "scene.motion": "Всё: движение", "scene.events": "Всё: события", "scene.bed": "Всё: фон", "scene.creatures": "Всё: существа",
         // Water.
         "water.regime": "Водоём", "water.speed": "Скорость течения", "water.depth": "Глубина",
         "water.width": "Ширина", "water.rock_size": "Размер камней", "water.aeration": "Пена и пузыри",
@@ -325,6 +373,74 @@ enum ControlText {
         "dB": "дБ", "LUFS": "LUFS", "Hz": "Гц",
     ]
 
+    // MARK: Clip groups (AudioEngine.clipGroups)
+
+    /// Group titles and icon keys from the scene (`controls` block), set when a core is made.
+    static var clipTitles: [String: String] = [:]
+    static var clipIcons: [String: String] = [:]
+
+    private static let clipFallbackTitles = [
+        "current": "Течение", "whales": "Киты", "dolphins": "Дельфины", "bubbles": "Пузыри",
+        "plasma": "Плазма", "flybys": "Пролёты", "beams": "Лучи", "orbits": "Орбиты",
+    ]
+    private static let clipFallbackIcons = [
+        "current": "water", "whales": "whale", "dolphins": "dolphin", "bubbles": "bubbles",
+        "plasma": "plasma", "flybys": "flyby", "beams": "beam", "orbits": "orbit",
+    ]
+    private static let clipLeaves = [
+        "level": "Громкость", "events": "События", "motion": "Движение", "distance": "Расстояние",
+        "pitch": "Высота тона", "flow": "Скорость течения", "turbulence": "Турбулентность",
+        "hiss": "Центр шипения", "whistlers": "Свистящие",
+    ]
+
+    /// ("whales", "events") from "clip.whales.events".
+    private static func clipParts(_ c: Control) -> (id: String, leaf: String)? {
+        guard c.key.hasPrefix("clip.") else { return nil }
+        let p = c.key.split(separator: ".").map(String.init)
+        return p.count == 3 ? (p[1], p[2]) : nil
+    }
+
+    static func clipTitle(_ c: Control) -> String? {
+        guard let p = clipParts(c) else { return nil }
+        return clipTitles[p.id].flatMap { $0.isEmpty ? nil : $0 } ?? clipFallbackTitles[p.id] ?? sentence(p.id)
+    }
+
+    /// A group's lever is named by the group; its aspects by what they change.
+    static func clipName(_ c: Control) -> String? {
+        guard let p = clipParts(c) else { return nil }
+        return c.isMacro ? clipTitle(c) : clipLeaves[p.leaf] ?? sentence(p.leaf)
+    }
+
+    static func clipIcon(_ c: Control) -> Icon? {
+        guard let p = clipParts(c) else { return nil }
+        if c.isMacro {
+            let key = clipIcons[p.id].flatMap { $0.isEmpty ? nil : $0 } ?? clipFallbackIcons[p.id] ?? ""
+            switch key {
+            case "water", "current": return .water
+            case "whale": return .whale
+            case "dolphin": return .dolphin
+            case "bubbles": return .bubbles
+            case "plasma": return .plasma
+            case "flyby", "comet": return .comet
+            case "beam": return .beam
+            case "orbit": return .orbit
+            case "wind": return .wind
+            case "tone": return .tone
+            default: return .volume
+            }
+        }
+        switch p.leaf {
+        case "level": return .gain
+        case "events": return .dot
+        case "motion": return .speed
+        case "distance": return .width
+        case "pitch", "hiss", "whistlers": return .tone
+        case "flow": return .flow
+        case "turbulence": return .gust
+        default: return .dot
+        }
+    }
+
     static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
     private static func minus(_ s: String) -> String { s.replacingOccurrences(of: "-", with: "−") }
@@ -342,8 +458,23 @@ enum ControlText {
             let db = Int(c.value.rounded())
             return db > 0 ? "+\(db) дБ" : minus("\(db) дБ")
         }
+        if let p = clipParts(c) {
+            switch p.leaf {
+            case "level":
+                if c.value <= c.min + 0.01 { return "выкл" }
+                let db = Int(c.value.rounded())
+                return db > 0 ? "+\(db) дБ" : minus("\(db) дБ")
+            case "events" where c.value < 0.01: return "выкл"
+            case "motion" where c.value < 0.01: return "стоп"
+            case "whistlers": return "+\(Int(c.value.rounded())) /мин"
+            default: break
+            }
+        }
         switch c.key {
         case "foliage.dryness" where c.value < 0: return "по сезону"
+        case "scene.motion" where c.value < 0.01: return "стоп"
+        case "scene.events" where c.value < 0.01, "scene.bed" where c.value < 0.01, "scene.creatures" where c.value < 0.01:
+            return "выкл"
         case "flight.seed": return "№ \(index)"
         case "mix.soloists": return String(index)
         default: break
@@ -803,6 +934,13 @@ extension Track {
         case ASMR_GROUP_RAIN: self = .rain
         case ASMR_GROUP_INSECTS: self = .insects
         case ASMR_GROUP_FIRE: self = .fire
+        // Clip scenes: beds play as water sources, creatures as insects (clips.rs, ClipClass::kinds).
+        case Int(AudioEngine.sceneGroup) + AudioEngine.SceneMacro.bed.rawValue: self = .water
+        case Int(AudioEngine.sceneGroup) + AudioEngine.SceneMacro.creatures.rawValue: self = .insects
+        // A clip group (AudioEngine.clipGroupNumber): metered on the track its sounds play as.
+        case 200..<400:
+            guard let t = Track(rawValue: (Int(group) - 200) / 16) else { return nil }
+            self = t
         default: return nil   // environment shapes every sound; it has no waveform of its own
         }
     }

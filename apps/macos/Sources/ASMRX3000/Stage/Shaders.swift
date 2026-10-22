@@ -344,10 +344,11 @@ enum Shaders {
         }
 
         float day = F.env.x;
-        // A dark, misty picture: by day a dusk-grey haze, by night nearly black.
-        float dim = mix(0.55, 1.0, day);
-        float fogC = mix(0.05, 0.23, day);
-        float skyTop = mix(0.025, 0.10, day);
+        // A dark, misty picture: by day a dusk-grey haze, by night nearly black. Kept low, the
+        // same in every scene (forest, waterfall, underwater, space), so the contours carry it.
+        float dim = mix(0.45, 0.80, day);
+        float fogC = mix(0.035, 0.17, day);
+        float skyTop = mix(0.018, 0.075, day);
         // Ink for drawn marks (rings, outlines): pale on the dark picture.
         float inkC = 0.86;
 
@@ -368,7 +369,8 @@ enum Shaders {
             }
             float t = clamp(tone, 0.0, 1.0);
             if (sel) t = min(t + 0.18, 1.0);
-            v = mix(r.x, r.y, smoothstep(0.0, 1.0, t)) * dim;
+            // Less ambient: the shaded side sinks further towards black.
+            v = mix(r.x * 0.7, r.y, smoothstep(0.0, 1.0, t)) * dim;
             // Sun glints on the water.
             if (mat == M_WATER) v += max(tone - 1.0, 0.0) * 0.35 * dim;
             if (mat == M_GROUND) v *= 1.0 - 0.25 * F.env.y;      // wet ground darkens
@@ -402,9 +404,9 @@ enum Shaders {
                 if ((cls == 3 && (farther || nc < 3)) || (cls == 2 && nc == 1)) edge = 1.0;
             }
         }
-        // Contours are dark and fade with the fog.
+        // Contours are dark and fade with the fog; drawn firmly, they hold the dark picture.
         float lineC = 0.0;
-        v = mix(v, lineC, edge * 0.35 * (1.0 - fog));
+        v = mix(v, lineC, edge * 0.6 * (1.0 - fog));
 
         // Marks drawn over the picture, in ink: g is their coverage.
         float g = 0.0;

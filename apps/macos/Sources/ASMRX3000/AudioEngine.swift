@@ -103,6 +103,255 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_MOVE_RUN, run ? 1 : 0)
     }
 
+    /// The screen in front of the listener (ASMR_PARAM_SCREEN_*), metres: width, height and the
+    /// distance from the eyes to its centre. Set from ScreenGeometry at launch, on display changes
+    /// and by onboarding; kept here so a rebuilt core gets them too.
+    private(set) var screen: (width: Float, height: Float, distance: Float)?
+
+    // MARK: Scene
+
+    /// The scene the core runs (SceneEntry.all, or a `--scene path` file for development).
+    @Published private(set) var scene: SceneInfo
+    /// The scene being built in the background after a switch (nil when none is).
+    @Published private(set) var loadingScene: SceneEntry?
+    /// Set when the last switch failed (a missing sound file, say); the old scene keeps playing.
+    @Published private(set) var sceneError: String?
+
+    /// Clip scenes (ASMR_PARAM_SCENE_*), 1 = as authored. Kept across scene switches and rebuilds.
+    enum SceneMacro: Int, CaseIterable {
+        case motion, events, bed, creatures
+        var param: Int {
+            switch self {
+            case .motion: return ASMR_PARAM_SCENE_MOTION
+            case .events: return ASMR_PARAM_SCENE_EVENTS
+            case .bed: return ASMR_PARAM_SCENE_BED
+            case .creatures: return ASMR_PARAM_SCENE_CREATURES
+            }
+        }
+        var key: String { ["scene.motion", "scene.events", "scene.bed", "scene.creatures"][rawValue] }
+        var max: Float { self == .motion || self == .events ? 3 : 2 }
+        /// Stands in for a control id in the panel (the core's ids stay below 1000).
+        var controlID: UInt32 { AudioEngine.sceneControlBase + UInt32(rawValue) }
+    }
+    static let sceneControlBase: UInt32 = 0xF000
+    /// Control group of the clip-scene levers (not an ASMR_GROUP_*; the panel and the track
+    /// scopes key on it).
+    static let sceneGroup: UInt32 = 100
+    private var sceneMacros: [Float] = [1, 1, 1, 1]
+
+    func sceneMacro(_ m: SceneMacro) -> Float { sceneMacros[m.rawValue] }
+
+    /// The screen as the core has it (its defaults until ScreenWatcher reports the display).
+    var screenSize: (width: Float, height: Float, distance: Float) { screen ?? (0.30, 0.20, 0.60) }
+
+    /// The clip-scene levers as controls, so the panel draws them like the forest's.
+    var sceneControls: [Control] {
+        SceneMacro.allCases.map { m in
+            Control(id: m.controlID, group: Self.sceneGroup + UInt32(m.rawValue), parent: nil,
+                    flags: UInt32(ASMR_CONTROL_FLAG_MACRO), min: 0, max: m.max, value: sceneMacros[m.rawValue],
+                    defaultValue: 1, key: m.key, unit: "x")
+        }
+    }
+
+    // MARK: Clip groups
+
+    /// One group of a clip scene's clips ("whales", "current"...): its own level, events, motion,
+    /// distance, pitch and, for procedural sounds, model parameters (asmr_set_clip_group_param).
+    struct ClipGroup {
+        var index: Int
+        var id: String
+        var title: String
+        var icon: String
+        /// Bit p = ASMR_CLIP_* parameter p applies.
+        var params: UInt32
+        var model: UInt32
+        /// ASMR_SCOPE_* the group is metered on.
+        var scope: Int
+        var ranges: [(min: Float, max: Float, def: Float)]
+        func has(_ p: Int) -> Bool { params & (1 << UInt32(p)) != 0 }
+    }
+    @Published private(set) var clipGroups: [ClipGroup] = []
+    /// Values per group and parameter; kept per scene in UserDefaults and re-applied to every core.
+    private var clipValues: [[Float]] = []
+    /// Stands in for control ids in the panel: base + 8 * group + parameter.
+    static let clipControlBase: UInt32 = 0xF100
+
+    private func clipDefaultsKey(_ g: ClipGroup, _ p: Int) -> String { "clip.\(scene.entry.id).\(g.id).\(p)" }
+
+    /// Reads the groups of the current core and pushes the remembered values into it.
+    private func refreshClipGroups() {
+        guard scene.isClip else {
+            clipGroups = []
+            clipValues = []
+            return
+        }
+        func text(_ call: (UnsafeMutablePointer<CChar>?, UInt32) -> UInt32) -> String {
+            var buf = [CChar](repeating: 0, count: 128)
+            _ = buf.withUnsafeMutableBufferPointer { call($0.baseAddress, 128) }
+            return String(cString: buf)
+        }
+        var groups: [ClipGroup] = []
+        var values: [[Float]] = []
+        let d = UserDefaults.standard
+        for i in 0..<Int(asmr_clip_group_count(core)) {
+            let idx = UInt32(i)
+            var info = AsmrClipGroupInfo()
+            asmr_clip_group_info(core, idx, &info)
+            var ranges: [(min: Float, max: Float, def: Float)] = []
+            for p in 0..<7 {
+                var r = AsmrClipParamRange()
+                asmr_clip_group_param_range(core, idx, UInt32(p), &r)
+                ranges.append((r.min, r.max, r.def))
+            }
+            let g = ClipGroup(index: i, id: text { asmr_clip_group_name(core, idx, $0, $1) },
+                              title: text { asmr_clip_group_title(core, idx, $0, $1) },
+                              icon: text { asmr_clip_group_icon(core, idx, $0, $1) },
+                              params: info.params, model: info.model, scope: Int(info.scope), ranges: ranges)
+            var v: [Float] = []
+            for p in 0..<7 {
+                let key = clipDefaultsKey(g, p)
+                let r = ranges[p]
+                let stored = d.object(forKey: key) != nil ? d.float(forKey: key) : r.def
+                v.append(min(max(stored, r.min), r.max))
+                if g.has(p) { asmr_set_clip_group_param(core, idx, UInt32(p), v[p]) }
+            }
+            ControlText.clipTitles[g.id] = g.title
+            ControlText.clipIcons[g.id] = g.icon
+            groups.append(g)
+            values.append(v)
+        }
+        clipGroups = groups
+        clipValues = values
+    }
+
+    /// Group `i`'s panel number: carries the track its waveform is drawn from (Track.init).
+    private static func clipGroupNumber(_ g: ClipGroup) -> UInt32 { 200 + UInt32(g.scope) * 16 + UInt32(min(g.index, 15)) }
+
+    /// Leaf of the control key for parameter `p`: it names the control in the panel.
+    private func clipLeaf(_ g: ClipGroup, _ p: Int) -> String {
+        switch p {
+        case 0: return "level"
+        case 1: return "events"
+        case 2: return "motion"
+        case 3: return "distance"
+        case 4: return "pitch"
+        case 5: return g.model == UInt32(ASMR_CLIP_MODEL_WATER) ? "flow" : "hiss"
+        default: return g.model == UInt32(ASMR_CLIP_MODEL_WATER) ? "turbulence" : "whistlers"
+        }
+    }
+
+    /// The clip groups as controls: a level lever per group (a macro) whose aspects are its
+    /// children, so the panel draws them like the forest's and opens them the same way.
+    var clipControls: [Control] {
+        var out: [Control] = []
+        for g in clipGroups where g.index < clipValues.count {
+            let base = Self.clipControlBase + UInt32(g.index) * 8
+            let group = Self.clipGroupNumber(g)
+            for p in 0..<7 where g.has(p) {
+                let r = g.ranges[p]
+                let v = clipValues[g.index][p]
+                let macro = p == 0
+                var flags: UInt32 = macro ? UInt32(ASMR_CONTROL_FLAG_MACRO) : 0
+                if !macro, abs(v - r.def) > 1e-4 { flags |= UInt32(ASMR_CONTROL_FLAG_OVERRIDDEN) }
+                out.append(Control(id: base + UInt32(p), group: group, parent: macro ? nil : base, flags: flags,
+                                   min: r.min, max: r.max, value: v, defaultValue: r.def,
+                                   key: "clip.\(g.id).\(clipLeaf(g, p))", unit: macro ? "dB" : p == 6 && g.model == UInt32(ASMR_CLIP_MODEL_PLASMA) ? "/min" : "x"))
+            }
+        }
+        return out
+    }
+
+    private func setClipGroup(_ id: UInt32, _ value: Float) {
+        let k = Int(id - Self.clipControlBase)
+        let (gi, p) = (k / 8, k % 8)
+        guard gi < clipGroups.count, p < 7, clipGroups[gi].has(p) else { return }
+        let r = clipGroups[gi].ranges[p]
+        // NaN (double-click) goes back to "as authored".
+        let v = value.isNaN ? r.def : min(max(value, r.min), r.max)
+        clipValues[gi][p] = v
+        UserDefaults.standard.set(v, forKey: clipDefaultsKey(clipGroups[gi], p))
+        asmr_set_clip_group_param(core, UInt32(gi), UInt32(p), v)
+    }
+
+    /// Builds the chosen scene off the main thread (clip files are decoded and resampled), then
+    /// swaps cores; playback, volume, head pose and screen carry over. Remembered across launches.
+    func switchScene(to entry: SceneEntry) {
+        guard entry != scene.entry || sceneError != nil, loadingScene != entry else { return }
+        SceneEntry.saved = entry
+        guard let info = SceneInfo.load(entry) else {
+            sceneError = "Нет файла сцены"
+            NSLog("ASMR X3000: scene \(entry.id) not found in \(Scenes.directory?.path ?? "-")")
+            return
+        }
+        loadingScene = entry
+        sceneError = nil
+        let rate = coreRate
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let made = Self.makeCore(Float(rate), json: info.json)
+            DispatchQueue.main.async {
+                guard let self else {
+                    if let made { asmr_engine_free(made) }
+                    return
+                }
+                // A newer choice supersedes this one.
+                guard self.loadingScene == entry else {
+                    if let made { asmr_engine_free(made) }
+                    return
+                }
+                self.loadingScene = nil
+                guard let made else {
+                    self.sceneError = "Сцена не загрузилась"
+                    NSLog("ASMR X3000: scene \(entry.id) did not build (missing sound files?)")
+                    return
+                }
+                if rate != self.coreRate {
+                    // The output device changed meanwhile: build again at the new rate.
+                    asmr_engine_free(made)
+                    self.switchScene(to: entry)
+                    return
+                }
+                self.install(made, scene: info)
+            }
+        }
+    }
+
+    /// Swaps in a core built for `info`. The render callbacks hold the core pointer, so the
+    /// graph is stopped and rebuilt around the swap.
+    private func install(_ new: OpaquePointer, scene info: SceneInfo) {
+        let volumeNow = asmr_get_param(core, UInt32(ASMR_PARAM_VOLUME))
+        engine.stop()
+        if let old = node {
+            engine.detach(old)
+            node = nil
+        }
+        // Flight is the forest's generated world; a clip scene always starts at home.
+        if info.isClip || scene.isClip { place = .home }
+        coreLock.lock()
+        let old = core
+        core = new
+        scene = info
+        controlNames.removeAll()
+        optionNames.removeAll()
+        applyParams()
+        set(ASMR_PARAM_VOLUME, volumeNow)
+        coreLock.unlock()
+        asmr_engine_free(old)
+        // Paused (or fading out) stays paused; the device is released until the next play.
+        if isPlaying { play() }
+    }
+
+    func setScreen(width: Float, height: Float, distance: Float, elevation: Float) {
+        screen = (width, height, distance)
+        screenElevation = elevation
+        set(ASMR_PARAM_SCREEN_WIDTH, width)
+        set(ASMR_PARAM_SCREEN_HEIGHT, height)
+        set(ASMR_PARAM_SCREEN_DISTANCE, distance)
+        set(ASMR_PARAM_SCREEN_ELEVATION, elevation)
+    }
+
+    /// The screen centre's angle from the eyes, degrees, − = below (ASMR_PARAM_SCREEN_ELEVATION).
+    private(set) var screenElevation: Float?
+
     private let engine = AVAudioEngine()
     private var node: AVAudioSourceNode?
     private var core: OpaquePointer
@@ -139,7 +388,17 @@ final class AudioEngine: ObservableObject {
     private let bedPointers = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 12)
 
     init() {
-        core = Self.makeCore(48_000)
+        Scenes.prepareEnvironment()
+        // `--scene path` (development, snapshots) overrides the remembered choice.
+        var info = Self.sceneArgument.flatMap(SceneInfo.load(path:)) ?? SceneInfo.load(.saved) ?? .forest
+        var made = Self.makeCore(48_000, json: info.json)
+        if made == nil {
+            NSLog("ASMR X3000: scene \(info.entry.id) did not build, using the forest")
+            info = .forest
+            made = Self.makeCore(48_000, json: nil)
+        }
+        scene = info
+        core = made!
         applyParams()
         if renderer != .core { prepareSpatialMixer() }
         NotificationCenter.default.addObserver(
@@ -149,16 +408,17 @@ final class AudioEngine: ObservableObject {
         }
     }
 
-    /// A JSON scene from `--scene path` (development and snapshots); otherwise the built-in one.
-    private static let sceneJSON: String? = {
+    /// `--scene path`: a JSON scene file for development and snapshots.
+    private static let sceneArgument: String? = {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--scene"), i + 1 < args.count else { return nil }
-        return try? String(contentsOfFile: args[i + 1], encoding: .utf8)
+        return args[i + 1]
     }()
 
-    private static func makeCore(_ rate: Float) -> OpaquePointer {
-        if let json = sceneJSON, let e = asmr_engine_new_with_scene(rate, json) { return e }
-        return asmr_engine_new(rate)
+    /// The core for a scene: nil when the JSON does not build; without JSON the built-in forest.
+    private static func makeCore(_ rate: Float, json: String?) -> OpaquePointer? {
+        guard let json else { return asmr_engine_new(rate) }
+        return asmr_engine_new_with_scene(rate, json)
     }
 
     deinit {
@@ -334,6 +594,10 @@ final class AudioEngine: ObservableObject {
             if c.isDiscrete { c.options = options(for: c) }
             out.append(c)
         }
+        if scene.isClip {
+            out.append(contentsOf: clipControls)
+            out.append(contentsOf: sceneControls)
+        }
     }
 
     private var optionNames: [UInt32: [String]] = [:]
@@ -351,6 +615,16 @@ final class AudioEngine: ObservableObject {
     }
 
     func setControl(_ id: UInt32, _ value: Float) {
+        if id >= Self.clipControlBase {
+            setClipGroup(id, value)
+            return
+        }
+        if id >= Self.sceneControlBase, let m = SceneMacro(rawValue: Int(id - Self.sceneControlBase)) {
+            // NaN (double-click) goes back to "as authored".
+            sceneMacros[m.rawValue] = value.isNaN ? 1 : min(max(value, 0), m.max)
+            set(m.param, sceneMacros[m.rawValue])
+            return
+        }
         asmr_set_control(core, id, value)
     }
 
@@ -459,6 +733,14 @@ final class AudioEngine: ObservableObject {
             asmr_set_head_pose(core, s.q.real, s.q.imag.x, s.q.imag.y, s.q.imag.z, s.w.x, s.w.y, s.w.z, s.age)
         }
         if outputLatency > 0 { set(ASMR_PARAM_OUTPUT_LATENCY, Float(outputLatency)) }
+        if let screen {
+            set(ASMR_PARAM_SCREEN_WIDTH, screen.width)
+            set(ASMR_PARAM_SCREEN_HEIGHT, screen.height)
+            set(ASMR_PARAM_SCREEN_DISTANCE, screen.distance)
+        }
+        if let screenElevation { set(ASMR_PARAM_SCREEN_ELEVATION, screenElevation) }
+        for m in SceneMacro.allCases { set(m.param, sceneMacros[m.rawValue]) }
+        refreshClipGroups()
         // Listening-check overrides (docs/spatial-engine.md 6.5).
         let d = UserDefaults.standard
         if d.object(forKey: "headPrediction") != nil { set(ASMR_PARAM_HEAD_PREDICTION, d.float(forKey: "headPrediction")) }
@@ -475,7 +757,7 @@ final class AudioEngine: ObservableObject {
             coreLock.lock()
             let state = stateJSON()
             let old = core
-            core = Self.makeCore(Float(rate))
+            core = Self.makeCore(Float(rate), json: scene.json) ?? Self.makeCore(Float(rate), json: nil)!
             coreRate = rate
             applyParams()
             restoreState(state)

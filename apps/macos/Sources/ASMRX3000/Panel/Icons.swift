@@ -78,11 +78,22 @@ enum Icon: Hashable {
     // Child parameters and the newer groups.
     case flow, depth, character, speed, gust, rain, dot
     case sun, moon, thermometer, droplet, leaf, flame, cricket, bolt, bubbles, width, stone, tone, gain
+    // Clip-scene groups.
+    case whale, dolphin, comet, beam, orbit, plasma
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
     static func forControl(_ c: Control, hour: Float? = nil) -> Icon {
         let daylight = hour.map { $0 >= 6 && $0 < 19 } ?? true
+        if let icon = ControlText.clipIcon(c) { return icon }
+        if c.group >= AudioEngine.sceneGroup {
+            switch c.key {
+            case "scene.motion": return .speed
+            case "scene.events": return .dot
+            case "scene.bed": return .tone
+            default: return .bubbles
+            }
+        }
         if c.isMacro || c.isLevel {
             switch Int(c.group) {
             case ASMR_GROUP_WATER: return .water
@@ -339,6 +350,40 @@ enum Icon: Hashable {
             return [Stroke(d: Icon.wave(y: 12, amp: 3.5, x0: 3, x1: 21, period: 6, phase: t * 3))]
         case .gain:
             return [Stroke(d: "M4 9.5 H8 L13 5.5 V18.5 L8 14.5 H4 Z"), Stroke(d: "M16 12 H20", opacity: 0.8)]
+        case .whale:
+            return [
+                Stroke(d: "M3 14.5 C4 10 9 8.5 14 10 C16.5 10.8 18 12.2 19.5 14 C18.5 11.5 19.5 8.5 22 7.5 M19.5 14 C20 16 21 17 22.5 17.5"),
+                Stroke(d: "M3 14.5 C6 18 13 18 17.5 15.2", opacity: 0.8),
+                Stroke(d: "M8.5 8.3 V4.5 M6.8 6 L8.5 4.5 L10.2 6", opacity: 0.6),
+            ]
+        case .dolphin:
+            return [
+                Stroke(d: "M3 15.5 C5 9.5 11 7 16.5 9 L21.5 7 C20.5 9.2 20 10.2 19.2 11.2 C17 15.5 9 18.5 3 15.5 Z"),
+                Stroke(d: "M10.5 7.6 L12 4 L14.5 8.2", opacity: 0.8),
+                Stroke(d: "M12 15.4 L10.5 18.5 L14 16.6", opacity: 0.6),
+            ]
+        case .comet:
+            return [
+                Stroke(d: Icon.circle(17, 7, 2.6)),
+                Stroke(d: "M14.7 8.6 L3.5 19.5 M15.6 9.8 L8.5 20 M13 6.4 L3 13", opacity: 0.7),
+            ]
+        case .beam:
+            return [
+                Stroke(d: "M3 12 H21"),
+                Stroke(d: "M6 8 L9 12 L6 16 M12 8 L15 12 L12 16", opacity: 0.75),
+                Stroke(d: "M18.5 9.5 V14.5", opacity: 0.5),
+            ]
+        case .orbit:
+            return [
+                Stroke(d: "M3.5 12 C3.5 7 20.5 7 20.5 12 C20.5 17 3.5 17 3.5 12 Z", opacity: 0.8),
+                Stroke(d: Icon.circle(12, 12, 2.2)),
+                Stroke(d: Icon.circle(19.6, 14.4, 1.2), opacity: 0.7),
+            ]
+        case .plasma:
+            return [
+                Stroke(d: "M3 5 C9 5 10.5 11 12.5 13.5 C14.5 16 16.5 18 21 19"),
+                Stroke(d: "M4 17 H7 M9 19.5 H11.5 M15 4.5 H18 M17 8 H20.5", opacity: 0.55),
+            ]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -369,7 +414,7 @@ extension Icon {
         case .bubbles: return 2 * .pi / 4
         case .tone: return 2 * .pi / 3
         case .play, .pause, .headphones, .quit, .power, .chevron, .back, .more, .flow, .depth, .character, .speed, .gust, .dot,
-             .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain: return nil
+             .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma: return nil
         }
     }
 }
