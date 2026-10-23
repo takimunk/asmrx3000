@@ -35,14 +35,14 @@ final class Accent: ObservableObject {
         var color: Color { Color(red: Double(rgb.x), green: Double(rgb.y), blue: Double(rgb.z)) }
 
         /// What the picker says on hover and to VoiceOver.
-        var name: LocalizedStringKey {
+        var name: String {
             switch self {
-            case .violet: return "violet"
-            case .blue: return "blue"
-            case .teal: return "teal"
-            case .green: return "green"
-            case .amber: return "amber"
-            case .red: return "red"
+            case .violet: return N_("violet")
+            case .blue: return N_("blue")
+            case .teal: return N_("teal")
+            case .green: return N_("green")
+            case .amber: return N_("amber")
+            case .red: return N_("red")
             }
         }
     }
@@ -84,6 +84,7 @@ final class Accent: ObservableObject {
 /// A row of small round swatches; the chosen one has a ring. Click or arrow keys to pick.
 struct AccentPicker: View {
     @ObservedObject var accent = Accent.shared
+    @ObservedObject private var lang = Language.shared
     var size: CGFloat = 14
 
     var body: some View {
@@ -93,7 +94,7 @@ struct AccentPicker: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Accent colour"))
+        .accessibilityLabel(tr("Accent colour"))
     }
 
     private struct Swatch: View {
@@ -101,6 +102,7 @@ struct AccentPicker: View {
         let chosen: Bool
         let size: CGFloat
         let action: () -> Void
+        @ObservedObject private var lang = Language.shared
         @State private var hovering = false
 
         var body: some View {
@@ -115,8 +117,8 @@ struct AccentPicker: View {
             .buttonStyle(.plain)
             .focusable(false)
             .onHover { hovering = $0 }
-            .help(Text(hue.name))
-            .accessibilityLabel(Text(hue.name))
+            .help(tr(hue.name))
+            .accessibilityLabel(tr(hue.name))
             .accessibilityAddTraits(chosen ? .isSelected : [])
         }
     }

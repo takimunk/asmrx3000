@@ -1,0 +1,2 @@
+"NSMicrophoneUsageDescription" = "ASMR X3000 listens to the microphone only while you hold or have pressed the microphone button in the prompt: your words become text (fal.ai Whisper) and change the soundscape.";
+"NSMotionUsageDescription" = "ASMR X3000 uses your AirPods' head tracking to keep the soundscape fixed in space as you turn your head.";

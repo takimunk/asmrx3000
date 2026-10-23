@@ -581,12 +581,12 @@
  "controls": [
   {
    "group": "current",
-   "title": "Течение",
+   "title": "Current",
    "icon": "water"
   },
   {
    "group": "whales",
-   "title": "Киты",
+   "title": "Whales",
    "icon": "whale",
    "params": [
     "level",
@@ -598,12 +598,12 @@
   },
   {
    "group": "dolphins",
-   "title": "Дельфины",
+   "title": "Dolphins",
    "icon": "dolphin"
   },
   {
    "group": "bubbles",
-   "title": "Пузыри",
+   "title": "Bubbles",
    "icon": "bubbles"
   }
  ]

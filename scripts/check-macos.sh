@@ -11,6 +11,7 @@ trap 'rm -rf "$CHECK_DIR"' EXIT
 swiftc -parse-as-library -g \
   -I "$ROOT/apps/macos/Sources/CAsmr" "$ROOT/core/target/release/libasmr_core.a" \
   "$ROOT/apps/macos/Sources/ASMRX3000/AudioEngine.swift" \
+  "$ROOT/apps/macos/Sources/ASMRX3000/L10n.swift" \
   "$ROOT/apps/macos/Sources/ASMRX3000/HeadTracker.swift" \
   "$ROOT/apps/macos/Sources/ASMRX3000/Scenes.swift" \
   "$ROOT/apps/macos/Sources/ASMRX3000/Onboarding/OnboardingState.swift" \

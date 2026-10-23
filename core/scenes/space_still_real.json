@@ -169,17 +169,17 @@
  "controls": [
   {
    "group": "plasma",
-   "title": "Плазма",
+   "title": "Plasma",
    "icon": "plasma"
   },
   {
    "group": "flybys",
-   "title": "Пролёты",
+   "title": "Flybys",
    "icon": "flyby"
   },
   {
    "group": "orbits",
-   "title": "Орбиты",
+   "title": "Orbits",
    "icon": "orbit"
   }
  ]

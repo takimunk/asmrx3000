@@ -11,12 +11,14 @@ import SwiftUI
 /// read it on their next use, no relaunch.
 struct KeyRow: View {
     let account: Keychain.Account
-    let name: LocalizedStringKey
-    let placeholder: LocalizedStringKey
+    let name: String
+    /// The English key of the placeholder, shown through `tr`.
+    let placeholder: String
     var nameWidth: CGFloat = 112
-    /// Why the key is needed: a "?" after the name, tooltip on hover, popover on click.
-    var help: LocalizedStringKey?
+    /// Why the key is needed (an English key): a "?" after the name, tooltip on hover, popover on click.
+    var help: String?
     @ObservedObject private var accent = Accent.shared
+    @ObservedObject private var lang = Language.shared
     @State private var value = ""
     @State private var editing = false
     @State private var stored = false
@@ -28,7 +30,7 @@ struct KeyRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: Grid.x2) {
                 HStack(spacing: Grid.x1) {
-                    Text(name).foregroundStyle(Ink.graphite)
+                    Text(tr(name)).foregroundStyle(Ink.graphite)
                     if let help { HelpMark(text: help) }
                 }
                 .frame(width: nameWidth, alignment: .leading)
@@ -54,16 +56,16 @@ struct KeyRow: View {
 
     @ViewBuilder private var savedState: some View {
         if Keychain.fromEnvironment(account) {
-            Text("set by \(account.env)").foregroundStyle(Ink.ash)
+            Text(tr("set by %@", account.env)).foregroundStyle(Ink.ash)
             Spacer(minLength: 0)
         } else {
             HStack(spacing: Grid.x1) {
                 Circle().fill(Ink.accent).frame(width: 5, height: 5)
-                (justSaved ? Text("saved") : Text("added")).foregroundStyle(Ink.paper)
+                Text(justSaved ? tr("saved") : tr("added")).foregroundStyle(Ink.paper)
             }
             Spacer(minLength: Grid.x2)
-            TextButton(title: "change") { editing = true; focused = true }
-            TextButton(title: "remove") {
+            TextButton(title: tr("change")) { editing = true; focused = true }
+            TextButton(title: tr("remove")) {
                 Keychain.remove(account)
                 stored = Keychain.has(account)
                 justSaved = false
@@ -73,7 +75,7 @@ struct KeyRow: View {
 
     private var field: some View {
         HStack(spacing: Grid.x1) {
-            SecureField("", text: $value, prompt: Text(placeholder).foregroundColor(Ink.ash))
+            SecureField("", text: $value, prompt: Text(tr(placeholder)).foregroundColor(Ink.ash))
                 .textFieldStyle(.plain)
                 .font(Ink.text(Ink.Size.body))
                 .foregroundStyle(Ink.paper)
@@ -86,16 +88,16 @@ struct KeyRow: View {
                 .overlay(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous)
                     .strokeBorder(focused ? Ink.paper.opacity(0.55) : Ink.hairline, lineWidth: 1))
             if !value.isEmpty {
-                TextButton(title: "save", strong: true, action: save)
+                TextButton(title: tr("save"), strong: true, action: save)
             } else if editing {
-                TextButton(title: "cancel") { editing = false; problem = nil }
+                TextButton(title: tr("cancel")) { editing = false; problem = nil }
             }
         }
     }
 
     /// What each key is for (Prompt/TypeSafeProvider.swift, Prompt/VoiceInput.swift).
-    static let typesafeHelp: LocalizedStringKey = "TypeSafe AI powers the text prompt. What you type (\"quieter river, night\") is sent with the scene's current state, and it picks which sound and world controls to change and how fast. It also answers questions about what is around you. Without this key the prompt does nothing."
-    static let falHelp: LocalizedStringKey = "fal.ai powers voice input. Click or hold the microphone in the prompt and speak (Russian, up to 30 s); the recording goes to fal.ai's Whisper, which turns it into text, and the text is sent as a prompt, so voice also needs the TypeSafe AI key. Audio leaves the Mac only while you record."
+    static let typesafeHelp: String = N_("TypeSafe AI powers the text prompt. What you type (\"quieter river, night\") is sent with the scene's current state, and it picks which sound and world controls to change and how fast. It also answers questions about what is around you. Without this key the prompt does nothing.")
+    static let falHelp: String = N_("fal.ai powers voice input. Click or hold the microphone in the prompt and speak (in your language, up to 30 s); the recording goes to fal.ai's Whisper, which turns it into text, and the text is sent as a prompt, so voice also needs the TypeSafe AI key. Audio leaves the Mac only while you record.")
 
     private func save() {
         if let p = Keychain.problem(value, account: account) {
@@ -103,7 +105,7 @@ struct KeyRow: View {
             return
         }
         guard Keychain.save(value, account: account) else {
-            problem = "could not save to the keychain"
+            problem = tr("could not save to the keychain")
             return
         }
         value = ""
@@ -117,7 +119,8 @@ struct KeyRow: View {
 /// Why a key is needed: a small "?" in a ring; the text as a tooltip on hover and in a popover
 /// on click.
 struct HelpMark: View {
-    let text: LocalizedStringKey
+    let text: String
+    @ObservedObject private var lang = Language.shared
     @State private var hovering = false
     @State private var shown = false
 
@@ -133,10 +136,10 @@ struct HelpMark: View {
         .buttonStyle(.plain)
         .focusable(false)
         .onHover { hovering = $0 }
-        .help(Text(text))
-        .accessibilityLabel(Text(text))
+        .help(tr(text))
+        .accessibilityLabel(tr(text))
         .popover(isPresented: $shown, arrowEdge: .bottom) {
-            Text(text)
+            Text(tr(text))
                 .font(Ink.text(Ink.Size.body))
                 .foregroundStyle(Ink.paper)
                 .lineSpacing(2)
@@ -155,32 +158,33 @@ struct HelpMark: View {
 struct MicrophoneRow: View {
     var nameWidth: CGFloat = 112
     @ObservedObject private var accent = Accent.shared
+    @ObservedObject private var lang = Language.shared
     @State private var status = AVCaptureDevice.authorizationStatus(for: .audio)
 
     var body: some View {
         HStack(spacing: Grid.x2) {
-            Text("Microphone")
+            Text(tr("Microphone"))
                 .foregroundStyle(Ink.graphite)
                 .frame(width: nameWidth, alignment: .leading)
             switch status {
             case .authorized:
                 HStack(spacing: Grid.x1) {
                     Circle().fill(Ink.accent).frame(width: 5, height: 5)
-                    Text("allowed").foregroundStyle(Ink.paper)
+                    Text(tr("allowed")).foregroundStyle(Ink.paper)
                 }
                 Spacer(minLength: 0)
             case .notDetermined:
-                TextButton(title: "Allow microphone", strong: true) {
+                TextButton(title: tr("Allow microphone"), strong: true) {
                     AVCaptureDevice.requestAccess(for: .audio) { _ in
                         DispatchQueue.main.async { status = AVCaptureDevice.authorizationStatus(for: .audio) }
                     }
                 }
-                Text("for voice input").foregroundStyle(Ink.ash)
+                Text(tr("for voice input")).foregroundStyle(Ink.ash)
                 Spacer(minLength: 0)
             default:
-                Text("not allowed").foregroundStyle(Ink.ash)
+                Text(tr("not allowed")).foregroundStyle(Ink.ash)
                 Spacer(minLength: Grid.x2)
-                TextButton(title: "open settings") {
+                TextButton(title: tr("open settings")) {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
                         NSWorkspace.shared.open(url)
                     }
@@ -198,10 +202,11 @@ struct MicrophoneRow: View {
 /// The accent, as a named row of swatches.
 struct AccentRow: View {
     var nameWidth: CGFloat = 112
+    @ObservedObject private var lang = Language.shared
 
     var body: some View {
         HStack(spacing: Grid.x2) {
-            Text("Accent")
+            Text(tr("Accent"))
                 .foregroundStyle(Ink.graphite)
                 .frame(width: nameWidth, alignment: .leading)
             AccentPicker()
@@ -215,7 +220,7 @@ struct AccentRow: View {
 /// A plain text action, the panel's quiet button: graphite, paper and raised on hover;
 /// `strong` is outlined.
 struct TextButton: View {
-    let title: LocalizedStringKey
+    let title: String
     var strong = false
     let action: () -> Void
     @State private var hovering = false
@@ -243,6 +248,7 @@ struct TextButton: View {
 struct PanelSettings: View {
     var stills: StillFrames?
     @AppStorage("settings.open") private var openStored = false
+    @ObservedObject private var lang = Language.shared
     @State private var hovering = false
 
     private var open: Bool { stills == nil && openStored }
@@ -251,12 +257,12 @@ struct PanelSettings: View {
         VStack(alignment: .leading, spacing: Grid.x1) {
             Button { openStored.toggle() } label: {
                 HStack(spacing: Grid.x2) {
-                    Text("Settings")
+                    Text(tr("Settings"))
                         .font(Ink.text(Ink.Size.body))
                         .foregroundStyle(Ink.paper)
                         .fixedSize()
                     Rectangle().fill(Ink.hairline).frame(height: 1)
-                    (open ? Text("close") : Text("accent, keys, microphone"))
+                    Text(open ? tr("close") : tr("language, accent, keys, microphone"))
                         .font(Ink.text(Ink.Size.caption))
                         .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
                         .fixedSize()
@@ -270,13 +276,14 @@ struct PanelSettings: View {
             .buttonStyle(.plain)
             .focusable(false)
             .onHover { hovering = $0 }
-            .accessibilityLabel(open ? Text("Close settings") : Text("Open settings"))
+            .accessibilityLabel(open ? tr("Close settings") : tr("Open settings"))
             if open {
                 VStack(alignment: .leading, spacing: Grid.x1) {
+                    LanguageRow()
                     AccentRow()
-                    KeyRow(account: .typesafe, name: "TypeSafe AI", placeholder: "Add your TypeSafe AI key",
+                    KeyRow(account: .typesafe, name: "TypeSafe AI", placeholder: N_("Add your TypeSafe AI key"),
                            help: KeyRow.typesafeHelp)
-                    KeyRow(account: .fal, name: "fal.ai", placeholder: "Add your fal key", help: KeyRow.falHelp)
+                    KeyRow(account: .fal, name: "fal.ai", placeholder: N_("Add your fal key"), help: KeyRow.falHelp)
                     MicrophoneRow()
                 }
                 .padding(.top, Grid.x1)

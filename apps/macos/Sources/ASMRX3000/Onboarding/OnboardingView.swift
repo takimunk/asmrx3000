@@ -9,11 +9,12 @@ import SwiftUI
 struct OnboardingView: View {
     @ObservedObject var flow: OnboardingFlow
     @ObservedObject private var accent = Accent.shared
+    @ObservedObject private var lang = Language.shared
 
     static let artHeight: CGFloat = 256
     /// The last step needs room for its rows: the art shrinks to a band across her eye.
     static let keysArtHeight: CGFloat = 132
-    static let steps = 4
+    static let steps = 5
 
     private var artHeight: CGFloat { flow.step == .keys ? Self.keysArtHeight : Self.artHeight }
 
@@ -53,6 +54,7 @@ struct OnboardingView: View {
     /// What the words show; a change cross-fades them.
     private var wordsKey: String {
         switch flow.step {
+        case .language: return "language"
         case .intro: return "intro"
         case .waiting: return "waiting"
         case .linked: return "linked"
@@ -66,10 +68,11 @@ struct OnboardingView: View {
 
     private var stepNumber: Int {
         switch flow.step {
-        case .intro, .waiting, .linked, .noAirPods, .denied: return 1
-        case .centre: return 2
-        case .screen: return 3
-        case .keys: return 4
+        case .language: return 1
+        case .intro, .waiting, .linked, .noAirPods, .denied: return 2
+        case .centre: return 3
+        case .screen: return 4
+        case .keys: return 5
         }
     }
 
@@ -77,55 +80,64 @@ struct OnboardingView: View {
 
     @ViewBuilder private var words: some View {
         switch flow.step {
+        case .language:
+            Words(title: "language · язык" /* l10n-ok */, step: stepNumber,
+                  lines: [tr("pick one. you can change it later in settings.")]) {
+                ForEach(Lang.allCases) { l in
+                    PanelButton(title: l.native, selected: lang.current == l) { Language.shared.select(l) }
+                }
+                Spacer(minLength: 0)
+                PanelButton(title: tr("next"), primary: true) { flow.toIntro() }
+            }
         case .intro:
-            Words(title: "соединяем голову со звуком", step: stepNumber,
-                  lines: ["airpods знают, куда повёрнута голова: звук остаётся на месте, когда ты оборачиваешься."]) {
-                PanelButton(title: "разрешить", primary: true) { flow.allow() }
-                PanelButton(title: "без airpods") { flow.continueWithoutHead() }
+            Words(title: tr("linking your head to the sound"), step: stepNumber,
+                  lines: [tr("airpods know where your head points: the sound stays put when you turn around.")]) {
+                PanelButton(title: tr("allow"), primary: true) { flow.allow() }
+                PanelButton(title: tr("without airpods")) { flow.continueWithoutHead() }
             }
         case .waiting:
-            Words(title: "соединяем голову со звуком", step: stepNumber,
-                  lines: ["ждём сигнал от airpods.", "если macos спросит про доступ к движению, разреши."]) {
-                PanelButton(title: "продолжить без airpods") { flow.continueWithoutHead() }
+            Words(title: tr("linking your head to the sound"), step: stepNumber,
+                  lines: [tr("waiting for a signal from your airpods."), tr("if macos asks for motion access, allow it.")]) {
+                PanelButton(title: tr("continue without airpods")) { flow.continueWithoutHead() }
             }
         case .linked:
-            Words(title: "наушники подключены", step: stepNumber,
-                  lines: ["поверни голову: она повторяет за тобой."]) {
-                PanelButton(title: "дальше", primary: true) { flow.toCentre() }
+            Words(title: tr("headphones connected"), step: stepNumber,
+                  lines: [tr("turn your head: she follows you.")]) {
+                PanelButton(title: tr("next"), primary: true) { flow.toCentre() }
             }
         case .noAirPods:
-            Words(title: "airpods не найдены", step: stepNumber,
-                  lines: ["подключи их: продолжим сами, как только появятся.",
-                          "или слушай без них: звук будет, просто не будет следить за головой."]) {
-                PanelButton(title: "продолжить без airpods", primary: true) { flow.continueWithoutHead() }
+            Words(title: tr("no airpods found"), step: stepNumber,
+                  lines: [tr("connect them: we will carry on as soon as they show up."),
+                          tr("or listen without them: the sound plays, it just will not follow your head.")]) {
+                PanelButton(title: tr("continue without airpods"), primary: true) { flow.continueWithoutHead() }
             }
         case .denied:
-            Words(title: "доступ к движению закрыт", step: stepNumber,
-                  lines: ["открой его в системных настройках: конфиденциальность и безопасность."]) {
-                PanelButton(title: "продолжить без airpods", primary: true) { flow.continueWithoutHead() }
-                PanelButton(title: "открыть настройки") {
+            Words(title: tr("motion access is off"), step: stepNumber,
+                  lines: [tr("turn it on in system settings: privacy and security.")]) {
+                PanelButton(title: tr("continue without airpods"), primary: true) { flow.continueWithoutHead() }
+                PanelButton(title: tr("open settings")) {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
                         NSWorkspace.shared.open(url)
                     }
                 }
             }
         case .centre:
-            Words(title: "посмотри в центр", step: stepNumber,
-                  lines: [flow.calibrated ? "готово: вперёд теперь там, где экран."
-                          : flow.signalLost ? "нет сигнала от airpods. проверь, что они в ушах."
-                          : "на крест. замри на секунду."]) {
-                PanelButton(title: "пропустить") { flow.skipCentre() }
+            Words(title: tr("look at the centre"), step: stepNumber,
+                  lines: [flow.calibrated ? tr("done: forward is now where the screen is.")
+                          : flow.signalLost ? tr("no signal from your airpods. check they are in your ears.")
+                          : tr("at the cross. hold still for a second.")]) {
+                PanelButton(title: tr("skip")) { flow.skipCentre() }
                     .opacity(flow.calibrated ? 0 : 1)
             }
         case .screen:
-            Words(title: "последний штрих", step: stepNumber, lines: ["настрой экран"]) {
-                PanelButton(title: "дальше", primary: true) { flow.toKeys() }
+            Words(title: tr("one last touch"), step: stepNumber, lines: [tr("set up the screen")]) {
+                PanelButton(title: tr("next"), primary: true) { flow.toKeys() }
             } extra: {
                 ScreenControls(flow: flow)
             }
         case .keys:
             KeysWords(step: stepNumber) {
-                PanelButton(title: "слушать", primary: true) { flow.finish(play: true) }
+                PanelButton(title: tr("listen"), primary: true) { flow.finish(play: true) }
             }
         }
     }
@@ -134,6 +146,7 @@ struct OnboardingView: View {
 /// The step as four short marks: done in graphite, the current one in paper.
 private struct StepMarks: View {
     let step: Int
+    @ObservedObject private var lang = Language.shared
 
     var body: some View {
         HStack(spacing: 3) {
@@ -144,13 +157,14 @@ private struct StepMarks: View {
             }
         }
         .accessibilityElement()
-        .accessibilityLabel(Text("Step \(step) of \(OnboardingView.steps)"))
+        .accessibilityLabel(Text(tr("Step %d of %d", step, OnboardingView.steps)))
     }
 }
 
 /// Title (the popover's prompt size) with the step on the right, plain lines, optional
 /// controls, the actions at the bottom.
 private struct Words<Actions: View, Extra: View>: View {
+    @ObservedObject private var lang = Language.shared
     let title: String
     let step: Int
     let lines: [String]
@@ -190,19 +204,20 @@ extension Words where Extra == EmptyView {
 /// The last step: the accent, the two keys and the microphone, each optional, the same rows
 /// as the panel's settings (where they can be changed later).
 private struct KeysWords<Actions: View>: View {
+    @ObservedObject private var lang = Language.shared
     let step: Int
     @ViewBuilder var actions: Actions
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center) {
-                Text("keys and voice")
+                Text(tr("keys and voice"))
                     .font(Ink.text(Ink.Size.prompt + 2))
                     .foregroundStyle(Ink.paper)
                 Spacer(minLength: Grid.x2)
                 StepMarks(step: step)
             }
-            Text("all optional, and in settings later. typesafe ai turns words into the forest; fal and the microphone are for voice.")
+            Text(tr("all optional, and in settings later. typesafe ai turns words into the forest; fal and the microphone are for voice."))
                 .font(Ink.text(Ink.Size.body))
                 .lineSpacing(2)
                 .foregroundStyle(Ink.graphite)
@@ -227,6 +242,8 @@ private struct KeysWords<Actions: View>: View {
 private struct PanelButton: View {
     let title: String
     var primary = false
+    /// A choice that is currently picked (the language step): outlined in paper.
+    var selected = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -234,13 +251,13 @@ private struct PanelButton: View {
         let button = Button(action: action) {
             Text(title)
                 .font(Ink.text(Ink.Size.title))
-                .foregroundStyle(primary ? Ink.panel : hovering ? Ink.paper : Ink.graphite)
+                .foregroundStyle(primary ? Ink.panel : hovering || selected ? Ink.paper : Ink.graphite)
                 .padding(.horizontal, Grid.x3 + 2)
                 .frame(height: 28)
                 .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
                     .fill(primary ? (hovering ? Color(white: 1) : Ink.paper) : hovering ? Ink.raised : .clear))
                 .overlay(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
-                    .strokeBorder(primary ? .clear : Ink.hairline, lineWidth: 1))
+                    .strokeBorder(primary ? .clear : selected ? Ink.paper : Ink.hairline, lineWidth: 1))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -255,6 +272,7 @@ private struct PanelButton: View {
 
 /// A quiet × over the art's corner: closes the onboarding (counts as done, no playback). Esc too.
 private struct CloseMark: View {
+    @ObservedObject private var lang = Language.shared
     let action: () -> Void
     @State private var hovering = false
 
@@ -275,8 +293,8 @@ private struct CloseMark: View {
         .buttonStyle(.plain)
         .focusable(false)
         .onHover { hovering = $0 }
-        .help(Text("Close"))
-        .accessibilityLabel(Text("Close"))
+        .help(tr("Close"))
+        .accessibilityLabel(tr("Close"))
     }
 }
 
@@ -294,18 +312,19 @@ private struct WindowDragArea: NSViewRepresentable {
 /// The screen's distance and angle, each with plain steps and arrow keys.
 private struct ScreenControls: View {
     @ObservedObject var flow: OnboardingFlow
+    @ObservedObject private var lang = Language.shared
 
     var body: some View {
         if let g = flow.geometry {
             VStack(alignment: .leading, spacing: Grid.x1) {
-                row("до глаз", "\(Int((g.distance * 100).rounded())) см") {
-                    Step(label: "−", key: .leftArrow, help: "Ближе к экрану") { flow.setDistance(g.distance - 0.05) }
-                    Step(label: "+", key: .rightArrow, help: "Дальше от экрана") { flow.setDistance(g.distance + 0.05) }
+                row(tr("to your eyes"), tr("%d cm", Int((g.distance * 100).rounded()))) {
+                    Step(label: "−", key: .leftArrow, help: tr("Closer to the screen")) { flow.setDistance(g.distance - 0.05) }
+                    Step(label: "+", key: .rightArrow, help: tr("Further from the screen")) { flow.setDistance(g.distance + 0.05) }
                 }
-                row("угол", SideLayout.degrees(g.elevation)) {
-                    Step(label: "↓", key: .downArrow, help: "Экран ниже") { flow.setElevation((g.elevation - 1).rounded()) }
-                    Step(label: "↑", key: .upArrow, help: "Экран выше") { flow.setElevation((g.elevation + 1).rounded()) }
-                    Text("или тяни экран на картинке").foregroundStyle(Ink.ash).padding(.leading, Grid.x2)
+                row(tr("angle"), SideLayout.degrees(g.elevation)) {
+                    Step(label: "↓", key: .downArrow, help: tr("Screen lower")) { flow.setElevation((g.elevation - 1).rounded()) }
+                    Step(label: "↑", key: .upArrow, help: tr("Screen higher")) { flow.setElevation((g.elevation + 1).rounded()) }
+                    Text(tr("or drag the screen in the picture")).foregroundStyle(Ink.ash).padding(.leading, Grid.x2)
                 }
             }
             .font(Ink.text(Ink.Size.body))
@@ -446,7 +465,7 @@ enum Art {
         let w = Double(size.width), t = date.timeIntervalSince(flow.started)
 
         // Hum: a slow standing wave on the wires while nothing is linked yet.
-        let unlinked = [.intro, .waiting, .noAirPods, .denied].contains(flow.step)
+        let unlinked = [.language, .intro, .waiting, .noAirPods, .denied].contains(flow.step)
         let hum = Motion.reduced || !unlinked ? 0 : 1.6 * sin(2 * .pi * 0.45 * t)
         // The link: one pulse down the wire (0.8 s), then the earbud takes the accent.
         var pulse: Double?
@@ -559,8 +578,8 @@ enum Art {
         ctx.fillPath()
 
         let mid = CGPoint(x: (Double(eye.x) + Double(c.x)) / 2 - across.x * 12, y: (Double(eye.y) + Double(c.y)) / 2 - across.y * 12)
-        label(ctx, "\(Int((g.distance * 100).rounded())) см  \(SideLayout.degrees(g.elevation))", at: mid, centred: true)
-        label(ctx, String(format: "%.1f″", g.diagonalInches),
+        label(ctx, tr("%d cm", Int((g.distance * 100).rounded())) + "  " + SideLayout.degrees(g.elevation), at: mid, centred: true)
+        label(ctx, String(format: "%.1f″", locale: L10n.locale, g.diagonalInches),
               at: CGPoint(x: Double(c.x) - across.x * half + 10, y: Double(c.y) - across.y * half + 2), centred: false)
     }
 
@@ -688,6 +707,7 @@ enum SideLayout {
 private struct ScreenHandle: View {
     static let space = "onboarding.window"
     @ObservedObject var flow: OnboardingFlow
+    @ObservedObject private var lang = Language.shared
     @State private var hovering = false
 
     var body: some View {
@@ -708,7 +728,7 @@ private struct ScreenHandle: View {
                     if inside != hovering { inside ? NSCursor.openHand.push() : NSCursor.pop() }
                     hovering = inside
                 }
-                .accessibilityLabel("Экран: тяни, чтобы задать расстояние и угол")
+                .accessibilityLabel(tr("Screen: drag to set the distance and angle"))
                 // Placed last: `.position` fills the whole window, and a gesture attached after
                 // it took every click in the window (the step's buttons could not be pressed).
                 .position(c)

@@ -7,6 +7,8 @@ import SwiftUI
 @MainActor
 final class OnboardingFlow: ObservableObject {
     enum Step: Equatable {
+        /// The first step: English or Russian (applies at once; changeable later in settings).
+        case language
         /// The head turns by itself; "Разрешить" or "Без трекинга".
         case intro
         /// Permission asked, waiting for the first samples.
@@ -24,7 +26,7 @@ final class OnboardingFlow: ObservableObject {
         case keys
     }
 
-    @Published private(set) var step: Step = .intro
+    @Published private(set) var step: Step = .language
     @Published private(set) var calibrated = false
     @Published private(set) var skippedHead = false
     @Published private(set) var geometry: ScreenGeometry?
@@ -108,6 +110,8 @@ final class OnboardingFlow: ObservableObject {
         go(.screen)
     }
 
+    func toIntro() { go(.intro) }
+
     func toCentre() { go(.centre) }
 
     func skipCentre() { go(.screen) }
@@ -120,6 +124,7 @@ final class OnboardingFlow: ObservableObject {
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--onboarding-step"), i + 1 < args.count {
             switch args[i + 1] {
+            case "intro": go(.intro)
             case "centre": go(.centre)
             case "screen": go(.screen)
             case "keys": go(.keys)

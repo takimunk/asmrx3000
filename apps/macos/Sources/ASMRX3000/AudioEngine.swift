@@ -279,7 +279,7 @@ final class AudioEngine: ObservableObject {
         guard entry != scene.entry || sceneError != nil, loadingScene != entry else { return }
         SceneEntry.saved = entry
         guard let info = SceneInfo.load(entry) else {
-            sceneError = "Нет файла сцены"
+            sceneError = tr("No scene file")
             NSLog("ASMR X3000: scene \(entry.id) not found in \(Scenes.directory?.path ?? "-")")
             return
         }
@@ -300,7 +300,7 @@ final class AudioEngine: ObservableObject {
                 }
                 self.loadingScene = nil
                 guard let made else {
-                    self.sceneError = "Сцена не загрузилась"
+                    self.sceneError = tr("The scene failed to load")
                     NSLog("ASMR X3000: scene \(entry.id) did not build (missing sound files?)")
                     return
                 }

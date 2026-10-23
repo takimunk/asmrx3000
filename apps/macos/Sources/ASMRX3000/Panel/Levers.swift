@@ -34,6 +34,7 @@ struct LeverPanel: View {
     @ObservedObject var audio: AudioEngine
     var stills: StillFrames?
     @AppStorage("levers.showAll") private var showAllStored = false
+    @ObservedObject private var lang = Language.shared
 
     static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT]
     /// Lives in the transport row (master) or in the sound section (mix) instead.
@@ -140,7 +141,7 @@ struct LeverPanel: View {
         let mix = only == nil ? controls.macros.first { Int($0.group) == ASMR_GROUP_MIX } : nil
         // Without level controls (an older core) the section keeps only the mix's clarity.
         if !levels.isEmpty || mix != nil {
-            SectionHeader(title: "Звук", note: levels.isEmpty ? "микс" : "громкость групп, дБ")
+            SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : tr("group levels, dB"))
             let cells: [SoundCell.Kind] = levels.map { .level($0) } + (mix.map { [.mix($0)] } ?? [])
             let rows = stride(from: 0, to: cells.count, by: 2).map { Array(cells[$0..<Swift.min($0 + 2, cells.count)]) }
             VStack(spacing: 0) {
@@ -165,9 +166,9 @@ struct LeverPanel: View {
     /// biome changes with the place: the frame says which one is under the listener
     /// ("путешествие · луга").
     static func biomeName(_ all: [Control], frame: AsmrFlightFrame? = nil) -> String {
-        guard let c = all.first(where: { $0.key == "flight.biome" }) else { return "лес" }
+        guard let c = all.first(where: { $0.key == "flight.biome" }) else { return tr("forest") }
         let i = Int(c.value.rounded())
-        guard i >= 0 && i < c.options.count else { return "лес" }
+        guard i >= 0 && i < c.options.count else { return tr("forest") }
         let name = ControlText.option(c.options[i])
         if c.options[i] == "journey", let f = frame, Int(f.biome) == i, Int(f.local_biome) < c.options.count, Int(f.local_biome) != i {
             return name + " · " + ControlText.option(c.options[Int(f.local_biome)])
@@ -181,7 +182,7 @@ struct LeverPanel: View {
         return VStack(alignment: .leading, spacing: 0) {
             // Polled once a second: in a journey the biome under the listener changes as it flies.
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                SectionHeader(title: "Мир", note: audio.flying ? "полёт: " + Self.biomeName(controls.controls, frame: audio.readFlightFrame()) : "что происходит в лесу")
+                SectionHeader(title: tr("World"), note: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest"))
             }
             rows(shown, hour: hour)
             if !split.more.isEmpty {
@@ -220,13 +221,13 @@ struct LeverPanel: View {
     private func clipScene(hour: Float?) -> some View {
         let grouped = !audio.clipGroups.isEmpty
         let plain: String = switch audio.scene.look {
-        case .underwater: "что происходит в воде"
-        case .space: "что происходит вокруг"
-        default: "звуки сцены"
+        case .underwater: tr("what happens in the water")
+        case .space: tr("what happens around you")
+        default: tr("the scene's sounds")
         }
-        let note = grouped ? "громкость групп; «всё» — на всех сразу" : plain
+        let note = grouped ? tr("group levels; “all” moves every group") : plain
         return VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(title: "Сцена", note: note)
+            SectionHeader(title: tr("Scene"), note: note)
             rows(Self.sceneLevers(controls.macros), hour: hour)
         }
     }
@@ -270,106 +271,106 @@ enum ControlText {
         if let n = clipName(c) { return n }
         if c.isLevel { return group(c) }
         if c.isMacro { return group(c) }
-        if let n = names[c.key] { return n }
+        if let n = names[c.key] { return tr(n) }
         let parts = c.key.split(separator: ".").map(String.init)
-        if parts.count == 3, parts[1] == "focus" { return "Фокус: " + (groupNames[parts[2]] ?? parts[2]).lowercased() }
+        if parts.count == 3, parts[1] == "focus" { return tr("Focus: %@", (groupNames[parts[2]].map(tr) ?? parts[2]).lowercased()) }
         let leaf = parts.last ?? c.key
         return sentence(leaf.replacingOccurrences(of: "_", with: " "))
     }
 
     /// The name of a world lever: what the macro is, physically.
     static func lever(_ c: Control) -> String {
-        clipName(c) ?? names[c.key] ?? group(c)
+        clipName(c) ?? names[c.key].map(tr) ?? group(c)
     }
 
     static func group(_ c: Control) -> String {
         if let t = clipTitle(c) { return t }
         switch Int(c.group) {
-        case ASMR_GROUP_WATER: return "Вода"
-        case ASMR_GROUP_WIND: return "Ветер"
-        case ASMR_GROUP_FOLIAGE: return "Листва"
-        case ASMR_GROUP_RAIN: return "Дождь"
-        case ASMR_GROUP_BIRDS: return "Птицы"
-        case ASMR_GROUP_MASTER: return "Громкость"
-        case ASMR_GROUP_ENVIRONMENT: return "Время и погода"
-        case ASMR_GROUP_INSECTS: return "Насекомые"
-        case ASMR_GROUP_FIRE: return "Костёр"
-        case ASMR_GROUP_FLIGHT: return "Полёт"
-        case ASMR_GROUP_MIX: return "Микс"
+        case ASMR_GROUP_WATER: return tr("Water")
+        case ASMR_GROUP_WIND: return tr("Wind")
+        case ASMR_GROUP_FOLIAGE: return tr("Foliage")
+        case ASMR_GROUP_RAIN: return tr("Rain")
+        case ASMR_GROUP_BIRDS: return tr("Birds")
+        case ASMR_GROUP_MASTER: return tr("Volume")
+        case ASMR_GROUP_ENVIRONMENT: return tr("Time and weather")
+        case ASMR_GROUP_INSECTS: return tr("Insects")
+        case ASMR_GROUP_FIRE: return tr("Campfire")
+        case ASMR_GROUP_FLIGHT: return tr("Flight")
+        case ASMR_GROUP_MIX: return tr("Mix")
         default:
             let head = c.key.split(separator: ".").first.map(String.init) ?? c.key
-            return groupNames[head] ?? sentence(head.replacingOccurrences(of: "_", with: " "))
+            return groupNames[head].map(tr) ?? sentence(head.replacingOccurrences(of: "_", with: " "))
         }
     }
 
     private static let groupNames = [
-        "water": "Вода", "wind": "Ветер", "foliage": "Листва", "rain": "Дождь", "birds": "Птицы",
-        "insects": "Насекомые", "fire": "Костёр", "flight": "Полёт", "mix": "Микс", "env": "Время и погода",
-        "scene": "Сцена",
+        "water": N_("Water"), "wind": N_("Wind"), "foliage": N_("Foliage"), "rain": N_("Rain"), "birds": N_("Birds"),
+        "insects": N_("Insects"), "fire": N_("Campfire"), "flight": N_("Flight"), "mix": N_("Mix"), "env": N_("Time and weather"),
+        "scene": N_("Scene"),
     ]
 
     private static let names = [
         // Macros: the world levers.
-        "water.flow": "Течение воды", "wind.speed": "Скорость ветра", "foliage.density": "Густота листвы",
-        "rain.rate": "Сила дождя", "birds.activity": "Активность птиц", "env.time_of_day": "Время суток",
-        "insects.activity": "Активность насекомых", "fire.heat": "Жар костра", "flight.speed": "Скорость полёта",
-        "mix.clarity": "Ясность",
+        "water.flow": N_("River flow"), "wind.speed": N_("Wind speed"), "foliage.density": N_("Foliage density"),
+        "rain.rate": N_("Rain intensity"), "birds.activity": N_("Bird activity"), "env.time_of_day": N_("Time of day"),
+        "insects.activity": N_("Insect activity"), "fire.heat": N_("Fire heat"), "flight.speed": N_("Flight speed"),
+        "mix.clarity": N_("Clarity"),
         // Clip scenes (AudioEngine.SceneMacro).
-        "scene.motion": "Всё: движение", "scene.events": "Всё: события", "scene.bed": "Всё: фон", "scene.creatures": "Всё: существа",
+        "scene.motion": N_("All: motion"), "scene.events": N_("All: events"), "scene.bed": N_("All: background"), "scene.creatures": N_("All: creatures"),
         // Water.
-        "water.regime": "Водоём", "water.speed": "Скорость течения", "water.depth": "Глубина",
-        "water.width": "Ширина", "water.rock_size": "Размер камней", "water.aeration": "Пена и пузыри",
-        "water.turbulence": "Турбулентность", "water.gain": "Громкость воды",
+        "water.regime": N_("Water body"), "water.speed": N_("Current speed"), "water.depth": N_("Depth"),
+        "water.width": N_("Width"), "water.rock_size": N_("Rock size"), "water.aeration": N_("Foam and bubbles"),
+        "water.turbulence": N_("Turbulence"), "water.gain": N_("Water volume"),
         // Wind and foliage.
-        "wind.gustiness": "Порывистость", "wind.exposure": "Открытость", "wind.character": "Характер",
-        "wind.whistle": "Свист", "foliage.dryness": "Сухость", "foliage.flutter": "Трепет",
-        "foliage.creak": "Скрип стволов", "foliage.exposure": "Открытость",
+        "wind.gustiness": N_("Gustiness"), "wind.exposure": N_("Openness"), "wind.character": N_("Character"),
+        "wind.whistle": N_("Whistle"), "foliage.dryness": N_("Dryness"), "foliage.flutter": N_("Flutter"),
+        "foliage.creak": N_("Trunk creak"), "foliage.exposure": N_("Openness"),
         // Rain.
-        "rain.storm": "Гроза", "rain.surface": "Поверхность", "rain.drying": "Высыхание", "rain.gain": "Громкость дождя",
+        "rain.storm": N_("Thunderstorm"), "rain.surface": N_("Surface"), "rain.drying": N_("Drying"), "rain.gain": N_("Rain volume"),
         // Birds, environment, insects, fire.
-        "birds.orbit": "Кружат рядом", "env.temperature": "Температура", "env.humidity": "Влажность",
-        "env.season": "Сезон", "env.wind_direction": "Ветер откуда", "insects.warmth": "Тепло", "fire.moisture": "Влажность дров", "fire.resin": "Смола",
+        "birds.orbit": N_("Circling close"), "env.temperature": N_("Temperature"), "env.humidity": N_("Humidity"),
+        "env.season": N_("Season"), "env.wind_direction": N_("Wind from"), "insects.warmth": N_("Warmth"), "fire.moisture": N_("Wood dampness"), "fire.resin": N_("Resin"),
         // Flight.
-        "flight.altitude": "Высота", "flight.curviness": "Извилистость", "flight.biome": "Ландшафт",
-        "flight.density": "Густота леса", "flight.seed": "Местность", "flight.airflow": "Шум воздуха",
-        "flight.steer_by_head": "Рулить головой", "flight.turn_rate": "Скорость поворота",
+        "flight.altitude": N_("Altitude"), "flight.curviness": N_("Winding"), "flight.biome": N_("Landscape"),
+        "flight.density": N_("Forest density"), "flight.seed": N_("Terrain"), "flight.airflow": N_("Air noise"),
+        "flight.steer_by_head": N_("Steer with head"), "flight.turn_rate": N_("Turn rate"),
         // Mix.
-        "mix.density": "Птиц одновременно", "mix.soloists": "Солистов", "mix.loudness": "Целевая громкость",
-        "mix.dynamics": "Выравнивание",
+        "mix.density": N_("Birds at once"), "mix.soloists": N_("Soloists"), "mix.loudness": N_("Target loudness"),
+        "mix.dynamics": N_("Leveling"),
     ]
 
     private static let options = [
-        "scene": "как в сцене",
+        "scene": N_("as in the scene"),
         // water.regime
-        "still_lake": "тихое озеро", "lake_lapping": "плеск озера", "slow_river": "медленная река",
-        "brook_pebbles": "ручей по гальке", "brook_rocks": "ручей по камням", "rapids": "пороги",
-        "small_waterfall": "водопадик", "drips": "капель", "trickle": "струйка",
+        "still_lake": N_("still lake"), "lake_lapping": N_("lapping lake"), "slow_river": N_("slow river"),
+        "brook_pebbles": N_("brook over pebbles"), "brook_rocks": N_("brook over rocks"), "rapids": N_("rapids"),
+        "small_waterfall": N_("small waterfall"), "drips": N_("drips"), "trickle": N_("trickle"),
         // wind.character
-        "breeze": "бриз", "forest_roar": "гул леса", "storm": "буря", "power_lines": "провода",
-        "fence_wire": "проволока", "gap_howl": "вой в щели", "hollow_tree": "дупло", "whistle": "свист",
+        "breeze": N_("breeze"), "forest_roar": N_("forest roar"), "storm": N_("storm"), "power_lines": N_("power lines"),
+        "fence_wire": N_("fence wire"), "gap_howl": N_("howl in a gap"), "hollow_tree": N_("hollow tree"), "whistle": N_("whistle"),
         // rain.surface
-        "light_drizzle": "морось", "steady_rain": "ровный дождь", "downpour": "ливень", "on_leaves": "по листьям",
-        "on_soil": "по земле", "on_rock": "по камню", "on_water": "по воде", "puddles": "лужи",
-        "tin_roof": "жесть", "wood_deck": "доски", "meadow": "луг", "under_canopy": "под кроной",
-        "under_conifer": "под елью",
+        "light_drizzle": N_("drizzle"), "steady_rain": N_("steady rain"), "downpour": N_("downpour"), "on_leaves": N_("on leaves"),
+        "on_soil": N_("on soil"), "on_rock": N_("on rock"), "on_water": N_("on water"), "puddles": N_("puddles"),
+        "tin_roof": N_("tin roof"), "wood_deck": N_("wood deck"), "meadow": N_("meadow"), "under_canopy": N_("under the canopy"),
+        "under_conifer": N_("under a spruce"),
         // env.season
-        "spring": "весна", "summer": "лето", "autumn": "осень", "winter": "зима",
+        "spring": N_("spring"), "summer": N_("summer"), "autumn": N_("autumn"), "winter": N_("winter"),
         // flight.biome
-        "mixed": "смешанный лес", "broadleaf": "дубрава", "taiga": "тайга", "river_valley": "речная долина",
-        "meadows": "луга", "highlands": "нагорье", "desert": "пустыня", "snowy_mountains": "снежные горы",
-        "lake_shore": "берег озера", "sea_coast": "морской берег", "big_river": "большая река",
-        "journey": "путешествие",
+        "mixed": N_("mixed forest"), "broadleaf": N_("oak forest"), "taiga": N_("taiga"), "river_valley": N_("river valley"),
+        "meadows": N_("meadows"), "highlands": N_("highlands"), "desert": N_("desert"), "snowy_mountains": N_("snowy mountains"),
+        "lake_shore": N_("lake shore"), "sea_coast": N_("sea coast"), "big_river": N_("big river"),
+        "journey": N_("journey"),
         // flight.steer_by_head
-        "off": "нет", "yaw": "поворотом", "yaw_pitch": "поворотом и наклоном",
+        "off": N_("no"), "yaw": N_("by turning"), "yaw_pitch": N_("by turning and tilting"),
     ]
 
     static func option(_ raw: String) -> String {
-        options[raw] ?? raw.replacingOccurrences(of: "_", with: " ")
+        options[raw].map(tr) ?? raw.replacingOccurrences(of: "_", with: " ")
     }
 
     private static let units = [
-        "m/s": "м/с", "m": "м", "mm/h": "мм/ч", "kW": "кВт", "°C": "°C", "°/s": "°/с", "x": "×",
-        "dB": "дБ", "LUFS": "LUFS", "Hz": "Гц",
+        "m/s": N_("m/s"), "m": N_("m"), "mm/h": N_("mm/h"), "kW": N_("kW"), "°C": N_("°C"), "°/s": N_("°/s"), "x": N_("x"),
+        "dB": N_("dB"), "LUFS": N_("LUFS"), "Hz": N_("Hz"),
     ]
 
     // MARK: Clip groups (AudioEngine.clipGroups)
@@ -379,17 +380,17 @@ enum ControlText {
     static var clipIcons: [String: String] { ClipGroupLabels.icons }
 
     private static let clipFallbackTitles = [
-        "current": "Течение", "whales": "Киты", "dolphins": "Дельфины", "bubbles": "Пузыри",
-        "plasma": "Плазма", "flybys": "Пролёты", "beams": "Лучи", "orbits": "Орбиты",
+        "current": N_("Current"), "whales": N_("Whales"), "dolphins": N_("Dolphins"), "bubbles": N_("Bubbles"),
+        "plasma": N_("Plasma"), "flybys": N_("Flybys"), "beams": N_("Beams"), "orbits": N_("Orbits"),
     ]
     private static let clipFallbackIcons = [
         "current": "water", "whales": "whale", "dolphins": "dolphin", "bubbles": "bubbles",
         "plasma": "plasma", "flybys": "flyby", "beams": "beam", "orbits": "orbit",
     ]
     private static let clipLeaves = [
-        "level": "Громкость", "events": "События", "motion": "Движение", "distance": "Расстояние",
-        "pitch": "Высота тона", "flow": "Скорость течения", "turbulence": "Турбулентность",
-        "hiss": "Центр шипения", "whistlers": "Свистящие",
+        "level": N_("Volume"), "events": N_("Events"), "motion": N_("Motion"), "distance": N_("Distance"),
+        "pitch": N_("Pitch"), "flow": N_("Current speed"), "turbulence": N_("Turbulence"),
+        "hiss": N_("Hiss center"), "whistlers": N_("Whistlers"),
     ]
 
     /// ("whales", "events") from "clip.whales.events".
@@ -401,13 +402,13 @@ enum ControlText {
 
     static func clipTitle(_ c: Control) -> String? {
         guard let p = clipParts(c) else { return nil }
-        return clipTitles[p.id].flatMap { $0.isEmpty ? nil : $0 } ?? clipFallbackTitles[p.id] ?? sentence(p.id)
+        return clipTitles[p.id].flatMap { $0.isEmpty ? nil : tr($0) } ?? clipFallbackTitles[p.id].map(tr) ?? sentence(p.id)
     }
 
     /// A group's lever is named by the group; its aspects by what they change.
     static func clipName(_ c: Control) -> String? {
         guard let p = clipParts(c) else { return nil }
-        return c.isMacro ? clipTitle(c) : clipLeaves[p.leaf] ?? sentence(p.leaf)
+        return c.isMacro ? clipTitle(c) : clipLeaves[p.leaf].map(tr) ?? sentence(p.leaf)
     }
 
     static func clipIcon(_ c: Control) -> Icon? {
@@ -444,6 +445,11 @@ enum ControlText {
 
     private static func minus(_ s: String) -> String { s.replacingOccurrences(of: "-", with: "−") }
 
+    /// "+3 dB" / "−12 dB".
+    private static func decibels(_ db: Int) -> String {
+        db > 0 ? tr("+%d dB", db) : minus(tr("%d dB", db))
+    }
+
     static func value(_ c: Control) -> String {
         let index = Int(c.value.rounded())
         if c.isDiscrete {
@@ -453,28 +459,26 @@ enum ControlText {
             return String(index)
         }
         if c.isLevel {
-            if c.isMuted { return "выкл" }
-            let db = Int(c.value.rounded())
-            return db > 0 ? "+\(db) дБ" : minus("\(db) дБ")
+            if c.isMuted { return tr("off") }
+            return decibels(Int(c.value.rounded()))
         }
         if let p = clipParts(c) {
             switch p.leaf {
             case "level":
-                if c.value <= c.min + 0.01 { return "выкл" }
-                let db = Int(c.value.rounded())
-                return db > 0 ? "+\(db) дБ" : minus("\(db) дБ")
-            case "events" where c.value < 0.01: return "выкл"
-            case "motion" where c.value < 0.01: return "стоп"
-            case "whistlers": return "+\(Int(c.value.rounded())) /мин"
+                if c.value <= c.min + 0.01 { return tr("off") }
+                return decibels(Int(c.value.rounded()))
+            case "events" where c.value < 0.01: return tr("off")
+            case "motion" where c.value < 0.01: return tr("stop")
+            case "whistlers": return tr("+%d /min", Int(c.value.rounded()))
             default: break
             }
         }
         switch c.key {
-        case "foliage.dryness" where c.value < 0: return "по сезону"
-        case "scene.motion" where c.value < 0.01: return "стоп"
+        case "foliage.dryness" where c.value < 0: return tr("by season")
+        case "scene.motion" where c.value < 0.01: return tr("stop")
         case "scene.events" where c.value < 0.01, "scene.bed" where c.value < 0.01, "scene.creatures" where c.value < 0.01:
-            return "выкл"
-        case "flight.seed": return "№ \(index)"
+            return tr("off")
+        case "flight.seed": return tr("#%d", index)
         case "mix.soloists": return String(index)
         default: break
         }
@@ -483,18 +487,19 @@ enum ControlText {
             return String(format: "%02d:%02d", m / 60, m % 60)
         }
         if c.unit == "x" {
-            return "×" + (c.value >= 10 ? String(format: "%.0f", c.value) : String(format: "%.1f", c.value))
+            return "×" + (c.value >= 10 ? String(format: "%.0f", locale: L10n.locale, c.value) : String(format: "%.1f", locale: L10n.locale, c.value))
         }
         if c.unit.isEmpty {
             // Unitless: a share of the range, or a factor when 1 is "as built" in the middle.
-            if c.min < 0 { return minus((c.value > 0 ? "+" : "") + "\(Int((c.value / Swift.max(c.max, 1) * 100).rounded())) %") }
-            if c.max > 1.01 { return "×" + String(format: "%.1f", c.value) }
-            return "\(Int((c.fraction * 100).rounded())) %"
+            if c.min < 0 { return minus((c.value > 0 ? "+" : "") + tr("%d%%", Int((c.value / Swift.max(c.max, 1) * 100).rounded()))) }
+            if c.max > 1.01 { return "×" + String(format: "%.1f", locale: L10n.locale, c.value) }
+            return tr("%d%%", Int((c.fraction * 100).rounded()))
         }
         let a = abs(c.value)
-        let v = a < 0.005 ? "0" : a >= 10 ? String(format: "%.0f", c.value)
-            : a >= 1 ? String(format: "%.1f", c.value) : String(format: "%.2f", c.value)
-        return minus("\(v) \(units[c.unit] ?? c.unit)")
+        let loc = L10n.locale
+        let v = a < 0.005 ? "0" : a >= 10 ? String(format: "%.0f", locale: loc, c.value)
+            : a >= 1 ? String(format: "%.1f", locale: loc, c.value) : String(format: "%.2f", locale: loc, c.value)
+        return minus("\(v) \(units[c.unit].map(tr) ?? c.unit)")
     }
 }
 
@@ -504,6 +509,7 @@ enum ControlText {
 /// with a mark at 0 dB, and the value. The mix's clarity takes the last cell and opens its
 /// drawer instead.
 private struct SoundCell: View {
+    @ObservedObject private var lang = Language.shared
     enum Kind {
         case level(Control)
         case mix(Control)
@@ -536,8 +542,8 @@ private struct SoundCell: View {
             }
             .buttonStyle(.plain)
             .focusable(false)
-            .help(isMix ? "Микс: подробно" : muted ? "Включить \(ControlText.group(c).lowercased())" : "Выключить \(ControlText.group(c).lowercased())")
-            .accessibilityLabel(isMix ? "Микс: подробно" : muted ? "Включить звук: \(ControlText.group(c))" : "Выключить звук: \(ControlText.group(c))")
+            .help(isMix ? tr("Mix: details") : muted ? tr("unmute %@", ControlText.group(c).lowercased()) : tr("mute %@", ControlText.group(c).lowercased()))
+            .accessibilityLabel(isMix ? tr("Mix: details") : muted ? tr("Unmute: %@", ControlText.group(c)) : tr("Mute: %@", ControlText.group(c)))
 
             Text(isMix ? ControlText.lever(c) : ControlText.group(c))
                 .font(Ink.text(Ink.Size.caption))
@@ -583,9 +589,9 @@ private struct SoundCell: View {
         .frame(width: Popover.soundColumnWidth)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help(isMix ? "Насколько разведены звуки: двойной щелчок — как было" : "Двойной щелчок по шкале — 0 дБ")
+        .help(isMix ? tr("How spread apart the sounds are: double-click to reset") : tr("Double-click the rail: 0 dB"))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(isMix ? ControlText.lever(c) : "Громкость: \(ControlText.group(c))")
+        .accessibilityLabel(isMix ? ControlText.lever(c) : tr("Volume: %@", ControlText.group(c)))
         .accessibilityValue(ControlText.value(c))
         .accessibilityAdjustableAction { dir in
             let step: Float = isMix ? 0.05 : 1 / 52
@@ -634,6 +640,7 @@ private struct Rail: View {
 // MARK: - World
 
 private struct WorldRow: View {
+    @ObservedObject private var lang = Language.shared
     let control: Control
     var hour: Float?
     let hasChildren: Bool
@@ -667,8 +674,8 @@ private struct WorldRow: View {
             .focusable(false)
             .disabled(!hasChildren)
             .padding(.trailing, Grid.x2)
-            .help(hasChildren ? "\(ControlText.group(control)): подробно" : ControlText.group(control))
-            .accessibilityLabel(hasChildren ? "\(ControlText.group(control)): подробно" : ControlText.group(control))
+            .help(hasChildren ? tr("%@: details", ControlText.group(control)) : ControlText.group(control))
+            .accessibilityLabel(hasChildren ? tr("%@: details", ControlText.group(control)) : ControlText.group(control))
 
             GeometryReader { geo in
                 let w = geo.size.width
@@ -719,6 +726,7 @@ private struct WorldRow: View {
 
 /// "Ещё": the hidden groups' pictograms; click to show their levers too.
 private struct MoreRow: View {
+    @ObservedObject private var lang = Language.shared
     let more: [Control]
     var hour: Float?
     let showAll: Bool
@@ -733,9 +741,9 @@ private struct MoreRow: View {
                     .rotationEffect(.degrees(showAll ? 90 : 0))
                     .frame(width: Popover.iconColumn - Grid.x2, alignment: .leading)
                 if showAll {
-                    Text("Свернуть").foregroundStyle(hovering ? Ink.paper : Ink.graphite)
+                    Text(tr("Collapse")).foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                 } else {
-                    Text("Ещё \(more.count):").foregroundStyle(hovering ? Ink.paper : Ink.graphite)
+                    Text(tr("More %d:", more.count)).foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                     ForEach(more, id: \.id) { m in
                         HStack(spacing: Grid.x1) {
                             IconView(icon: Icon.forControl(m, hour: hour), color: hovering ? Ink.graphite : Ink.ash, size: 14,
@@ -752,7 +760,7 @@ private struct MoreRow: View {
         .buttonStyle(.plain)
         .focusable(false)
         .onHover { hovering = $0 }
-        .accessibilityLabel(showAll ? "Показать меньше" : "Показать ещё \(more.count)")
+        .accessibilityLabel(showAll ? tr("Show less") : tr("Show %d more", more.count))
     }
 }
 
@@ -760,6 +768,7 @@ private struct MoreRow: View {
 
 /// One group's physical parameters, named, with their values. Replaces the levers until closed.
 private struct Drawer: View {
+    @ObservedObject private var lang = Language.shared
     let macro: Control
     let children: [Control]
     var hour: Float?
@@ -795,8 +804,8 @@ private struct Drawer: View {
                 .padding(.leading, -Grid.x1)
                 .onHover { hoveringBack = $0 }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
-                .accessibilityLabel("Назад ко всем рычагам")
-                .help("Назад   ⌘←")
+                .accessibilityLabel(tr("Back to all levers"))
+                .help(tr("Back   ⌘←"))
                 Rectangle().fill(Ink.hairline).frame(height: 1)
                 Text("\(ControlText.lever(macro))  \(ControlText.value(macro))")
                     .font(Ink.text(Ink.Size.caption))
@@ -825,6 +834,7 @@ private struct Drawer: View {
 /// A parameter: small pictogram, its name, a slider (or the presets as words), and the value.
 /// The value is bright once the user has set it; dim while it follows the group's lever.
 private struct ChildRow: View {
+    @ObservedObject private var lang = Language.shared
     let control: Control
     var hour: Float?
     let set: (UInt32, Float) -> Void
@@ -860,7 +870,7 @@ private struct ChildRow: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help(control.isOverridden ? "Двойной щелчок по шкале: снова за рычагом «\(ControlText.lever(control))»" : "")
+        .help(control.isOverridden ? tr("Double-click the rail: follow the “%@” lever again", ControlText.lever(control)) : "")
         .accessibilityElement(children: .combine)
         .accessibilityLabel(ControlText.name(control))
         .accessibilityValue(ControlText.value(control))
@@ -897,6 +907,7 @@ private struct FineSlider: View {
 
 /// Presets as a row of small stops and the chosen one's name; hover a stop to read its name.
 private struct Presets: View {
+    @ObservedObject private var lang = Language.shared
     let control: Control
     let set: (UInt32, Float) -> Void
     @State private var hovered: Int?
