@@ -9,6 +9,7 @@ mod bed;
 mod binaural;
 pub mod controls;
 pub mod director;
+pub mod direction;
 pub mod neural;
 mod dsp;
 mod engine;
@@ -226,6 +227,50 @@ pub unsafe extern "C" fn asmr_get_controls(engine: *const Engine, out: *mut Cont
 pub unsafe extern "C" fn asmr_get_mix(engine: *const Engine, out: *mut mix::MixInfo) {
     if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
         *out = e.mix_info();
+    }
+}
+
+/// Direction telemetry (`AsmrDirectionInfo`). Any thread.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_direction(engine: *const Engine, out: *mut direction::bridge::DirectionInfo) {
+    if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
+        *out = e.direction_info();
+    }
+}
+
+/// Number of episodes in the scene's direction (0 = none).
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_direction_episode_count(engine: *const Engine) -> u32 {
+    engine.as_ref().map_or(0, |e| e.direction_episode_count() as u32)
+}
+
+/// Machine name of a direction episode ("thunderstorm"), NUL-terminated; returns its length.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` valid for `max` bytes (or NULL).
+#[no_mangle]
+pub unsafe extern "C" fn asmr_direction_episode_name(engine: *const Engine, episode: u32, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref().and_then(|e| e.direction_episode_name(episode as usize)) {
+        Some(n) => put_str(n, out, max),
+        None => 0,
+    }
+}
+
+/// Label of a segment of a direction episode ("gust front"), NUL-terminated; returns its length.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` valid for `max` bytes (or NULL).
+#[no_mangle]
+pub unsafe extern "C" fn asmr_direction_segment_label(engine: *const Engine, episode: u32, segment: u32, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref().and_then(|e| e.direction_segment_label(episode as usize, segment as usize)) {
+        Some(n) => put_str(n, out, max),
+        None => 0,
     }
 }
 

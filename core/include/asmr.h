@@ -240,6 +240,7 @@ enum {
     ASMR_GROUP_FIRE = 8,
     ASMR_GROUP_FLIGHT = 9,      /* flight mode: speed, altitude, path, landscape */
     ASMR_GROUP_MIX = 10,        /* mix intent for the sound director: clarity, density, focus */
+    ASMR_GROUP_DIRECTION = 11,  /* the world's own course: clock, weather spells (docs/direction.md) */
 };
 
 enum {
@@ -339,6 +340,18 @@ enum {
                                                most (1.05 + 0.95x) x their loudness (sone); 1 = no limit */
     ASMR_CONTROL_MIX_REFOCUS = 1114,        /* "mix.refocus" 0..1 [0.5]: when the listener is still (not flying or flight speed ~0),
                                                the nearest water and one bird come forward over ~4 s, the rest steps back */
+    /* Direction (docs/direction.md): the scene runs its own course (clock, wind, rain, thunder,
+       temperature, humidity, birds, brook) by moving the controls above; these steer it. A control
+       the user sets is left to them for direction.hold minutes, then taken back over ~2.5 min;
+       setting it to NAN (reset) hands it back at once. Present in every scene; 0 = no direction. */
+    ASMR_CONTROL_DIRECTION_AMOUNT = 1200,   /* "direction.amount" 0..1 [1 if the scene has a direction, else 0]: how far it moves the world */
+    ASMR_CONTROL_DIRECTION_WEATHER = 1201,  /* "direction.weather" -1 fair .. +1 wet and stormy [0] */
+    ASMR_CONTROL_DIRECTION_ENERGY = 1202,   /* "direction.energy" -1 still .. +1 lively: wind, birds, encounters [0] */
+    ASMR_CONTROL_DIRECTION_CHANGE = 1203,   /* "direction.change" 0 steady .. 1 eventful [0.35] */
+    ASMR_CONTROL_DIRECTION_CLOCK = 1204,    /* "direction.clock" scene hours per real hour, 0..120, log [1]; 0 = the clock stands */
+    ASMR_CONTROL_DIRECTION_HOLD = 1205,     /* "direction.hold" minutes a hand-set value is held, 0.5..240, log [20] */
+    ASMR_CONTROL_DIRECTION_CUE = 1206,      /* "direction.cue" preset: none, next, then the spells of asmr_direction_episode_name
+                                               0..10 (index + 2); set it and the spell comes as soon as it naturally can; reads back "none" */
 };
 
 typedef struct AsmrControlInfo {
@@ -560,6 +573,33 @@ enum {
     ASMR_SCOPE_THUNDER = 8,
 };
 uint32_t asmr_get_scope(const AsmrEngine *engine, uint32_t track, float *out, uint32_t points);
+
+/* Direction telemetry (asmr_get_direction): where the world's course stands. Any thread. */
+enum {
+    ASMR_DIRECTION_HOUR = 0, ASMR_DIRECTION_WIND = 1, ASMR_DIRECTION_WIND_DIRECTION = 2, ASMR_DIRECTION_GUSTINESS = 3,
+    ASMR_DIRECTION_RAIN = 4, ASMR_DIRECTION_STORM = 5, ASMR_DIRECTION_TEMPERATURE = 6, ASMR_DIRECTION_HUMIDITY = 7,
+    ASMR_DIRECTION_BIRDS = 8, ASMR_DIRECTION_WATER = 9, /* bits of `held` */
+};
+typedef struct AsmrDirectionInfo {
+    uint32_t available;      /* 1 = the scene has a direction */
+    uint32_t active;         /* 1 = available and direction.amount > 0 */
+    uint32_t episode;        /* current spell, index for asmr_direction_episode_name */
+    uint32_t segment;        /* its stretch (asmr_direction_segment_label), of `segments` */
+    uint32_t segments;
+    float segment_left_s;
+    float episode_left_s;    /* estimate */
+    uint32_t next;           /* the spell that comes next (a forecast) */
+    uint32_t cued;           /* 1 = next was asked for (direction.cue), not drawn */
+    float hour;              /* the direction's clock, 0..24 */
+    float liveliness;        /* encounters, x (1 = as the scene directs them) */
+    float weather, energy, change; /* effective steer: the controls plus remembered corrections */
+    uint32_t held;           /* bit ASMR_DIRECTION_* set = that quantity is left to the user now */
+} AsmrDirectionInfo;
+void asmr_get_direction(const AsmrEngine *engine, AsmrDirectionInfo *out);
+uint32_t asmr_direction_episode_count(const AsmrEngine *engine);
+/* NUL-terminated machine names ("thunderstorm") and labels ("gust front"); return the length, 0 = none. */
+uint32_t asmr_direction_episode_name(const AsmrEngine *engine, uint32_t episode, char *out, uint32_t max);
+uint32_t asmr_direction_segment_label(const AsmrEngine *engine, uint32_t episode, uint32_t segment, char *out, uint32_t max);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,56 @@
+{
+  "_": "Built-in weather episodes of a temperate forest (docs/direction.md). Minutes; wind m/s; rain mm/h; temp = deg C relative to the day's climate; birds = x the scene's activity; veer = degrees the wind turns at the segment start (+ clockwise). A field left out follows the climate.",
+  "episodes": [
+    { "name": "clear", "weight": 1.0, "wet": -0.8, "energy": 0.0, "drama": 0.0,
+      "segments": [ { "label": "clear", "minutes": [25, 70] } ] },
+
+    { "name": "calm", "weight": 0.7, "hours": [17.0, 10.5], "wet": -0.3, "energy": -0.8, "drama": 0.0,
+      "segments": [ { "label": "still air", "minutes": [20, 60], "wind": [0.2, 0.8], "gust": [0.4, 0.7], "humidity": [0.82, 0.92], "birds": [1.0, 1.15] } ] },
+
+    { "name": "breeze", "weight": 0.8, "hours": [9.0, 19.0], "wet": -0.4, "energy": 0.4, "drama": 0.1,
+      "segments": [ { "label": "breeze", "minutes": [20, 50], "wind": [3.0, 5.5], "gust": [1.0, 1.3], "birds": [0.9, 1.0], "veer": [-25, 25] } ] },
+
+    { "name": "windy", "weight": 0.18, "wet": 0.0, "energy": 0.9, "drama": 0.6,
+      "segments": [
+        { "label": "wind rising", "minutes": [8, 15], "wind": [4.5, 6.0], "gust": [1.1, 1.4], "birds": [0.8, 0.9], "veer": [-30, 30] },
+        { "label": "windy", "minutes": [10, 30], "wind": [6.5, 9.5], "gust": [1.2, 1.6], "temp": [-1.5, -0.5], "birds": [0.6, 0.75] },
+        { "label": "wind easing", "minutes": [6, 12], "wind": [3.5, 5.5], "gust": [1.0, 1.3], "birds": [0.8, 0.9] } ] },
+
+    { "name": "overcast", "weight": 0.6, "wet": 0.3, "energy": -0.2, "drama": 0.1,
+      "segments": [ { "label": "clouding over", "minutes": [15, 45], "wind": [1.5, 3.5], "humidity": [0.8, 0.9], "temp": [-2.0, -1.0], "birds": [0.8, 0.9] } ] },
+
+    { "name": "drizzle", "weight": 0.4, "after": ["overcast", "steady_rain", "calm", "mist"], "wet": 0.5, "energy": -0.5, "drama": 0.15,
+      "segments": [ { "label": "drizzle", "minutes": [10, 40], "rain": [0.2, 0.8], "wind": [0.5, 2.0], "humidity": [0.93, 0.98], "temp": [-3.0, -2.0], "birds": [0.55, 0.7] } ] },
+
+    { "name": "shower", "weight": 0.5, "hours": [11.0, 20.0], "after": ["overcast", "breeze", "clear", "windy"], "then": "after_rain",
+      "wet": 0.7, "energy": 0.3, "drama": 0.7,
+      "segments": [
+        { "label": "darkening", "minutes": [3, 6], "wind": [2.0, 4.0], "humidity": [0.8, 0.88], "temp": [-1.5, -0.5], "birds": [0.5, 0.65] },
+        { "label": "gust front", "minutes": [0.7, 1.5], "wind": [6.0, 9.0], "gust": [1.4, 1.8], "temp": [-3.5, -2.5], "birds": [0.25, 0.35], "veer": [20, 60], "ease": 15 },
+        { "label": "downpour", "minutes": [4, 10], "rain": [6, 18], "storm": [0.0, 0.1], "wind": [3.0, 5.0], "humidity": [0.96, 0.98], "temp": [-4.5, -3.5], "birds": [0.1, 0.2], "ease": 40 },
+        { "label": "tapering off", "minutes": [3, 8], "rain": [0.5, 2.0], "wind": [1.5, 3.0], "humidity": [0.95, 0.97], "temp": [-4.0, -3.0], "birds": [0.35, 0.5] } ] },
+
+    { "name": "steady_rain", "weight": 0.35, "seasons": ["spring", "autumn", "winter"], "after": ["overcast", "drizzle"], "then": "after_rain",
+      "wet": 0.8, "energy": -0.2, "drama": 0.35,
+      "segments": [
+        { "label": "rain setting in", "minutes": [5, 10], "rain": [0.5, 1.5], "wind": [2.5, 4.5], "humidity": [0.94, 0.96], "temp": [-2.5, -1.5], "birds": [0.45, 0.6], "veer": [-40, -10] },
+        { "label": "steady rain", "minutes": [20, 70], "rain": [1.5, 5.0], "wind": [2.0, 5.0], "gust": [1.0, 1.2], "humidity": [0.96, 0.99], "temp": [-3.5, -2.5], "birds": [0.2, 0.3] },
+        { "label": "rain easing", "minutes": [8, 15], "rain": [0.3, 1.0], "wind": [1.5, 3.0], "humidity": [0.95, 0.97], "temp": [-3.0, -2.0], "birds": [0.45, 0.6] } ] },
+
+    { "name": "thunderstorm", "weight": 0.25, "hours": [13.0, 21.0], "seasons": ["summer", "spring"], "after": ["overcast", "breeze", "clear", "calm"],
+      "then": "after_rain", "wet": 1.0, "energy": 0.8, "drama": 1.0,
+      "segments": [
+        { "label": "distant thunder", "minutes": [4, 8], "storm": [0.12, 0.25], "wind": [1.0, 2.5], "humidity": [0.82, 0.88], "birds": [0.5, 0.65] },
+        { "label": "calm before the storm", "minutes": [3, 6], "storm": [0.35, 0.55], "wind": [0.4, 1.2], "gust": [0.5, 0.8], "humidity": [0.88, 0.92], "birds": [0.2, 0.3] },
+        { "label": "gust front", "minutes": [1, 2], "storm": [0.6, 0.7], "wind": [9.0, 13.0], "gust": [1.5, 1.9], "temp": [-5.5, -4.5], "birds": [0.05, 0.1], "veer": [30, 90], "ease": 12 },
+        { "label": "the cell overhead", "minutes": [5, 12], "rain": [15, 45], "storm": [0.8, 1.0], "wind": [4.0, 7.0], "humidity": [0.97, 0.99], "temp": [-7.5, -6.5], "birds": [0.0, 0.05], "ease": 30 },
+        { "label": "trailing rain", "minutes": [8, 20], "rain": [1.0, 4.0], "storm": [0.3, 0.5], "wind": [2.0, 4.0], "humidity": [0.96, 0.98], "temp": [-6.5, -5.5], "birds": [0.15, 0.25] },
+        { "label": "storm moving away", "minutes": [5, 10], "rain": [0.0, 0.4], "storm": [0.1, 0.2], "wind": [1.0, 2.5], "humidity": [0.94, 0.96], "temp": [-5.0, -4.0], "birds": [0.45, 0.6] } ] },
+
+    { "name": "after_rain", "weight": 0.0, "after": ["shower", "steady_rain", "thunderstorm", "drizzle"], "wet": 0.2, "energy": 0.3, "drama": 0.2,
+      "segments": [ { "label": "after the rain", "minutes": [10, 25], "wind": [0.3, 1.2], "gust": [0.5, 0.8], "humidity": [0.9, 0.96], "temp": [-3.5, -2.5], "birds": [1.25, 1.45] } ] },
+
+    { "name": "mist", "weight": 0.5, "hours": [3.0, 8.5], "wet": 0.1, "energy": -0.9, "drama": 0.05,
+      "segments": [ { "label": "mist", "minutes": [20, 50], "wind": [0.0, 0.5], "gust": [0.4, 0.6], "humidity": [0.97, 1.0], "temp": [-1.5, -1.0], "birds": [0.85, 0.95] } ] }
+  ]
+}

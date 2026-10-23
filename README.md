@@ -8,6 +8,7 @@
 core/          Rust: движок (источники → распространение → Ambisonics 3-го порядка → бинаурал)
   include/     C ABI (asmr.h), единственный интерфейс для оболочек
   src/scene.rs, src/director/   граф сцены и режиссёр (docs/director.md)
+  src/direction/  режиссура места: время, погодные эпизоды, коррекция (docs/direction.md)
   scenes/      описания сцен (JSON): лес у реки, демо пространственного звука
   examples/    render.rs — офлайн-рендер сцены в WAV
 docs/          director.md — режиссёр, формат сцены, поведения
@@ -56,6 +57,12 @@ cargo run --release --manifest-path core/Cargo.toml --example render -- 30 fores
 ```bash
 cargo run --release --manifest-path core/Cargo.toml --example render -- 180 dawn.wav life:5.5
 cargo run --release --manifest-path core/Cargo.toml --example render -- 240 open.wav life:7 core/scenes/open_country.json
+```
+
+Режиссура на N часов вперёд без звука: хроника погодных эпизодов, таблица и сводка (docs/direction.md):
+
+```bash
+cargo run --release --manifest-path core/Cargo.toml --example direction -- 10 hour=6 cue=150:thunderstorm
 ```
 
 Демо движения относительно головы (пролёт, стая, подлёт/удаление, круги) с таймлайном событий:

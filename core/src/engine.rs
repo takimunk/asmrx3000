@@ -260,12 +260,25 @@ struct Shared {
     mix: MixShared,
     /// Per-group controls of the scene's clips (clips.rs).
     clip_groups: std::sync::Arc<crate::clips::ClipGroups>,
+    /// Direction (direction/): what the user's hand did to the driven controls, telemetry,
+    /// and the catalogue's names (episode, its segment labels) for the UI.
+    touches: crate::direction::bridge::Touches,
+    direction: crate::direction::bridge::DirectionBridge,
+    direction_names: Vec<(String, Vec<String>)>,
 }
 
 struct Dsp {
     sample_rate: f32,
     world: World,
     director: Director,
+    /// The world's own course (None: the scene has no direction).
+    course: Option<crate::direction::Direction>,
+    /// Touches and cues gathered between the direction's planning steps.
+    course_seen: crate::direction::bridge::Seen,
+    course_touched: [bool; crate::direction::CHANNELS],
+    course_released: [bool; crate::direction::CHANNELS],
+    course_cue: Option<crate::direction::Cue>,
+    course_publish: f32,
     /// Moves clip entities and cues their players (clips.rs).
     choreo: crate::clips::Choreo,
     acoustics: Acoustics,
@@ -325,6 +338,11 @@ impl Engine {
         let rng = Rng::new(0xA5A5_3000 ^ desc.seed);
         let world = World::build(desc, sr)?;
         let director = Director::new(desc, &world);
+        let course = crate::direction::Direction::new(desc)?;
+        let direction_names = course
+            .as_ref()
+            .map(|d| d.episodes().iter().map(|e| (e.name.clone(), e.segments.iter().map(|s| s.label.clone()).collect())).collect())
+            .unwrap_or_default();
         let clip_groups = std::sync::Arc::new(crate::clips::ClipGroups::new(desc));
         let choreo = crate::clips::Choreo::new(desc, &world, clip_groups.clone());
 
@@ -354,6 +372,9 @@ impl Engine {
             clock: AtomicU64::new(0),
             mix: MixShared::new(),
             clip_groups,
+            touches: Default::default(),
+            direction: Default::default(),
+            direction_names,
         };
         let env = &desc.environment;
         shared.params[param::VOLUME as usize].store(0.7);
@@ -402,6 +423,12 @@ impl Engine {
             sample_rate: sr,
             world,
             director,
+            course,
+            course_seen: Default::default(),
+            course_touched: [false; crate::direction::CHANNELS],
+            course_released: [false; crate::direction::CHANNELS],
+            course_cue: None,
+            course_publish: 0.0,
             choreo,
             acoustics,
             scene_trees: Vec::with_capacity(MAX_OBJECTS),
@@ -490,6 +517,11 @@ impl Engine {
         let guard = self.shared.glides.edit();
         if let Some(p) = self.shared.params.get(id as usize) {
             if value.is_finite() {
+                if p.load() != value {
+                    for i in controls::indices_of_param(id) {
+                        self.shared.touches.mark(controls::meta(i).id, false);
+                    }
+                }
                 p.store(value);
                 self.shared.controls.param_set(id);
                 for i in controls::indices_of_param(id) {
@@ -516,6 +548,10 @@ impl Engine {
         let _guard = self.shared.glides.edit();
         if let Some(i) = controls::index_of_id(id) {
             self.shared.glides.cancel(i);
+            let now = self.shared.controls.state(&self.shared.params).v[i];
+            if value.is_nan() || (value - now).abs() > 1e-4 * (1.0 + now.abs()) {
+                self.shared.touches.mark(id, value.is_nan());
+            }
         }
         self.shared.controls.set(id, value, &self.shared.params);
     }
@@ -529,7 +565,13 @@ impl Engine {
         let n = self.objects(&mut objects);
         objects.truncate(n);
         let live = prompt::Live { sources, objects, mix: self.mix_info() };
-        prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels, live }
+        let direction = (self.direction_episode_count() > 0).then(|| {
+            let info = self.direction_info();
+            let name = |i: u32| self.direction_episode_name(i as usize).unwrap_or("").to_string();
+            let segment = self.direction_segment_label(info.episode as usize, info.segment as usize).unwrap_or("").to_string();
+            prompt::DirectionView { episode: name(info.episode), segment, next: name(info.next), info }
+        });
+        prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels, live, direction }
     }
 
     /// Controls, environment readings and scene objects as JSON (docs/prompt-control.md).
@@ -541,11 +583,49 @@ impl Engine {
     /// result JSON with errors and an undo patch (docs/prompt-control.md).
     pub fn apply_patch_json(&self, patch: &str) -> String {
         let (result, params) = prompt::apply_patch(&self.prompt_view(), patch);
+        self.mark_patch_touches(&result);
         // Switches (flight on/off) are engine parameters, set after the control transaction.
         for (id, value) in params {
             self.set_param(id, value);
         }
         result
+    }
+
+    /// A patch is the user's hand too: the direction leaves what it changed to them, and a
+    /// reset hands a control back.
+    fn mark_patch_touches(&self, result: &str) {
+        let Ok(r) = serde_json::from_str::<serde_json::Value>(result) else { return };
+        for a in r["applied"].as_array().into_iter().flatten() {
+            let Some(i) = a["key"].as_str().and_then(controls::index_of_key) else { continue };
+            let id = controls::meta(i).id;
+            if a["value"] == "reset" {
+                self.shared.touches.mark(id, true);
+            } else if a.get("from") != a.get("value") {
+                self.shared.touches.mark(id, false);
+            }
+        }
+    }
+
+    /// Where the world's course stands (docs/direction.md). Any thread.
+    pub fn direction_info(&self) -> crate::direction::bridge::DirectionInfo {
+        let mut i = self.shared.direction.load();
+        // Known before the first block is rendered.
+        i.available = !self.shared.direction_names.is_empty() as u32;
+        i
+    }
+
+    pub fn direction_episode_count(&self) -> usize {
+        self.shared.direction_names.len()
+    }
+
+    /// Machine name of episode `i` ("thunderstorm").
+    pub fn direction_episode_name(&self, i: usize) -> Option<&str> {
+        self.shared.direction_names.get(i).map(|(n, _)| n.as_str())
+    }
+
+    /// Label of segment `k` of episode `i` ("gust front").
+    pub fn direction_segment_label(&self, i: usize, k: usize) -> Option<&str> {
+        self.shared.direction_names.get(i).and_then(|(_, l)| l.get(k)).map(String::as_str)
     }
 
     /// System prompt, current-state context and tool schema for a language model.
@@ -889,6 +969,69 @@ impl Dsp {
         }
     }
 
+    /// Runs the direction (direction/) on the controls `st`: gathers the user's touches and
+    /// cues, and on each planning step writes the driven controls. Under the control
+    /// transaction; real-time safe. Returns true when it wrote anything.
+    fn direct(&mut self, shared: &Shared, st: &ControlState, dt: f32) -> bool {
+        use crate::direction::{Cue, Input, Steer, CHANNELS, CONTROL_IDS};
+        use controls::id::*;
+        let Some(course) = self.course.as_mut() else { return false };
+        let (touched, released) = shared.touches.take(&mut self.course_seen);
+        for c in 0..CHANNELS {
+            // A glide the user started (a prompt patch) is their hand as long as it moves.
+            let gliding = controls::index_of_id(CONTROL_IDS[c]).is_some_and(|i| shared.glides.gliding(i));
+            self.course_touched[c] |= touched[c] || gliding;
+            self.course_released[c] |= released[c];
+        }
+        let mut wrote = false;
+        let cue = st.get(DIRECTION_CUE).round() as usize;
+        if cue != 0 {
+            self.course_cue = match controls::CUES.get(cue) {
+                Some(&"next") => Some(Cue::Next),
+                Some(name) => course.index_of(name).map(Cue::Episode),
+                None => None,
+            };
+            // An impulse: taken, it reads "none" again.
+            shared.controls.set(DIRECTION_CUE, 0.0, &shared.params);
+            wrote = true;
+        }
+        let steer = Steer {
+            amount: st.get(DIRECTION_AMOUNT),
+            weather: st.get(DIRECTION_WEATHER),
+            energy: st.get(DIRECTION_ENERGY),
+            change: st.get(DIRECTION_CHANGE),
+            clock: st.get(DIRECTION_CLOCK),
+            hold_s: st.get(DIRECTION_HOLD) * 60.0,
+        };
+        let mut input = Input::new(steer, CONTROL_IDS.map(|id| st.get(id)));
+        input.touched = self.course_touched;
+        input.released = self.course_released;
+        input.cue = self.course_cue;
+        if !course.advance(dt, &input) {
+            return wrote;
+        }
+        self.course_touched = [false; CHANNELS];
+        self.course_released = [false; CHANNELS];
+        self.course_cue = None;
+        let out = *course.output();
+        for c in 0..CHANNELS {
+            if out.release[c] {
+                shared.controls.set(CONTROL_IDS[c], f32::NAN, &shared.params);
+                wrote = true;
+            } else if out.write[c] {
+                shared.controls.set(CONTROL_IDS[c], out.value[c], &shared.params);
+                wrote = true;
+            }
+        }
+        self.director.set_liveliness(out.liveliness);
+        self.course_publish -= crate::direction::TICK;
+        if self.course_publish <= 0.0 || input.cue.is_some() {
+            self.course_publish = 0.25;
+            shared.direction.store(true, &course.info(&steer));
+        }
+        wrote
+    }
+
     fn process_block(&mut self, shared: &Shared, out_l: &mut [f32], out_r: &mut [f32]) {
         let len = out_l.len();
         let sr = self.sample_rate;
@@ -929,7 +1072,11 @@ impl Dsp {
         // Controls: macros and their physical children -> generator configs (only on change).
         let st = if let Some(_guard) = shared.glides.try_edit() {
             shared.glides.tick_locked(&shared.controls, &shared.params);
-            let st = shared.controls.state(&shared.params);
+            let mut st = shared.controls.state(&shared.params);
+            // The world's own course moves the controls, inside the same transaction.
+            if self.direct(shared, &st, dt) {
+                st = shared.controls.state(&shared.params);
+            }
             shared.controls.publish_params(&st, &shared.params);
             st
         } else { self.ctl };

@@ -123,6 +123,11 @@ impl Glides {
         self.slots.iter().filter(|s| s.state.load(Ordering::Relaxed) & 3 != IDLE).count()
     }
 
+    /// A glide is moving control `i`. Any thread.
+    pub(crate) fn gliding(&self, i: usize) -> bool {
+        self.slots[i].state.load(Ordering::Relaxed) & 3 != IDLE
+    }
+
     fn target(&self, i: usize) -> Option<Value> {
         let slot = &self.slots[i];
         match slot.state.load(Ordering::Acquire) & 3 {
@@ -195,6 +200,20 @@ pub(crate) struct View<'a> {
     pub labels: &'a [String],
     /// Sources, objects on stage and loudness for the scene description.
     pub live: Live,
+    /// The scene's own course (None: the scene has no direction).
+    pub direction: Option<DirectionView>,
+}
+
+/// The direction's latest telemetry with its names resolved (episode, segment, next).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DirectionView {
+    pub info: crate::direction::bridge::DirectionInfo,
+    /// Machine name of the current episode ("thunderstorm").
+    pub episode: String,
+    /// Label of the current segment ("gust front").
+    pub segment: String,
+    /// Machine name of the planned next episode.
+    pub next: String,
 }
 
 impl View<'_> {
@@ -323,6 +342,7 @@ pub(crate) fn state_json(v: &View) -> String {
         "summary_ru": summary_text(&parts),
         "summary_topics_ru": parts.iter().map(|(k, s)| (k.to_string(), json!(s))).collect::<Map<String, Value>>(),
         "objects": objects,
+        "direction": facts["direction"].clone(),
         "frame": "listener at the origin; +x forward, +y left, +z up; metres",
         "gliding": v.glides.active(),
     })
@@ -509,6 +529,7 @@ fn group_alias(g: &str) -> &str {
         "volume" | "overall" | "global" | "output" => "master",
         "fly" | "flying" | "landscape" | "land" | "terrain" | "полет" => "flight",
         "ветер" => "wind",
+        "режиссура" | "сценарий" | "course" => "direction",
         g => g,
     }
 }
@@ -520,13 +541,21 @@ fn alias(k: &str) -> Option<&'static str> {
         "temperature" | "temp" | "env.temp" => "env.temperature",
         "humidity" => "env.humidity",
         "season" => "env.season",
-        "wind.direction" | "wind_direction" | "wind.from" | "wind.dir" | "wind.heading" | "env.wind_dir" | "env.wind_from" | "wind_from" | "direction" | "направление_ветра" => "env.wind_direction",
+        "wind.direction" | "wind_direction" | "wind.from" | "wind.dir" | "wind.heading" | "env.wind_dir" | "env.wind_from" | "wind_from" | "направление_ветра" => "env.wind_direction",
         "volume" | "master" | "master.gain" | "master.level" | "loudness_overall" | "громкость" => "master.volume",
         "biome" | "landscape" | "place" | "location" | "terrain" | "flight.landscape" | "flight.place" | "flight.terrain" => "flight.biome",
         "thunder" | "storm" | "rain.thunder" | "thunderstorm" | "rain.thunderstorm" => "rain.storm",
         "speed" | "flight.velocity" => "flight.speed",
         "altitude" | "height" | "flight.height" => "flight.altitude",
         "regime" | "water.type" | "water.character" | "water.preset" | "water.mode" => "water.regime",
+        // The scene's own course (direction.*).
+        "direction" | "direction.on" | "direction.level" | "режиссура" | "сценарий" | "course" | "scenario" | "autopilot" | "автопилот" => "direction.amount",
+        "погода" | "ненастье" | "дождливость" | "direction.wet" | "direction.wetness" | "direction.rain" | "direction.rainy" | "direction.fair" => "direction.weather",
+        "энергия" | "оживленность" | "живость" | "liveliness" | "direction.liveliness" | "direction.lively" | "direction.activity" => "direction.energy",
+        "переменчивость" | "драматичность" | "изменчивость" | "drama" | "variability" | "changeability" | "direction.drama" | "direction.variability" => "direction.change",
+        "ход_времени" | "скорость_времени" | "time_speed" | "time.speed" | "time_scale" | "timescale" | "clock_speed" | "clock.speed" | "env.time_speed" | "direction.time" | "direction.speed" | "direction.time_speed" => "direction.clock",
+        "удержание" | "время_удержания" | "hold" | "hold_time" | "direction.hold_time" | "direction.hold_min" => "direction.hold",
+        "cue" | "вызвать" | "forecast" | "прогноз" | "spell" | "episode" | "эпизод" | "weather_cue" | "direction.episode" | "direction.spell" | "direction.next" | "direction.forecast" => "direction.cue",
         "focus.water" | "focus.wind" | "focus.birds" | "focus.rain" | "focus.insects" | "focus.fire" => return None,
         _ => return None,
     })
@@ -647,8 +676,24 @@ const PLACE_WORDS: &[(&[&str], &[&str])] = &[
     (&["journey", "travel", "tour", "everywhere", "путешеств", "разн", "везде"], &["journey"]),
 ];
 
+/// Words that pick a `direction.cue` option, first match wins (so "после дождя" is not rain).
+const CUE_WORDS: &[(&[&str], &str)] = &[
+    (&["после_дожд", "после_ливн", "после_гроз", "after"], "after_rain"),
+    (&["дальше", "следующ", "друг", "смен", "skip", "another", "other"], "next"),
+    (&["гроз", "гром", "thunder", "storm"], "thunderstorm"),
+    (&["ливен", "ливн", "downpour", "cloudburst"], "shower"),
+    (&["морос", "мелкий_дожд", "drizz"], "drizzle"),
+    (&["дожд", "ненаст", "rain"], "steady_rain"),
+    (&["туман", "дымк", "fog", "haze"], "mist"),
+    (&["штил", "безветр", "still"], "calm"),
+    (&["ветерок", "бриз", "легкий_ветер", "breez"], "breeze"),
+    (&["ветр", "ветер", "wind", "gale"], "windy"),
+    (&["пасмур", "облач", "туч", "cloud", "grey", "gray"], "overcast"),
+    (&["ясн", "солн", "sun", "fair"], "clear"),
+];
+
 /// Matches a preset name loosely: exact, as-built words, prefix / substring, edit distance,
-/// then (landscapes only) place words in English or Russian.
+/// then place words in English or Russian (landscapes) or weather words (`direction.cue`).
 fn match_option(id: u32, raw: &str) -> Result<usize, (String, String)> {
     let opts = controls::options(id);
     let s = norm(raw);
@@ -666,6 +711,11 @@ fn match_option(id: u32, raw: &str) -> Result<usize, (String, String)> {
     }
     if let Some(one) = fuzzy(&s, opts.iter().copied()) {
         return Ok(opts.iter().position(|o| *o == one).unwrap_or(0));
+    }
+    if id == controls::id::DIRECTION_CUE {
+        if let Some(k) = CUE_WORDS.iter().find(|(words, _)| words.iter().any(|w| s.contains(w))).and_then(|(_, pick)| opts.iter().position(|o| o == pick)) {
+            return Ok(k);
+        }
     }
     if id == controls::id::FLIGHT_BIOME {
         for (words, picks) in PLACE_WORDS {
@@ -1332,6 +1382,128 @@ fn direction(x: f32, y: f32) -> (&'static str, &'static str) {
     }
 }
 
+/// Russian names of the built-in weather spells (unknown ones by their machine name).
+fn episode_ru(name: &str) -> String {
+    match name {
+        "clear" => "ясно",
+        "calm" => "штиль",
+        "breeze" => "ветерок",
+        "windy" => "ветрено",
+        "overcast" => "пасмурно",
+        "drizzle" => "морось",
+        "shower" => "ливень",
+        "steady_rain" => "обложной дождь",
+        "thunderstorm" => "гроза",
+        "after_rain" => "после дождя",
+        "mist" => "туман",
+        other => return other.replace('_', " "),
+    }
+    .to_string()
+}
+
+/// Russian segment labels of the built-in spells (episodes.json).
+fn segment_ru(label: &str) -> String {
+    match label {
+        "clear" => "ясно",
+        "still air" => "безветрие",
+        "breeze" => "ветерок",
+        "wind rising" => "ветер крепчает",
+        "windy" => "ветрено",
+        "wind easing" => "ветер стихает",
+        "clouding over" => "небо затягивает",
+        "drizzle" => "морось",
+        "darkening" => "темнеет",
+        "gust front" => "фронт порыва",
+        "downpour" => "ливень",
+        "tapering off" => "дождь слабеет",
+        "rain setting in" => "дождь начинается",
+        "steady rain" => "ровный дождь",
+        "rain easing" => "дождь стихает",
+        "distant thunder" => "гром вдали",
+        "calm before the storm" => "затишье перед грозой",
+        "the cell overhead" => "гроза над головой",
+        "trailing rain" => "дождь после грозы",
+        "storm moving away" => "гроза уходит",
+        "after the rain" => "после дождя",
+        "mist" => "туман",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// Russian names of the driven channels (`direction::CHANNEL_NAMES` order).
+const CHANNELS_RU: [&str; crate::direction::CHANNELS] = ["время", "ветер", "направление ветра", "порывистость", "дождь", "гроза", "температура", "влажность", "птицы", "вода"];
+
+/// The direction's state as facts and one Russian sentence (topic `direction`).
+fn direction_facts(v: &View, parts: &mut Vec<(&'static str, String)>) -> Value {
+    use crate::direction::{CHANNELS, CHANNEL_NAMES};
+    let Some(d) = &v.direction else {
+        return json!({"available": false});
+    };
+    let i = &d.info;
+    let clock = controls::index_of_id(controls::id::DIRECTION_CLOCK).map_or(1.0, |k| v.values()[k]);
+    if i.available == 0 {
+        // Not planned yet (nothing rendered): the controls are all there is.
+        return json!({"available": true, "started": false, "clock_rate": r3(clock)});
+    }
+    let held: Vec<usize> = (0..CHANNELS).filter(|c| i.held & (1 << c) != 0).collect();
+    let minutes = i.episode_left_s / 60.0;
+    let multi = i.segments > 1 && !d.segment.is_empty();
+    let mut facts = json!({
+        "available": true,
+        "started": true,
+        "active": i.active != 0,
+        "episode": d.episode,
+        "segment": d.segment,
+        "segment_index": i.segment,
+        "segments": i.segments,
+        "segment_minutes_left": r3(i.segment_left_s / 60.0),
+        "episode_minutes_left": r3(minutes),
+        "next": d.next,
+        "next_cued": i.cued != 0,
+        "hour": r3(i.hour),
+        "clock_rate": r3(clock),
+        "weather": r3(i.weather),
+        "energy": r3(i.energy),
+        "change": r3(i.change),
+        "held": held.iter().map(|&c| CHANNEL_NAMES[c]).collect::<Vec<_>>(),
+    });
+    if i.active == 0 {
+        facts["summary"] = json!("Direction off: weather and time stay as set.");
+        parts.push(("direction", "Режиссура выключена: погода и время стоят, как заданы.".into()));
+        return facts;
+    }
+    let mut en = format!("Direction: {} now", d.episode);
+    let mut ru = format!("Режиссура: идёт «{}»", episode_ru(&d.episode));
+    if multi {
+        en.push_str(&format!(" ({})", d.segment));
+        ru.push_str(&format!(" ({})", segment_ru(&d.segment)));
+    }
+    let cued = i.cued != 0;
+    if minutes < 1.0 {
+        en.push_str(&format!(", then {}{} any moment", d.next, if cued { " (asked for)" } else { "" }));
+        ru.push_str(&format!(", дальше «{}»{} вот-вот", episode_ru(&d.next), if cued { " (по просьбе)" } else { "" }));
+    } else {
+        en.push_str(&format!(", then {}{} in about {:.0} min", d.next, if cued { " (asked for)" } else { "" }, minutes));
+        ru.push_str(&format!(", дальше «{}»{} примерно через {:.0} мин", episode_ru(&d.next), if cued { " (по просьбе)" } else { "" }, minutes));
+    }
+    if clock < 1e-3 {
+        en.push_str(", the clock stands");
+        ru.push_str(", время стоит");
+    }
+    if !held.is_empty() {
+        let names_en: Vec<&str> = held.iter().map(|&c| CHANNEL_NAMES[c]).collect();
+        let names_ru: Vec<&str> = held.iter().map(|&c| CHANNELS_RU[c]).collect();
+        en.push_str(&format!("; left to the user: {}", names_en.join(", ")));
+        ru.push_str(&format!("; в руках пользователя: {}", names_ru.join(", ")));
+    }
+    en.push('.');
+    ru.push('.');
+    facts["summary"] = json!(en);
+    parts.push(("direction", ru));
+    facts
+}
+
 fn distance_ru(d: f32) -> &'static str {
     match d {
         d if d < 5.0 => "совсем рядом",
@@ -1446,6 +1618,9 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     let weather = json!({"rain_mm_h": r3(rain_now), "rain_target_mm_h": r3(rain_set), "rain": rain_en, "storm": r3(storm),
         "wind_m_s": r3(wind), "wind": wind_en, "wind_from_deg": r3(wind_from), "wind_from": from_en, "temperature_c": r3(temp), "leaf_wetness": r3(wet)});
 
+    // The scene's own course: the spell now, what comes next, what the user holds.
+    let course = direction_facts(v, &mut parts);
+
     // Water, nearest sounding source relative to the head.
     let regime = opt("water.regime").unwrap_or("scene");
     let nearest = |kind: SourceKind| {
@@ -1551,6 +1726,7 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
         "insects_sounding": insects,
         "fire": fire,
         "loudest": loud.iter().take(4).map(|(n, l)| json!({"group": n, "lufs": r3(*l)})).collect::<Vec<_>>(),
+        "direction": course,
         "frame": "directions relative to the head: ahead, left, right, behind",
     });
     (facts, parts)
@@ -1581,6 +1757,12 @@ fn describe(key: &str) -> String {
         return format!(
             "Landscape preset of flight mode: {}. Exists only while flying: set flight.on = \"on\" with it. A change fades out and regenerates. Pick the closest one when no preset matches the request exactly.",
             list.join(", ")
+        );
+    }
+    if key == "direction.cue" {
+        return format!(
+            "Impulse: ask the scene's course for a weather spell, one of {}. `next` = wrap up the current spell and go on to the planned one. It comes as soon as it naturally can: the current spell wraps up (a downpour tapers off first) and, if the asked one cannot follow directly, a short bridge comes between (overcast before rain), so it arrives within minutes, not at once. Reads back `none` afterwards. For 'let it rain soon', 'a thunderstorm later', 'change the weather'; for an immediate change set the controls themselves.",
+            controls::options(controls::id::DIRECTION_CUE).iter().filter(|o| !matches!(**o, "none" | "next")).copied().collect::<Vec<_>>().join(", ")
         );
     }
     let s = describe_static(key);
@@ -1660,6 +1842,12 @@ fn describe_static(key: &str) -> &'static str {
         "flight.airflow" => "Flight mode: wind noise of motion at the ears, 0 off, 1 physical (subtle below ~10 m/s), 3 strong.",
         "flight.relief" => "Flight mode: how high the hills, mountains and dunes are, 0 flat .. 1 as the biome .. 2 twice as steep (regenerates). Relief shapes the sound: hills hide sources, valleys echo.",
         "flight.stops" => "Flight mode: how often the flight eases down and lingers at a place (lake shore, waterfall, surf, river bank, viewpoint), 0 never .. 0.5 now and then .. 1 at every one, longer.",
+        "direction.amount" => "The scene's own course (режиссура), macro 0..1. 0 = off: nothing changes by itself, the clock stands, everything stays as set; 1 = full course (default). While on, the world runs non-stop by moving the driven controls the way automation moves faders: time flows, weather spells follow each other with their own inner course (clear, calm, breeze, windy, overcast, drizzle, shower, steady_rain, thunderstorm, after_rain, mist), and the wind, its direction, gusts, rain, thunder, temperature, humidity, birds.activity and water.flow (the brook swells after heavy rain) follow them. 0 for 'freeze', 'stop changing things'.",
+        "direction.weather" => "Steers the course −1 fair (dry, clear spells) .. 0 neutral .. +1 wet and stormy (rain and thunderstorms more often and heavier). A tendency for what comes next, not rain now. For 'fewer rains', 'rainy day', 'fair weather in general'.",
+        "direction.energy" => "Steers the course −1 still (calm air, mist, quieter birds, fewer animal encounters) .. 0 neutral .. +1 lively (more wind and gusts, more birdsong, more encounters). A tendency, applied to the spells and their values at once. For 'calmer / livelier weather'.",
+        "direction.change" => "How eventful the course is: 0 steady (long spells, mild contrasts, little wander) .. 1 eventful (spells change often, dramatic ones like storms more likely, stronger contrasts). For 'more drama', 'less changeable', 'steady weather'.",
+        "direction.clock" => "How fast scene time flows, scene hours per real hour: 0 = the clock stands, 1 = real time (default), 60 = an hour per minute, 120 max. A time set by hand (env.time_of_day) is adopted and flows on from there. 0 for 'stop time'; 30–120 for 'speed time up', 'a whole day in a few minutes'.",
+        "direction.hold" => "Minutes a value set by hand (slider or patch) on a driven control (time, wind, wind direction, gustiness, rain, thunder, temperature, humidity, birds.activity, water.flow) is left to the user before the course glides it back over ~2.5 min (0.5..240, default 20). Raise for 'keep what I set'.",
         _ => "",
     }
 }
@@ -1696,6 +1884,18 @@ closest preset; while flying, keep a gentle flight.speed 3–8 unless asked to s
 (env.time_of_day) + life (birds.activity, insects.activity) + mix intent (mix.focus.*). Fill in what \
 the place implies even when not said: desert = hot, dry, few birds, no rain; snowy mountains = \
 winter, frost, wind, no insects; sea or lake = water in front.
+- DIRECTION (режиссура). The scene runs its own course: time flows and weather spells follow each \
+other, moving the driven controls (env.time_of_day, wind.speed, env.wind_direction, wind.gustiness, \
+rain.rate, rain.storm, env.temperature, env.humidity, birds.activity, water.flow). Setting one of \
+them works at once and is held for direction.hold minutes, then the course glides it back; \
+\"reset\" hands it back now; a time set by hand flows on from there. So: a concrete state now \
+(\"дождь сейчас\", \"хочу ночь\", \"убери ветер\") → the controls; a spell that should come \
+(\"пусть скоро пойдёт дождь\", \"к вечеру гроза\", \"смени погоду\") → direction.cue \
+(a spell name, or next); a lasting tendency (\"поменьше дождей\", \"погода поспокойнее\", \
+\"поживее\", \"больше перемен\") → direction.weather / direction.energy / direction.change; \
+\"останови время\" → direction.clock 0, \"ускорь время\" → 30–60; \"ничего не меняй\", \"замри\" → \
+direction.amount 0, \"пусть живёт само\" → 1. \"Scene now\" names the spell and what comes next: \
+answer \"что дальше с погодой?\" from it.
 - glide_s is how long the change takes: 4 by default, 10–40 for \"slowly\", \"gradually\", \
 \"fading\", \"стихает\", 0.5–1 for \"now\", \"suddenly\".
 - Plausibility matters: night means few birds (owls) and more insects in warm weather; heavy rain \
@@ -1850,6 +2050,17 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 «верни реку как была» →
 {{\"explanation\":\"Река снова как в сцене.\",\"changes\":[{{\"key\":\"water.regime\",\"value\":\"scene\"}},\
 {{\"key\":\"water.flow\",\"value\":0.6}},{{\"key\":\"water.aeration\",\"value\":\"reset\"}}]}}
+
+«пусть скоро пойдёт дождь» →
+{{\"explanation\":\"Скоро соберётся дождь.\",\"changes\":[{{\"key\":\"direction.cue\",\"value\":\"steady_rain\"}}]}}
+
+«сделай погоду поспокойнее» →
+{{\"explanation\":\"Погода дальше будет спокойнее: меньше ветра и гроз.\",\"changes\":[\
+{{\"key\":\"direction.energy\",\"value\":-0.6}},{{\"key\":\"direction.weather\",\"value\":-0.3}},\
+{{\"key\":\"direction.change\",\"value\":0.15}}]}}
+
+«останови время» →
+{{\"explanation\":\"Время остановилось.\",\"changes\":[{{\"key\":\"direction.clock\",\"value\":0}}]}}
 
 «что вокруг?» →
 {{\"explanation\":\"День, лес у реки. Река справа рядом, слева поют две птицы, лёгкий ветер.\",\"changes\":[]}}
@@ -2436,5 +2647,105 @@ mod tests {
         let r = apply(r#"{"glide_s":0,"changes":[{"key":"rain.rate","value":0}]}"#);
         assert!(r.get("balanced").is_none());
         assert_eq!(get("rain.level"), 0.0);
+    }
+
+    #[test]
+    fn direction_cues_and_aliases_resolve() {
+        use super::{match_option, resolve_key, Conv, Resolved};
+        let e = engine();
+        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"direction.cue","value":"гроза"}]}"#));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(applied(&r, "direction.cue"), Some(json!("thunderstorm")));
+        let cue = |w: &str| crate::controls::options(id::DIRECTION_CUE)[match_option(id::DIRECTION_CUE, w).unwrap_or_else(|x| panic!("{w}: {x:?}"))];
+        for (w, o) in [
+            ("гроза", "thunderstorm"),
+            ("Ливень", "shower"),
+            ("дождь", "steady_rain"),
+            ("морось", "drizzle"),
+            ("туман", "mist"),
+            ("штиль", "calm"),
+            ("ветерок", "breeze"),
+            ("ветрено", "windy"),
+            ("пасмурно", "overcast"),
+            ("ясно", "clear"),
+            ("после дождя", "after_rain"),
+            ("дальше", "next"),
+            ("следующий", "next"),
+            ("Thunderstorm", "thunderstorm"),
+            ("storm", "thunderstorm"),
+            ("after rain", "after_rain"),
+            ("fog", "mist"),
+            ("none", "none"),
+        ] {
+            assert_eq!(cue(w), o, "{w}");
+        }
+        let idx = |k: &str| crate::controls::index_of_key(k).unwrap();
+        for (raw, key) in [
+            ("direction", "direction.amount"),
+            ("режиссура", "direction.amount"),
+            ("сценарий", "direction.amount"),
+            ("course", "direction.amount"),
+            ("погода", "direction.weather"),
+            ("ненастье", "direction.weather"),
+            ("дождливость", "direction.weather"),
+            ("энергия", "direction.energy"),
+            ("оживлённость", "direction.energy"),
+            ("живость", "direction.energy"),
+            ("переменчивость", "direction.change"),
+            ("драматичность", "direction.change"),
+            ("изменчивость", "direction.change"),
+            ("ход времени", "direction.clock"),
+            ("скорость времени", "direction.clock"),
+            ("time speed", "direction.clock"),
+            ("удержание", "direction.hold"),
+            ("hold", "direction.hold"),
+            ("cue", "direction.cue"),
+            ("вызвать", "direction.cue"),
+            ("forecast", "direction.cue"),
+            ("course.weather", "direction.weather"),
+            // Existing keys keep their meaning.
+            ("wind_direction", "env.wind_direction"),
+            ("clock", "env.time_of_day"),
+            ("weather", "rain.rate"),
+        ] {
+            match resolve_key(raw) {
+                Ok(Resolved::Control(i, Conv::Same)) => assert_eq!(i, idx(key), "{raw}"),
+                other => panic!("{raw}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn state_carries_the_direction() {
+        let e = engine();
+        // The forest scene has a direction.
+        let s = parse(&e.state_json());
+        assert_eq!(s["direction"]["available"], true, "{}", s["direction"]);
+        e.set_param(crate::param::PLAYING, 1.0);
+        e.apply_patch_json(r#"{"glide_s":0,"changes":[{"key":"wind.speed","value":3}]}"#);
+        render(&e, 1.0);
+        let s = parse(&e.state_json());
+        let d = &s["direction"];
+        assert_eq!(d["started"], true, "{d}");
+        assert_eq!(d["active"], true, "{d}");
+        assert!(d["episode"].as_str().is_some_and(|x| crate::direction::BUILTIN_NAMES.contains(&x)), "{d}");
+        assert!(d["next"].as_str().is_some_and(|x| !x.is_empty()), "{d}");
+        assert!(d["episode_minutes_left"].as_f64().unwrap() > 0.0, "{d}");
+        assert!(d["held"].as_array().unwrap().iter().any(|h| h == "wind"), "{d}");
+        assert!(d["summary"].as_str().unwrap().contains("left to the user: wind"), "{d}");
+        assert_eq!(s["scene"]["direction"], *d);
+        let ru = s["summary_topics_ru"]["direction"].as_str().unwrap();
+        assert!(ru.starts_with("Режиссура: идёт «") && ru.contains("в руках пользователя: ветер"), "{ru}");
+        // A cue is reported as the next spell asked for; off says so.
+        e.apply_patch_json(r#"{"changes":[{"key":"direction.cue","value":"гроза"}]}"#);
+        render(&e, 0.5);
+        let s = parse(&e.state_json());
+        assert_eq!(s["direction"]["next_cued"], true, "{}", s["direction"]);
+        e.apply_patch_json(r#"{"glide_s":0,"changes":[{"key":"direction.amount","value":0}]}"#);
+        render(&e, 0.5);
+        let s = parse(&e.state_json());
+        assert_eq!(s["direction"]["active"], false);
+        assert!(s["summary_topics_ru"]["direction"].as_str().unwrap().contains("выключена"));
+        assert!(parse(&e.prompt_json())["context"].as_str().unwrap().contains("Режиссура"));
     }
 }
