@@ -31,6 +31,11 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "forest", key: N_("Forest"), file: nil),
         SceneEntry(id: "underwater", key: N_("Underwater"), file: "underwater_drift.json"),
         SceneEntry(id: "space", key: N_("Space"), file: "space_still.json"),
+        SceneEntry(id: "lighthouse", key: N_("Lighthouse"), file: "lighthouse_gale.json"),
+        SceneEntry(id: "night_train", key: N_("Night train"), file: "night_train.json"),
+        SceneEntry(id: "singing_ice", key: N_("Singing ice"), file: "singing_ice.json"),
+        SceneEntry(id: "tea_house", key: N_("Tea house"), file: "tea_house.json"),
+        SceneEntry(id: "body_scan", key: N_("Body scan"), file: "body_scan.json"),
     ]
 
     static let forest = all[0]
@@ -165,7 +170,8 @@ struct SceneInfo {
         let look: Look
         if clips.isEmpty {
             look = .forest
-        } else if env["medium"] as? String == "water" || entry.id.hasPrefix("underwater") {
+        } else if entry.id.hasPrefix("underwater") || (root["name"] as? String ?? "").lowercased().contains("underwater") {
+            // Not the medium alone: the lighthouse is muffled like water but stands on a rock.
             look = .underwater
         } else if entry.id.hasPrefix("space") || (root["name"] as? String ?? "").lowercased().contains("space") {
             look = .space
@@ -225,4 +231,7 @@ enum Scenes {
 enum ClipGroupLabels {
     static var titles: [String: String] = [:]
     static var icons: [String: String] = [:]
+    /// The scene levers' titles and icon keys, by lever key.
+    static var leverTitles: [String: String] = [:]
+    static var leverIcons: [String: String] = [:]
 }
