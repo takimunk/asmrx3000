@@ -1,0 +1,450 @@
+{
+ "name": "Deep space",
+ "seed": 5200,
+ "environment": {
+  "time_of_day": 0.0,
+  "rain_mm_h": 0.0,
+  "wind_ms": 0.0,
+  "storm": 0.0,
+  "temperature_c": 15.0,
+  "humidity": 0.5,
+  "ground_z": -40.0
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 10,
+   "group": "plasma",
+   "emitters": 4,
+   "spread": 14,
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "plasma",
+    "preset": "plasmasphere_hiss",
+    "params": {
+     "gain": 1.0
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "plasma",
+   "emitters": 5,
+   "fade": 9,
+   "first": 25,
+   "interval": [
+    70,
+    160
+   ],
+   "sound": {
+    "model": "plasma",
+    "preset": "plasmasphere_hiss",
+    "params": {
+     "gain": 1.3,
+     "hiss_hz": 380
+    }
+   },
+   "motion": {
+    "type": "sweep",
+    "from_x": -45,
+    "to_x": 60,
+    "duration": 30,
+    "width": 18,
+    "height": 1
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "flybys",
+   "class": "event",
+   "level_db": 90,
+   "first": 45,
+   "interval": [
+    70,
+    140
+   ],
+   "fade": 4,
+   "rate": [
+    0.85,
+    1.0
+   ],
+   "files": [
+    "generated/space/comet_pass_el2_1.wav",
+    "generated/space/comet_pass_el2_2.wav",
+    "generated/space/comet_pass_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     -60,
+     45,
+     18
+    ],
+    "to": [
+     80,
+     -55,
+     6
+    ],
+    "duration": 18,
+    "jitter": 8
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "orbits",
+   "class": "texture",
+   "playback": "loop",
+   "level_db": 66,
+   "first": 60,
+   "interval": [
+    90,
+    180
+   ],
+   "fade": 4,
+   "files": [
+    "generated/space/shimmer_high_sa25_1.wav",
+    "generated/space/shimmer_high_sa25_2.wav"
+   ],
+   "motion": {
+    "type": "portal",
+    "from": [
+     -6,
+     8,
+     4
+    ],
+    "duration": 14,
+    "curve": 0.4
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 31,
+   "group": "flybys",
+   "class": "event",
+   "level_db": 94,
+   "first": 35,
+   "interval": [
+    80,
+    150
+   ],
+   "fade": 5,
+   "files": [
+    "generated/space/asteroid_whoosh_el2_1.wav",
+    "generated/space/asteroid_whoosh_el2_2.wav",
+    "generated/space/asteroid_whoosh_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     -35,
+     22,
+     8
+    ],
+    "to": [
+     40,
+     -18,
+     16
+    ],
+    "duration": 22,
+    "jitter": 18
+   },
+   "rate": [
+    0.8,
+    1.0
+   ]
+  },
+  {
+   "kind": "clip",
+   "id": 32,
+   "group": "flybys",
+   "class": "event",
+   "level_db": 70,
+   "first": 100,
+   "interval": [
+    110,
+    200
+   ],
+   "fade": 4,
+   "files": [
+    "generated/space/asteroid_whoosh_el2_2.wav",
+    "generated/space/asteroid_whoosh_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     -14,
+     -4,
+     5
+    ],
+    "to": [
+     26,
+     3,
+     6
+    ],
+    "duration": 14,
+    "jitter": 3
+   },
+   "rate": [
+    0.9,
+    1.15
+   ]
+  },
+  {
+   "kind": "clip",
+   "id": 33,
+   "group": "flybys",
+   "class": "event",
+   "level_db": 88,
+   "first": 60,
+   "interval": [
+    90,
+    170
+   ],
+   "fade": 6,
+   "files": [
+    "generated/space/satellite_flyby_el2_2.wav",
+    "generated/space/satellite_flyby_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     45,
+     -70,
+     32
+    ],
+    "to": [
+     40,
+     70,
+     28
+    ],
+    "duration": 40,
+    "jitter": 10
+   },
+   "rate": [
+    0.9,
+    1.1
+   ]
+  },
+  {
+   "kind": "clip",
+   "id": 34,
+   "group": "beams",
+   "class": "event",
+   "level_db": 72,
+   "first": 20,
+   "interval": [
+    60,
+    120
+   ],
+   "fade": 2,
+   "files": [
+    "generated/space/energy_beam_el2_1.wav",
+    "generated/space/energy_beam_el2_2.wav",
+    "generated/space/energy_beam_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     3,
+     14,
+     3
+    ],
+    "to": [
+     3,
+     -14,
+     4
+    ],
+    "duration": 7,
+    "jitter": 6
+   },
+   "rate": [
+    0.8,
+    1.1
+   ]
+  },
+  {
+   "kind": "clip",
+   "id": 35,
+   "group": "beams",
+   "class": "event",
+   "level_db": 66,
+   "first": 50,
+   "interval": [
+    90,
+    170
+   ],
+   "fade": 2,
+   "files": [
+    "generated/space/energy_beam_el2_1.wav",
+    "generated/space/energy_beam_el2_3.wav"
+   ],
+   "motion": {
+    "type": "portal",
+    "from": [
+     -6,
+     -9,
+     2
+    ],
+    "duration": 8,
+    "curve": 0.5
+   },
+   "rate": [
+    0.7,
+    0.95
+   ]
+  },
+  {
+   "kind": "clip",
+   "id": 36,
+   "group": "flybys",
+   "class": "event",
+   "level_db": 82,
+   "first": 75,
+   "interval": [
+    100,
+    180
+   ],
+   "fade": 4,
+   "files": [
+    "generated/space/ray_glide_el2_1.wav",
+    "generated/space/ray_glide_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [
+     30,
+     -45,
+     26
+    ],
+    "to": [
+     34,
+     45,
+     30
+    ],
+    "duration": 16,
+    "jitter": 8
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "orbits",
+   "class": "texture",
+   "playback": "loop",
+   "level_db": 67,
+   "first": 8,
+   "fade": 12,
+   "rate": [
+    1.3,
+    1.3
+   ],
+   "files": [
+    "generated/space/orbit_hum_el2_1.wav",
+    "generated/space/orbit_hum_el2_2.wav"
+   ],
+   "motion": {
+    "type": "orbit",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "radius": 5,
+    "height": 0.5,
+    "period": 55
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 41,
+   "group": "orbits",
+   "class": "texture",
+   "playback": "loop",
+   "level_db": 80,
+   "first": 18,
+   "fade": 12,
+   "rate": [
+    1.0,
+    1.0
+   ],
+   "files": [
+    "generated/space/orbit_hum_el2_1.wav",
+    "generated/space/orbit_hum_el2_2.wav"
+   ],
+   "motion": {
+    "type": "orbit",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "radius": 15,
+    "height": 6,
+    "period": -140
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 42,
+   "group": "orbits",
+   "class": "texture",
+   "playback": "loop",
+   "level_db": 80,
+   "first": 30,
+   "fade": 12,
+   "rate": [
+    0.7,
+    0.7
+   ],
+   "files": [
+    "generated/space/orbit_hum_el2_1.wav",
+    "generated/space/orbit_hum_el2_2.wav"
+   ],
+   "motion": {
+    "type": "orbit",
+    "center": [
+     0,
+     0,
+     0
+    ],
+    "radius": 26,
+    "height": 10,
+    "period": 320
+   }
+  }
+ ],
+ "controls": [
+  {
+   "group": "plasma",
+   "title": "Плазма",
+   "icon": "plasma"
+  },
+  {
+   "group": "flybys",
+   "title": "Пролёты",
+   "icon": "flyby"
+  },
+  {
+   "group": "beams",
+   "title": "Лучи",
+   "icon": "beam"
+  },
+  {
+   "group": "orbits",
+   "title": "Орбиты",
+   "icon": "orbit"
+  }
+ ]
+}

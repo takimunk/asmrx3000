@@ -1,9 +1,10 @@
+import AppKit
 import Combine
 import SwiftUI
 
 @main
 struct ASMRX3000App: App {
-    @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
         Fonts.register()
@@ -28,20 +29,21 @@ struct ASMRX3000App: App {
         }
     }
 
+    // The menu bar item and its panel are AppKit (MenuBarController): SwiftUI's MenuBarExtra
+    // window does not show Metal views on macOS 27. An app needs a scene; this one never opens.
     var body: some Scene {
-        MenuBarExtra {
-            Popover(model: model)
-        } label: {
-            MenuBarLabel(icon: model.icon)
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
-/// Menu bar label; observes only the animator so animation frames do not re-render the app scene.
-private struct MenuBarLabel: View {
-    @ObservedObject var icon: MenuBarIconAnimator
-    var body: some View { Image(nsImage: icon.image) }
+/// Creates the model and the menu bar item once the app has launched.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menuBar: MenuBarController?
+
+    @MainActor
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        menuBar = MenuBarController(model: AppModel())
+    }
 }
 
 /// Owns the long-lived pieces so they survive the popover closing.
@@ -49,11 +51,15 @@ final class AppModel: ObservableObject {
     let audio = AudioEngine()
     let head = HeadTracker()
     let icon = MenuBarIconAnimator()
+    /// The display's size and distance for the engine, kept current at every launch.
+    let screens: ScreenWatcher
+    @MainActor lazy var onboarding = OnboardingController(model: self)
     lazy var stage = Stage(audio: audio, head: head)
     @MainActor lazy var prompt = PromptController(audio: audio)
     private var bag = Set<AnyCancellable>()
 
     init() {
+        screens = ScreenWatcher(audio: audio)
         // Straight from the motion queue: the engine side is lock-free.
         head.onSample = { [weak audio] sample in
             audio?.setHeadSample(sample)
@@ -71,6 +77,24 @@ final class AppModel: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] open in self?.icon.open = open }
             .store(in: &bag)
+        // --open-panel (development): open the menu bar panel right after launch.
+        if CommandLine.arguments.contains("--open-panel") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                MainActor.assumeIsolated { self?.openPanel() }
+            }
+        }
+        // First launch (or --onboarding): explain head tracking before the system asks for it.
+        if Onboarding.pending {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                MainActor.assumeIsolated { self?.onboarding.show() }
+            }
+        }
+    }
+
+    /// Opens the menu bar panel (after onboarding, or with --open-panel).
+    @MainActor
+    func openPanel() {
+        MenuBarController.shared?.open()
     }
 
     func togglePlay() {

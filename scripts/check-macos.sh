@@ -12,6 +12,8 @@ swiftc -parse-as-library -g \
   -I "$ROOT/apps/macos/Sources/CAsmr" "$ROOT/core/target/release/libasmr_core.a" \
   "$ROOT/apps/macos/Sources/ASMRX3000/AudioEngine.swift" \
   "$ROOT/apps/macos/Sources/ASMRX3000/HeadTracker.swift" \
+  "$ROOT/apps/macos/Sources/ASMRX3000/Scenes.swift" \
+  "$ROOT/apps/macos/Sources/ASMRX3000/Onboarding/OnboardingState.swift" \
   "$ROOT/apps/macos/Tests/AudioStateCheck.swift" \
   -o "$CHECK_DIR/audio-state-check"
 "$CHECK_DIR/audio-state-check"

@@ -47,9 +47,15 @@ pub struct SceneDesc {
     #[serde(default)]
     pub director: DirectorDesc,
     pub entities: Vec<EntityDesc>,
+    /// Folder that relative clip file paths resolve against (clips.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<String>,
     /// Flight mode settings (docs/flight-mode.md); `"start": true` begins in the air.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flight: Option<crate::flight::FlightDesc>,
+    /// Panel rows of the clip groups (names, icons, parameters shown); see clips.rs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls: Vec<crate::clips::GroupUi>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +87,19 @@ pub struct EnvironmentDesc {
     pub water: Option<f32>,
     /// Ground height relative to the listener's ears.
     pub ground_z: f32,
+    /// What the listener is immersed in. `water`: the physical models sound muffled, as
+    /// heard with the head under the surface (clips are left alone: they are recorded there).
+    pub medium: Medium,
+    /// Muffling cutoff for `water`, Hz (two-pole low-pass); omitted = 900.
+    pub muffle_hz: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Medium {
+    #[default]
+    Air,
+    Water,
 }
 
 impl Default for EnvironmentDesc {
@@ -100,6 +119,8 @@ impl Default for EnvironmentDesc {
             birds: None,
             water: None,
             ground_z: -1.7,
+            medium: Medium::Air,
+            muffle_hz: None,
         }
     }
 }
@@ -162,6 +183,8 @@ pub enum EntityDesc {
     /// Any physical sound model at a point or along a path (rain patch, waterfall, campfire,
     /// crickets, distant wind, the storm's thunder).
     Source(SourceDesc),
+    /// Recorded or generated sound files, placed and moved by the choreography (clips.rs).
+    Clip(crate::clips::ClipDesc),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -490,6 +513,8 @@ pub enum Geometry {
     River { path: Vec<Vec3>, flow: f32 },
     /// A physical model source; `path` (relative to the entity) for extended ones.
     Source { model: ModelKind, path: Option<Vec<Vec3>> },
+    /// Sound files moved by the choreography (clips.rs).
+    Clip { bank: std::sync::Arc<crate::clips::ClipBank> },
 }
 
 pub struct Entity {
@@ -533,12 +558,20 @@ pub struct Emitter {
     pub rel: Vec3,
     /// Calibration and attention class for the mix layer (mix/calibration.rs).
     pub class: SoundClass,
+    /// Underwater muffling filter state (two one-pole stages).
+    pub muffle: [f32; 2],
+    /// A physical model inside a clip: the choreography's envelope (`controls.clip_env`)
+    /// scales its output; `env` is the last applied value (per-sample ramp).
+    pub enveloped: bool,
+    pub env: f32,
 }
 
 pub struct World {
     pub entities: Vec<Entity>,
     pub emitters: Vec<Emitter>,
     pub ground_z: f32,
+    /// Underwater: low-pass cutoff for the physical models, Hz (0 = in air, no muffling).
+    pub muffle_hz: f32,
 }
 
 fn v3(a: [f32; 3]) -> Vec3 {
@@ -565,6 +598,7 @@ impl World {
                 EntityDesc::River(r) => id_for(r.id, i),
                 EntityDesc::Bird(b) => id_for(b.id, i),
                 EntityDesc::Source(s) => id_for(s.id, i),
+                EntityDesc::Clip(c) => id_for(c.id, i),
             };
             if ids.contains(&id) {
                 return Err(format!("entity {i}: duplicate id {id}"));
@@ -590,6 +624,9 @@ impl World {
                     level: 0.0,
                     rel: Vec3::default(),
                     class: SoundClass::of_kind(kind),
+                    muffle: [0.0; 2],
+                    enveloped: false,
+                    env: 0.0,
                 });
             };
             let set_base = |emitters: &mut Vec<Emitter>, cfg: ModelConfig| {
@@ -721,6 +758,33 @@ impl World {
                     let flags = if model == ModelKind::Thunder { 0 } else { object_flags::MOVABLE };
                     Entity { id, kind: ObjectKind::Source, position, geometry: Geometry::Source { model, path }, flags, emitters: 0..0 }
                 }
+                EntityDesc::Clip(c) => {
+                    c.validate(id)?;
+                    let bank = crate::clips::ClipBank::load(&c.files, desc.assets.as_deref(), sample_rate).map_err(|e| format!("clip {id}: {e}"))?;
+                    let bank = std::sync::Arc::new(bank);
+                    if let Some(sound) = &c.sound {
+                        // A physical model moved by the choreography; its level is the model's own.
+                        let cfg = sound.resolve().map_err(|e| format!("clip {id}: {e}"))?;
+                        for _ in 0..c.emitters {
+                            push(&mut emitters, cfg.kind().source_kind(), Vec3::default(), cfg.build(sample_rate, rng.next_u64()), 1.0);
+                            set_base(&mut emitters, cfg);
+                            emitters.last_mut().unwrap().enveloped = true;
+                        }
+                    } else {
+                        let (kind, class) = c.class.kinds();
+                        // Files are at unit loudness; `level_db` is the pressure at 1 m, and the
+                        // mix multiplies every emitter by its class calibration.
+                        let gain = 10f32.powf((c.level_db - crate::mix::calibration::PA_DB) / 20.0) / class.gain();
+                        let looped = c.playback == crate::clips::Playback::Loop;
+                        for _ in 0..c.emitters {
+                            let player = crate::clips::ClipPlayer::new(bank.clone(), looped, gain, rng.next_u64()).with_echo(c.echo);
+                            push(&mut emitters, kind, Vec3::default(), Box::new(player), 1.0);
+                            emitters.last_mut().unwrap().class = class;
+                        }
+                    }
+                    let flags = if matches!(c.motion, crate::clips::Motion::Fixed { .. }) { 0 } else { object_flags::ABSENT };
+                    Entity { id, kind: ObjectKind::Source, position: Vec3::default(), geometry: Geometry::Clip { bank }, flags, emitters: 0..0 }
+                }
             };
             entities.push(Entity { emitters: first..emitters.len(), ..entity });
         }
@@ -748,7 +812,11 @@ impl World {
             return Err(format!("too many emitters ({} > {MAX_SOURCES})", emitters.len()));
         }
 
-        let mut world = World { entities, emitters, ground_z: desc.environment.ground_z };
+        let muffle_hz = match desc.environment.medium {
+            Medium::Air => 0.0,
+            Medium::Water => desc.environment.muffle_hz.unwrap_or(900.0).clamp(100.0, 8000.0),
+        };
+        let mut world = World { entities, emitters, ground_z: desc.environment.ground_z, muffle_hz };
         world.update_emitters();
         Ok(world)
     }

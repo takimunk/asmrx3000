@@ -7,7 +7,7 @@ import SwiftUI
 /// spectrogram) are drawn right after it in the same frame.
 class StageView: MTKView, MTKViewDelegate {
     let stage: Stage
-    private var occlusion: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     /// False for views drawn by the scene view's frame instead of their own display link.
     var drivesItself: Bool { true }
     private var followerFrame = 0
@@ -34,20 +34,59 @@ class StageView: MTKView, MTKViewDelegate {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if let occlusion { NotificationCenter.default.removeObserver(occlusion) }
-        occlusion = nil
-        guard let window else { isPaused = true; return }
-        occlusion = NotificationCenter.default.addObserver(
-            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
-        ) { [weak self] _ in self?.updatePaused() }
-        updatePaused()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        guard window != nil else {
+            isPaused = true
+            if drivesItself, shown { shown = false; stage.setLive(false) }
+            return
+        }
+        if drivesItself, let w = window {
+            Self.debug("moved to \(w.className) visible=\(w.isVisible) level=\(w.level.rawValue) view=\(Int(bounds.width))×\(Int(bounds.height)) paused=\(isPaused)")
+        }
+        // The display link runs whenever the view is in a window; `draw` itself checks every
+        // frame whether the window is on screen. Window notifications (occlusion, key) are not
+        // reliable for the menu bar panel on newer macOS: it could stay paused while showing.
+        isPaused = !drivesItself
     }
 
-    private func updatePaused() {
-        let visible = window?.occlusionState.contains(.visible) ?? false
-        isPaused = !(visible && drivesItself)
-        if drivesItself { stage.setLive(visible) }
-        if visible { windowBecameVisible() }
+    /// Whether the window was on screen at the last frame (drives `Stage.setLive`).
+    private var shown = false
+    private var loggedFrame = false
+    private var traceFrame = 0
+
+    /// Called at the top of every frame: false while the window is ordered out or fully hidden.
+    private func checkShown() -> Bool {
+        traceFrame &+= 1
+        if traceFrame % 60 == 1, let w = window {
+            Self.debug("frame \(traceFrame) \(w.className) visible=\(w.isVisible) occl=\(w.occlusionState.rawValue) key=\(w.isKeyWindow) view=\(Int(bounds.width))×\(Int(bounds.height)) hidden=\(isHiddenOrHasHiddenAncestor) alpha=\(w.alphaValue)")
+        }
+        let now = (window?.isVisible ?? false) && (window?.occlusionState.contains(.visible) ?? false || Self.ignoreOcclusion)
+        if now != shown {
+            shown = now
+            stage.setLive(now)
+            Self.debug("stage \(now ? "shown" : "hidden") in \(window.map { String(describing: type(of: $0)) } ?? "-")")
+            if now { windowBecameVisible() }
+        }
+        return now
+    }
+
+    /// The menu bar panel reports itself occluded while on screen on macOS 26+.
+    private static var ignoreOcclusion: Bool {
+        if #available(macOS 26, *) { return true }
+        return false
+    }
+
+    /// Development trace, appended to ~/Library/Logs/ASMRX3000.log when ASMR_DEBUG is set.
+    static func debug(_ s: String) {
+        guard ProcessInfo.processInfo.environment["ASMR_DEBUG"] != nil || CommandLine.arguments.contains("--debug-log") else { return }
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ASMRX3000.log")
+        let line = "\(Date()) \(s)\n"
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 
     func windowBecameVisible() {}
@@ -56,11 +95,20 @@ class StageView: MTKView, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         if drivesItself {
+            guard checkShown() else { return }
             stage.tick()
             let fps = Self.fixedFPS ?? (CACurrentMediaTime() < stage.activeUntil ? Self.activeFPS : Self.restFPS)
             if preferredFramesPerSecond != fps { preferredFramesPerSecond = fps }
         }
-        guard let drawable = currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else { return }
+        guard let drawable = currentDrawable, let cb = GPU.shared.queue.makeCommandBuffer() else {
+            if drivesItself { Self.debug("no drawable (\(Int(bounds.width))×\(Int(bounds.height)))") }
+            return
+        }
+        if drivesItself && !loggedFrame {
+            loggedFrame = true
+            Self.debug("first frame \(Int(bounds.width))×\(Int(bounds.height))")
+            cb.addCompletedHandler { b in if let e = b.error { StageView.debug("frame error: \(e)") } }
+        }
         let scale = Float(window?.backingScaleFactor ?? 2)
         render(cb, target: drawable.texture, size: SIMD2(Float(bounds.width), Float(bounds.height)), scale: scale)
         cb.present(drawable)
@@ -284,16 +332,17 @@ enum Keys {
             // Esc lets go of the selection; with nothing selected it closes an open drawer.
             if stage.selection != nil { stage.select(nil) } else if stage.controls.expanded != nil { stage.controls.expanded = nil } else { return false }
         case 49: stage.audio.isPlaying ? stage.audio.pause() : stage.audio.play()
-        case 36, 76: stage.focusPrompt?()
+        // Return and / write to the prompt; a clip scene has none.
+        case 36 where !stage.isClipScene, 76 where !stage.isClipScene: stage.focusPrompt?()
         default:
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
             // F by key position too, so it works in the Russian layout ("а").
             let key = event.keyCode == 3 ? "f" : event.charactersIgnoringModifiers?.lowercased()
             switch key {
-            case "f": stage.audio.toggleFlight()
+            case "f" where !stage.isClipScene: stage.audio.toggleFlight()
             case "h": stage.head.enabled.toggle()
             case "c": stage.head.recenter()
-            case "/": stage.focusPrompt?()
+            case "/" where !stage.isClipScene: stage.focusPrompt?()
             default: return false
             }
         }

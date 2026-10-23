@@ -3,6 +3,7 @@
 //! The C ABI below (mirrored in `include/asmr.h`) is the only surface the platform shells use.
 
 pub mod acoustics;
+pub mod clips;
 mod ambisonics;
 mod bed;
 mod binaural;
@@ -60,7 +61,11 @@ pub unsafe extern "C" fn asmr_engine_new_with_scene(sample_rate: f32, scene_json
     }
     match CStr::from_ptr(scene_json).to_str().map_err(|e| e.to_string()).and_then(|j| Engine::from_json(sample_rate, j)) {
         Ok(e) => Box::into_raw(Box::new(e)),
-        Err(_) => std::ptr::null_mut(),
+        Err(e) => {
+            // The caller only sees NULL: say why (Console / the app's stderr).
+            eprintln!("asmr: scene rejected: {e}");
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -251,6 +256,126 @@ pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32
     dst[..n].copy_from_slice(&name.as_bytes()[..n]);
     dst[n] = 0;
     n as u32
+}
+
+/// Number of clip groups in the scene (clip scenes: "whales", "current", ...; else 0).
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_count(engine: *const Engine) -> u32 {
+    engine.as_ref().map_or(0, |e| e.clip_groups().len() as u32)
+}
+
+unsafe fn put_str(s: &str, out: *mut c_char, max: u32) -> u32 {
+    if out.is_null() || max == 0 {
+        return 0;
+    }
+    let n = s.len().min(max as usize - 1);
+    let dst = slice::from_raw_parts_mut(out as *mut u8, n + 1);
+    dst[..n].copy_from_slice(&s.as_bytes()[..n]);
+    dst[n] = 0;
+    n as u32
+}
+
+/// Writes group `i`'s machine id (the clips' `group`) as a NUL-terminated string and returns
+/// its length (0 if there is no such group).
+///
+/// # Safety
+/// `out` must point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_name(engine: *const Engine, i: u32, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref().and_then(|e| e.clip_groups().id(i as usize)) {
+        Some(s) => put_str(s, out, max),
+        None => 0,
+    }
+}
+
+/// Writes group `i`'s panel title from the scene's `controls` block (may be empty).
+///
+/// # Safety
+/// `out` must point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_title(engine: *const Engine, i: u32, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref().and_then(|e| e.clip_groups().title(i as usize)) {
+        Some(s) => put_str(s, out, max),
+        None => 0,
+    }
+}
+
+/// Writes group `i`'s icon key from the scene's `controls` block (may be empty).
+///
+/// # Safety
+/// `out` must point to `max` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_icon(engine: *const Engine, i: u32, out: *mut c_char, max: u32) -> u32 {
+    match engine.as_ref().and_then(|e| e.clip_groups().icon(i as usize)) {
+        Some(s) => put_str(s, out, max),
+        None => 0,
+    }
+}
+
+/// Group `i`: parameters that apply (bit `p` = `ASMR_CLIP_*` id `p`) and the physical model
+/// of its procedural clips (`ASMR_CLIP_MODEL_*`). Zero mask for an unknown group.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ClipGroupInfo {
+    pub params: u32,
+    pub model: u32,
+    pub scope: u32,
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_info(engine: *const Engine, i: u32, out: *mut ClipGroupInfo) {
+    if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
+        let g = e.clip_groups();
+        *out = ClipGroupInfo { params: g.mask(i as usize), model: g.model(i as usize) as u32, scope: g.scope(i as usize) };
+    }
+}
+
+/// Range and default of parameter `param` of group `i` (zeros for an unknown group).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ClipParamRange {
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_clip_group_param_range(engine: *const Engine, i: u32, param: u32, out: *mut ClipParamRange) {
+    if let (Some(e), false) = (engine.as_ref(), out.is_null()) {
+        let g = e.clip_groups();
+        *out = if (i as usize) < g.len() {
+            let (min, max, default) = clips::group_param_range(param, g.model(i as usize));
+            ClipParamRange { min, max, default }
+        } else {
+            ClipParamRange::default()
+        };
+    }
+}
+
+/// Sets a parameter of clip group `i` (clamped; unknown group or parameter ignored). Lock-free,
+/// any thread, applied within a block. Multiplies on top of `ASMR_PARAM_SCENE_*`.
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_clip_group_param(engine: *const Engine, group: u32, param: u32, value: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.clip_groups().set(group as usize, param, value);
+    }
+}
+
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_clip_group_param(engine: *const Engine, group: u32, param: u32) -> f32 {
+    engine.as_ref().map_or(0.0, |e| e.clip_groups().get(group as usize, param))
 }
 
 /// Where the listener is in the flight landscape (world position, heading, absolute heights)

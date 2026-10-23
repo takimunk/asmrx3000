@@ -11,11 +11,14 @@ struct StillFrames {
     var drawer: UInt32?
     var showAll = false
     var spectrogramOpen = false
+    var scenesOpen = false
 }
 
-/// The popover, top to bottom: the scene (most of it), one transport row, the prompt, the levers
-/// in two sections (sound: loudness per group; world: what happens in the forest) or one group's
-/// drawer, and the spectrogram as a quiet strip. All text is Russian, in Coppice Mono.
+/// The popover, top to bottom: the scene (most of it, with the scene picker in its corner), one
+/// transport row, the prompt, the levers in two sections (sound: loudness per group; world: what
+/// happens in the forest) or one group's drawer, and the spectrogram as a quiet strip. A clip
+/// scene (underwater, space) has its own levers and no prompt (it only knows the forest's
+/// knobs). All text is Russian, in Coppice Mono.
 struct Popover: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
@@ -56,9 +59,11 @@ struct Popover: View {
             SceneArea(model: model, stills: stills)
             Transport(model: model, audio: audio, head: head, labels: model.stage.labels, meters: model.stage.meters,
                       controls: controls)
-            PromptField(prompt: model.prompt, stage: model.stage)
-                .padding(.horizontal, Self.gutter)
-                .padding(.top, Grid.x1)
+            if !audio.scene.isClip {
+                PromptField(prompt: model.prompt, stage: model.stage)
+                    .padding(.horizontal, Self.gutter)
+                    .padding(.top, Grid.x1)
+            }
             LeverPanel(model: model, controls: controls, stills: stills)
                 .padding(.horizontal, Self.gutter)
                 .padding(.top, Grid.x3)
@@ -92,7 +97,12 @@ private struct SceneArea: View {
             .frame(width: Popover.width, height: Popover.sceneHeight)
             .accessibilityLabel("Сцена")
 
-            SelectionChip(readout: model.stage.readout, meters: model.stage.meters, showHint: hovering || stills != nil)
+            SelectionChip(readout: model.stage.readout, meters: model.stage.meters, showHint: hovering || stills != nil,
+                          clipScene: model.audio.scene.isClip)
+                .padding(Grid.x3)
+        }
+        .overlay(alignment: .topLeading) {
+            ScenePicker(model: model, audio: model.audio, forceOpen: stills?.scenesOpen ?? false)
                 .padding(Grid.x3)
         }
         .frame(width: Popover.width, height: Popover.sceneHeight)
@@ -106,25 +116,32 @@ private struct SelectionChip: View {
     @ObservedObject var readout: SceneReadout
     @ObservedObject var meters: Meters
     let showHint: Bool
+    var clipScene = false
 
     var body: some View {
         Group {
             if let s = readout.selection {
                 VStack(alignment: .leading, spacing: Grid.x1) {
                     HStack(spacing: Grid.x2) {
-                        IconView(icon: s.kind == .tree ? .tree : s.kind == .bird ? .bird : .river, color: Ink.paper, size: 15)
-                        Text(name(s.kind)).font(Ink.text(Ink.Size.title)).foregroundStyle(Ink.paper)
-                        Text(coordinates(s.position, withHeight: s.kind == .bird))
+                        IconView(icon: icon(s.kind), color: Ink.paper, size: 15)
+                        Text(s.title.map(ControlText.sentence) ?? name(s.kind)).font(Ink.text(Ink.Size.title)).foregroundStyle(Ink.paper)
+                        Text(coordinates(s.position, withHeight: s.kind == .bird || s.kind == .clip))
                             .font(Ink.text(Ink.Size.caption))
                             .foregroundStyle(Ink.graphite)
                     }
-                    Text(!s.movable ? "Летит сама: подвинуть можно, когда сядет"
+                    Text(s.kind == .clip ? "\(s.detail ?? "Движется сам")   tab следующий   esc отпустить"
+                         : !s.movable ? "Летит сама: подвинуть можно, когда сядет"
                          : s.kind == .bird ? "← → ↑ ↓ двигать   ⇧↑ ⇧↓ высота   esc отпустить"
                          : "← → ↑ ↓ двигать   esc отпустить")
                         .font(Ink.text(Ink.Size.caption))
                         .foregroundStyle(Ink.graphite)
                 }
                 .chip()
+            } else if showHint && clipScene {
+                Text("Нажмите на звук, чтобы узнать, что это и где")
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(Ink.graphite)
+                    .chip()
             } else if showHint {
                 Text("Нажмите на дерево, птицу или реку, чтобы подвинуть")
                     .font(Ink.text(Ink.Size.caption))
@@ -141,15 +158,131 @@ private struct SelectionChip: View {
         case .tree: return "Дерево"
         case .bird: return "Птица"
         case .river: return "Река"
+        case .clip: return "Звук"
         }
     }
 
-    /// Relative to the listener. Trees and the river stand on the ground, so only birds get a height.
+    private func icon(_ kind: Thing.Kind) -> Icon {
+        switch kind {
+        case .tree: return .tree
+        case .bird: return .bird
+        case .river: return .river
+        case .clip: return .tone
+        }
+    }
+
+    /// Relative to the listener. Trees and the river stand on the ground, so only birds and
+    /// clips get a height.
     private func coordinates(_ p: SIMD3<Float>, withHeight: Bool) -> String {
-        func f(_ v: Float) -> String { String(format: "%.1f", v) }
+        // + 0 turns −0 into 0, so a sound level with the ears does not read "−0.0".
+        func f(_ v: Float) -> String { String(format: "%.1f", (v * 10).rounded() / 10 + 0) }
         let ahead = p.x >= 0 ? "\(f(p.x)) м впереди" : "\(f(-p.x)) м сзади"
         let side = p.y >= 0 ? "\(f(p.y)) м слева" : "\(f(-p.y)) м справа"
-        return withHeight ? "\(ahead), \(side), \(f(p.z)) м вверх" : "\(ahead), \(side)"
+        let height = p.z >= 0 ? "\(f(p.z)) м вверх" : "\(f(-p.z)) м вниз"
+        return withHeight ? "\(ahead), \(side), \(height)" : "\(ahead), \(side)"
+    }
+}
+
+/// The scene in the scene's top-left corner; click it for the list. Switching builds the new
+/// scene in the background (clip files take a moment), then the sound carries on in it.
+private struct ScenePicker: View {
+    let model: AppModel
+    @ObservedObject var audio: AudioEngine
+    var forceOpen = false
+    @State private var openState = false
+    @State private var hovered: String?
+    @State private var hoveringTitle = false
+
+    private var open: Bool { forceOpen || openState }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if openState {
+                // A click anywhere else on the scene closes the list.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(width: Popover.width, height: Popover.sceneHeight)
+                    .offset(x: -Grid.x3, y: -Grid.x3)
+                    .onTapGesture { openState = false }
+            }
+            VStack(alignment: .leading, spacing: Grid.x1) {
+                Button { openState.toggle() } label: {
+                    HStack(spacing: Grid.x1 + 2) {
+                        Text(audio.scene.title)
+                            .font(Ink.text(Ink.Size.title))
+                            .foregroundStyle(hoveringTitle || open ? Ink.paper : Ink.paper.opacity(0.85))
+                        if let loading = audio.loadingScene {
+                            Text("→ \(loading.title.lowercased())…")
+                                .font(Ink.text(Ink.Size.caption))
+                                .foregroundStyle(Ink.graphite)
+                        }
+                        IconView(icon: .chevron, color: hoveringTitle || open ? Ink.paper : Ink.graphite, size: 12, lineWidth: 1)
+                            .rotationEffect(.degrees(open ? -90 : 90))
+                    }
+                    .chip()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .onHover { hoveringTitle = $0 }
+                .help("Сцена")
+                .accessibilityLabel("Сцена: \(audio.scene.title)")
+
+                if open {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(SceneEntry.all) { e in row(e) }
+                    }
+                    .padding(.vertical, Grid.x1)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ink.panel.opacity(0.92)))
+                }
+                if let error = audio.sceneError, !open {
+                    Text(error)
+                        .font(Ink.text(Ink.Size.caption))
+                        .foregroundStyle(Ink.graphite)
+                        .chip()
+                }
+            }
+        }
+        .animation(Motion.reduced ? nil : .easeOut(duration: 0.12), value: open)
+    }
+
+    private func row(_ e: SceneEntry) -> some View {
+        let current = e == audio.scene.entry
+        let loading = e == audio.loadingScene
+        let lit = hovered == e.id || current
+        return Button {
+            openState = false
+            audio.switchScene(to: e)
+            model.stage.focusScene?()
+        } label: {
+            HStack(spacing: Grid.x2) {
+                Text(current ? "›" : loading ? "…" : " ")
+                    .foregroundStyle(Ink.paper)
+                    .frame(width: 8, alignment: .leading)
+                Text(e.title)
+                    .foregroundStyle(lit ? Ink.paper : Ink.graphite)
+                Spacer(minLength: Grid.x4)
+                Text(Self.kind(e))
+                    .foregroundStyle(Ink.ash)
+            }
+            .font(Ink.text(Ink.Size.body))
+            .padding(.horizontal, Grid.x2 + 2)
+            .frame(width: 236, height: 24)
+            .background(RoundedRectangle(cornerRadius: 4).fill(hovered == e.id ? Ink.raised : .clear).padding(.horizontal, Grid.x1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { h in hovered = h ? e.id : (hovered == e.id ? nil : hovered) }
+        .accessibilityLabel(e.title)
+        .accessibilityAddTraits(current ? .isSelected : [])
+    }
+
+    /// What kind of scene it is, quietly on the right.
+    private static func kind(_ e: SceneEntry) -> String {
+        if e.id.hasSuffix("_real") { return "записи" }
+        if e.id.hasPrefix("underwater") || e.id.hasPrefix("space") { return "звуки" }
+        return "модель"
     }
 }
 
@@ -187,15 +320,20 @@ private struct Transport: View {
                 }
                 .padding(.trailing, Grid.x2)
             }
-            ModeSwitch(place: audio.place, hint: $hint) { to in
-                act { if audio.place != to { audio.place = to } }()
+            if !audio.scene.isClip {
+                // Home, standing or flying: the forest's generated world. Clip scenes have none.
+                ModeSwitch(place: audio.place, hint: $hint) { to in
+                    act { if audio.place != to { audio.place = to } }()
+                }
+                .padding(.trailing, Grid.x1)
             }
-            .padding(.trailing, Grid.x1)
             LabeledToggle(icon: .head, title: "Голова", on: head.enabled,
                           name: head.enabled ? "Трекинг головы включён: выключить" : "Трекинг головы по AirPods: включить",
                           key: "H", hint: $hint, action: act { head.enabled.toggle() })
+                .contextMenu { rerunOnboarding }
             ToolButton(icon: .recenter, name: "Смотреть вперёд отсюда", key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
                 .disabled(!head.enabled)
+                .contextMenu { rerunOnboarding }
             Spacer(minLength: Grid.x2)
             status
             ToolButton(icon: .power, name: "Выйти из ASMR X3000", key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
@@ -204,6 +342,12 @@ private struct Transport: View {
         }
         .padding(.horizontal, Grid.x3)
         .frame(height: 48)
+    }
+
+    /// Right click on "Голова" or recenter: the first-launch walkthrough again (permission,
+    /// the head that follows yours, "look at the centre", the screen's size and distance).
+    private var rerunOnboarding: some View {
+        Button("Настроить голову и экран заново…") { model.onboarding.show() }
     }
 
     /// Runs a button's action and gives the keyboard back to the scene, so arrows keep moving things.
@@ -223,7 +367,7 @@ private struct Transport: View {
                         .frame(width: 5, height: 5)
                     Text(labels.gaze.map(Self.russian) ?? (head.connected ? "AirPods" : "нет AirPods"))
                         .foregroundStyle(Ink.graphite)
-                } else {
+                } else if !audio.scene.isClip {
                     // The hour is also the world's "Время суток" lever; here only when there is room.
                     Text(labels.time).foregroundStyle(Ink.ash)
                 }

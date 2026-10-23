@@ -49,6 +49,8 @@ final class SceneRenderer {
     private var lastBird: [UInt32: SIMD3<Float>] = [:]
     private var heading: [UInt32: Float] = [:]
     private let birdFlight = BirdFlight()
+    /// Clip scenes: the bottom of the water, built for the scene's depth (ClipStage.swift).
+    private var floor: (z: Float, mesh: Mesh)?
 
     static let sun = simd_normalize(SIMD3<Float>(-0.42, 0.5, 0.76))
     static let birdScale: Float = 4.0
@@ -112,7 +114,7 @@ final class SceneRenderer {
     func encode(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float) {
         ensureTargets(width: target.width, height: target.height)
         let river = stage.riverPoints()
-        if !stage.flight.active, terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
+        if !stage.flight.active, !stage.isClipScene, terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
             terrain = TerrainMesh.build(river: river)
             terrainRiver = river
         }
@@ -157,7 +159,7 @@ final class SceneRenderer {
         }
         let instances = buildInstances(time: time, river: river, proj: proj, scale: scale, u: &u)
         if let t = stage.thing(stage.selection) {
-            if let b = proj.bounds(min: t.boxMin, max: t.boxMax) { u.bracket = snapped(b, scale: scale) }
+            if let b = proj.bounds(min: bracketMin(t), max: bracketMax(t)) { u.bracket = snapped(b, scale: scale) }
             if t.kind == .bird, let a = proj.project(t.anchor),
                let g = proj.project(SIMD3(t.anchor.x, t.anchor.y, Terrain.height(t.anchor.x, t.anchor.y))) {
                 let pa = a.point * scale, pg = g.point * scale
@@ -165,7 +167,7 @@ final class SceneRenderer {
                 u.sun.w = 1
             }
         }
-        if stage.hover != stage.selection, let t = stage.thing(stage.hover), let b = proj.bounds(min: t.boxMin, max: t.boxMax) {
+        if stage.hover != stage.selection, let t = stage.thing(stage.hover), let b = proj.bounds(min: bracketMin(t), max: bracketMax(t)) {
             u.hoverBracket = snapped(b, scale: scale)
         }
 
@@ -228,6 +230,16 @@ final class SceneRenderer {
         }
     }
 
+    private func bracketMin(_ t: Thing) -> SIMD3<Float> {
+        if t.kind == .clip, let id = t.ids.first, let b = clipBoxes[id] { return b.centre - b.half }
+        return t.boxMin
+    }
+
+    private func bracketMax(_ t: Thing) -> SIMD3<Float> {
+        if t.kind == .clip, let id = t.ids.first, let b = clipBoxes[id] { return b.centre + b.half }
+        return t.boxMax
+    }
+
     private func flags(_ key: Thing.Key) -> Float {
         if stage.selection == key { return 1 }
         if stage.hover == key { return 2 }
@@ -261,6 +273,16 @@ final class SceneRenderer {
                 let m = stage.terrain.model(c)
                 if let w = c.waterMesh { list.append((w, Instance(model: m, info: Self.anchor(c), anim: .zero))) }
             }
+        } else if stage.isClipScene {
+            // No forest here: the scene's own things (and underwater, the bottom).
+            let scene = stage.audio.scene
+            if scene.look == .underwater {
+                if floor?.z != scene.groundZ, let m = ClipProps.floor(at: scene.groundZ) { floor = (scene.groundZ, m) }
+                if let f = floor { list.append((f.mesh, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, 0, 0, 0), anim: .zero))) }
+            }
+            clipInstances(&list, proj: proj, scale: scale)
+            u.counts = SIMD4(0, Float(ringCount), 0, 0)
+            return list
         } else if let terrain {
             list.append((terrain, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, flags(.river), 0, 0), anim: .zero)))
         }
@@ -381,6 +403,83 @@ final class SceneRenderer {
         }
         u.counts = SIMD4(Float(min(river.count, 8)), Float(birds), stage.audio.water, Float(generic))
         return list
+    }
+
+    // MARK: Clip scenes
+
+    /// Rings written into the bird slots by `clipInstances`.
+    private var ringCount = 0
+    private let actors = ClipActors()
+    /// Where each clip is drawn and how far it reaches, for the selection brackets.
+    private var clipBoxes: [UInt32: (centre: SIMD3<Float>, half: Float)] = [:]
+
+    /// The sounds of a clip scene as stone bodies at their mapped places, beads along their
+    /// trails, the screen as a frame, a sweep as a bar across the way; the loudest four get the
+    /// bird rings while they sound.
+    private func clipInstances(_ list: inout [(Mesh, Instance)], proj: Projector, scale: Float) {
+        guard let sphere = ClipProps.sphere, let box = ClipProps.box else { return }
+        let scene = stage.audio.scene
+        let stone = SIMD4<Float>(-1, 0, 0, 0)
+        ringCount = 0
+
+        // The screen in front of the listener: four bars around its visible area.
+        let scr = stage.audio.screenSize
+        let centre = SIMD3<Float>(scr.distance, 0, -0.05)
+        let corners = [SIMD3<Float>(0, 1, 1), SIMD3(0, -1, 1), SIMD3(0, -1, -1), SIMD3(0, 1, -1)].map {
+            ClipSpace.map(centre + $0 * SIMD3(0, scr.width / 2, scr.height / 2))
+        }
+        for k in 0..<4 {
+            list.append((box, Instance(model: ClipProps.bar(corners[k], corners[(k + 1) % 4], thickness: 0.06), info: stone, anim: .zero)))
+        }
+
+        // Trails: beads behind the sounds that have no model of their own.
+        for (id, trail) in stage.trails where trail.count > 1 {
+            guard let c = scene.clips[id], actors.kind(of: id, in: scene) == .generic else { continue }
+            for (i, p) in trail.dropLast().enumerated() where i % 2 == 0 {
+                let age = Float(i + 1) / Float(trail.count)
+                list.append((sphere, Instance(model: ClipProps.ball(ClipSpace.map(p), radius: 0.03 + 0.06 * age), info: stone, anim: .zero)))
+                _ = c
+            }
+        }
+
+        var rings: [(SIMD3<Float>, Float)] = []
+        clipBoxes.removeAll(keepingCapacity: true)
+        let clock = Float(stage.time.truncatingRemainder(dividingBy: 3600))
+        for t in stage.things where t.kind == .clip {
+            guard let id = t.ids.first, let clip = scene.clips[id] else { continue }
+            let p = ClipSpace.map(t.anchor)
+            let level = clipLevel(near: t.anchor, spread: clip.spread)
+            let info = SIMD4<Float>(Float(id), flags(t.key), 0, 0)
+            let kind = actors.kind(of: id, in: scene)
+            let made = actors.pieces(kind, clip: clip, raw: t.anchor, trail: stage.trails[id] ?? [], time: clock, level: level,
+                                     screen: (scr.distance, scr.width))
+            for piece in made.pieces { list.append((piece.mesh, Instance(model: piece.model, info: info, anim: .zero))) }
+            clipBoxes[id] = (p, made.extent)
+            // A bed or texture spread over several emitters: a pebble at each.
+            if kind == .generic && clip.emitters > 1 && clip.spread > 0 && clip.sweep == nil {
+                for k in 0..<clip.emitters {
+                    let a = 2 * Float.pi * Float(k) / Float(clip.emitters)
+                    let e = ClipSpace.map(t.anchor + SIMD3(cos(a), sin(a), 0) * clip.spread)
+                    list.append((sphere, Instance(model: ClipProps.ball(e, radius: 0.1), info: info, anim: .zero)))
+                }
+            }
+            if level > 0.05 { rings.append((p, level)) }
+        }
+        let focal = proj.size.y * 0.5 / tan(proj.camera.fovY / 2)
+        for (p, level) in rings.sorted(by: { $0.1 > $1.1 }).prefix(4) {
+            guard let sp = proj.project(p) else { continue }
+            // The engraver's bird rings: 0.7..3.1 "m" at its scale, here a third of that.
+            data[8 + ringCount] = SIMD4(sp.point.x * scale, sp.point.y * scale, focal / sp.w * scale * 0.35, level / 9)
+            data[12 + ringCount] = SIMD4(simd_distance(proj.camera.eye, p), 0, 0, 0)
+            ringCount += 1
+        }
+    }
+
+    /// How loud a clip is now, 0..1 (-46..-6 dB): the loudest source telemetry near it.
+    private func clipLevel(near p: SIMD3<Float>, spread: Float) -> Float {
+        var level: Float = 0
+        for s in stage.sources where simd_distance(s.world, p) < spread + 1.5 { level = max(level, s.level) }
+        return min(max((20 * log10(max(level, 1e-6)) + 46) / 40, 0), 1)
     }
 
     /// Instance info of a terrain chunk: no id, and its world origin (wrapped) so the water

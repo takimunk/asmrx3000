@@ -528,6 +528,9 @@ impl Flight {
                         Some(c) => SoundClass::of_model(c.kind()),
                         None => SoundClass::Bird(species),
                     },
+                    muffle: [0.0; 2],
+                    enveloped: false,
+                    env: 0.0,
                 });
                 let target = match pool {
                     Pool::Rain => Target::Rain(j as u8),
@@ -546,7 +549,7 @@ impl Flight {
         let mut f = Self {
             sample_rate: sr,
             land,
-            world: World { entities, emitters, ground_z: -pose.height },
+            world: World { entities, emitters, ground_z: -pose.height, muffle_hz: 0.0 },
             acoustics,
             slots: slots.into_boxed_slice(),
             pose,
@@ -1771,7 +1774,7 @@ impl Flight {
 /// (530, 310, 170 m), deterministic per seed.
 fn curvature(seed: u64, s: f64) -> f64 {
     let mut r = land::Stream::new(land::hash(seed, 0, 0, 0x9A7));
-    let p = [r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64, r.range(0.0, 6.283) as f64];
+    let p = [r.range(0.0, core::f32::consts::TAU) as f64, r.range(0.0, core::f32::consts::TAU) as f64, r.range(0.0, core::f32::consts::TAU) as f64];
     let tau = core::f64::consts::TAU;
     (0.55 * (tau * s / 530.0 + p[0]).sin() + 0.30 * (tau * s / 310.0 + p[1]).sin() + 0.15 * (tau * s / 170.0 + p[2]).sin()) / MIN_RADIUS
 }

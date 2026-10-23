@@ -218,3 +218,51 @@ easier to read; c, upright; the old X_). The app icon already reads ASMR / X / 3
   strings there ("Send   Enter", "Listening", "Prompt") are still English.
 - The gaze label is built in English in `Stage/Stage.swift` and translated at display time.
 - Not checked in the running popover by eye (snapshots and a live AppKit icon render only).
+
+## 5. First launch: onboarding
+
+`Sources/ASMRX3000/Onboarding/`. A compact 460 × 404 pt window built like the popover: the art
+full-bleed on top (256 pt, where the popover has its scene), then the panel's ground, Coppice
+Mono at the panel's sizes (title 16, body 12, step "1 / 3" 11), its greys and its buttons on the
+4 pt grid. Shown at the first launch, with `--onboarding`, or from the popover (right click on
+"Голова" or on recenter: "Настроить голову и экран заново…"). Finished once → `onboarding.done`;
+closing the window also counts (without starting playback).
+
+**The art.** An original character (generated for the app with fal.ai `flux/schnell`, poses and
+the eye close-up with `flux-pro/kontext`; `tools/fal/img.py`, spend in `tools/fal/spend.log`):
+a 90s cel-shaded anime girl with a short asymmetric bob, straight bangs, one longer lock, large
+eyes, white earbuds. Sources in `Resources/Onboarding/` (front, turn_left, turn_right = mirrored,
+profile_right = mirrored, eye; ≤ 512 px, background keyed out), copied into the bundle by
+`scripts/build-macos.sh`. `Dither.swift` draws them through an ordered Bayer 8 × 8 dither on the
+luminance into a crisp grid of 2 pt cells: paper on the lit side, red on the shadow side (a
+dithered terminator: a hard light from the left), line art and pupils in the void, the image's
+edges dissolving into black. Violet only for the listener: the earbud once linked, the iris and
+ring on the lock. Two hairline power lines cross the top; one wire drops into her earbud.
+
+1. **соединяем голову со звуком.** She turns by herself: the front and the two three-quarter
+   views, chosen by the yaw with a short crossfade mid-turn, shifted by the pitch, rotated by the
+   roll. "разрешить" starts `HeadTracker` (until then it holds back, so the system asks for
+   motion access only here). On the first samples a pulse runs down the wire (0.8 s), the earbud
+   turns violet ("наушники подключены"), and a spring hands her over to your real pose (mirror
+   image). Fallbacks: "airpods молчат" (keeps waiting), "доступ к движению закрыт" (открыть
+   настройки); "без трекинга" turns head tracking off (remembered, `headEnabled`).
+2. **посмотри в центр.** The window moves so its centre is the screen's centre. Her eye in close-up
+   fills the art (a short push-in); the iris looks at you, then down at a small red cross on that
+   centre (moved by a displacement field inside the eye opening; blinks close it from the top).
+   A ring closes round the cross while the head is still (< 0.14 rad/s, |pitch| < 0.5 rad) for
+   1 s; then `recenter()`, the chime, a trackpad tick, and the iris and ring turn violet.
+3. **последний штрих / настрой экран.** Her profile (live, lit by the screen), a dashed eye level,
+   the line of sight to the screen's centre and the screen as a paper slab facing her at its
+   height to her scale, "60 см −15°" and the diagonal. Drag the slab: across sets the distance,
+   up/down the elevation. Rows "до глаз 60 см − +" (← →, 5 cm, `screenDistance.*`) and
+   "угол −15° ↓ ↑" (↓ ↑, 1°, `screenElevation.*`, −45…+30°, default −15° built-in, −5°
+   external), sent as ASMR_PARAM_SCREEN_DISTANCE / ELEVATION with width and height; `ScreenWatcher`
+   resends them at launch and on display changes. "слушать" (⏎) closes the window, starts
+   playback at home and opens the panel: `AppModel.openPanel()` clicks the status item (any
+   view in the app's status bar window that takes `performClick`), then sends that window a
+   synthesised click, then shows the popover's content in an NSPanel under the icon if no panel
+   is up after 0.5 s each time; every step logs with "asmr" (`--open-panel` runs it at launch).
+
+All head reads are on the main thread at UI rate (HeadTracker's 30 Hz values); nothing in the
+onboarding touches the audio path. "Reduce motion": no hum, no self-turn, no blinks or push-in; the link pulse becomes an instant
+colour change. The real head is still followed.

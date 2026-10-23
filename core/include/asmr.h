@@ -71,6 +71,17 @@ enum {
     ASMR_PARAM_MOVE_STRAFE = 46,  /* D = +1 (right), A = -1 (left) [0] */
     ASMR_PARAM_MOVE_TURN = 47,    /* E = +1 (turn right), Q = -1 (turn left) [0] */
     ASMR_PARAM_MOVE_RUN = 48,     /* 1 = Shift held: run (5 m/s) instead of walk [0] */
+    /* The screen in front of the listener, set after the "look at the centre" calibration
+     * from the display's physical size: a portal scenes can pull sounds into. */
+    ASMR_PARAM_SCREEN_WIDTH = 49,    /* visible width, m [0.30] */
+    ASMR_PARAM_SCREEN_HEIGHT = 50,   /* visible height, m [0.20] */
+    ASMR_PARAM_SCREEN_DISTANCE = 51, /* eyes to screen centre, m [0.60] */
+    /* Clip scenes (underwater, space, ...), 1 = as authored. */
+    ASMR_PARAM_SCENE_MOTION = 52,    /* speed of travelling sounds, 0..3 [1] */
+    ASMR_PARAM_SCENE_EVENTS = 53,    /* how often things happen, 0..3 [1] */
+    ASMR_PARAM_SCENE_BED = 54,       /* level of beds and textures, 0..2 [1] */
+    ASMR_PARAM_SCENE_CREATURES = 55, /* level of creatures and events, 0..2 [1] */
+    ASMR_PARAM_SCREEN_ELEVATION = 56, /* screen centre seen from the eyes, degrees, - = below [-8] */
 };
 
 /* Values of ASMR_PARAM_GROUND (effective flow resistivity in brackets). */
@@ -382,6 +393,39 @@ uint32_t asmr_get_controls(const AsmrEngine *engine, AsmrControlInfo *out, uint3
 void asmr_set_control(const AsmrEngine *engine, uint32_t id, float value);
 /* Name of option `index` of a discrete control into `out` (NUL-terminated); returns its length, 0 if none. */
 uint32_t asmr_get_control_option(const AsmrEngine *engine, uint32_t id, uint32_t index, char *out, uint32_t max);
+
+/* Clip groups (clip scenes, core/src/clips.rs): clips sharing a `group` id in the scene file
+   ("whales", "current", "plasma"...) get their own controls, multiplying on top of the
+   ASMR_PARAM_SCENE_* macros. Lock-free, any thread, applied within a block. Out-of-range
+   groups/params are ignored; values are clamped to asmr_clip_group_param_range. */
+enum {
+    ASMR_CLIP_LEVEL = 0,    /* dB, -30..+10 [0] */
+    ASMR_CLIP_EVENTS = 1,   /* how often things happen, x0..3 [1] */
+    ASMR_CLIP_MOTION = 2,   /* speed of travelling sounds, x0..3 [1] */
+    ASMR_CLIP_DISTANCE = 3, /* positions/offsets/radii about the listener, x0.3..3 [1] */
+    ASMR_CLIP_PITCH = 4,    /* playback rate of files, x0.5..2 [1]; not for model clips */
+    ASMR_CLIP_MODEL_A = 5,  /* water: flow speed x0..2.5 [1]; plasma: hiss centre x0.4..2.5 [1] */
+    ASMR_CLIP_MODEL_B = 6,  /* water: turbulence x0..4 [1]; plasma: whistlers/min added 0..60 [0] */
+};
+enum { ASMR_CLIP_MODEL_NONE = 0, ASMR_CLIP_MODEL_WATER = 1, ASMR_CLIP_MODEL_PLASMA = 2 };
+typedef struct AsmrClipGroupInfo {
+    uint32_t params; /* bit p set = ASMR_CLIP_* id p applies to this group (level always) */
+    uint32_t model;  /* ASMR_CLIP_MODEL_* of its procedural clips */
+    uint32_t scope;  /* ASMR_SCOPE_* its sound is metered on (the first clip's source kind) */
+} AsmrClipGroupInfo;
+typedef struct AsmrClipParamRange {
+    float min, max, def;
+} AsmrClipParamRange;
+uint32_t asmr_clip_group_count(const AsmrEngine *engine);
+/* NUL-terminated strings; return the length (0 = none). name = the clips' `group` id; title
+   and icon come from the scene's optional `controls` block (empty if absent). */
+uint32_t asmr_clip_group_name(const AsmrEngine *engine, uint32_t group, char *out, uint32_t max);
+uint32_t asmr_clip_group_title(const AsmrEngine *engine, uint32_t group, char *out, uint32_t max);
+uint32_t asmr_clip_group_icon(const AsmrEngine *engine, uint32_t group, char *out, uint32_t max);
+void asmr_clip_group_info(const AsmrEngine *engine, uint32_t group, AsmrClipGroupInfo *out);
+void asmr_clip_group_param_range(const AsmrEngine *engine, uint32_t group, uint32_t param, AsmrClipParamRange *out);
+void asmr_set_clip_group_param(const AsmrEngine *engine, uint32_t group, uint32_t param, float value);
+float asmr_get_clip_group_param(const AsmrEngine *engine, uint32_t group, uint32_t param);
 
 /* Flight mode: shape of a streamed object (river bed, lake shore, ridge line) as listener-relative
    (x, y, z) triples, up to max_points (24 at most); returns the number of points, 0 for objects

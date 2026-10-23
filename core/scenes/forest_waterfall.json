@@ -1,0 +1,40 @@
+{
+  "name": "Forest waterfall",
+  "seed": 3101,
+  "environment": { "time_of_day": 7.5, "season": "spring", "rain_mm_h": 0.0, "temperature_c": 13.0, "humidity": 0.85,
+                   "storm": 0.0, "wind_ms": 1.5, "ground_z": -1.7 },
+  "director": { "flock_interval": [600, 900], "first_flock": 900 },
+  "entities": [
+    { "kind": "source", "id": 300, "segments": 3,
+      "path": [[11.5, 4.5, -1.5], [11.5, 3.0, -1.5], [11.5, 1.5, -1.5]],
+      "sound": { "model": "water", "preset": "small_waterfall", "params": { "drop_height_m": 4.0, "width_m": 3.0, "flow_ms": 1.4 } } },
+    { "kind": "source", "id": 301, "position": [12.0, 3.2, 2.3],
+      "sound": { "model": "water", "preset": "rapids", "params": { "length_m": 1.5, "width_m": 3.0, "gain": 0.4 } } },
+
+    { "kind": "river", "id": 50, "flow": 0.8, "segments": 5,
+      "path": [[9.0, 2.0, -1.6], [4.0, -1.5, -1.6], [0.5, -2.2, -1.6], [-6.0, -3.5, -1.6]],
+      "sound": { "model": "water", "preset": "brook_pebbles", "params": { "gain": 0.65 } } },
+    { "kind": "source", "id": 302, "position": [0.5, -2.2, -1.5],
+      "sound": { "model": "water", "preset": "brook_rocks", "params": { "length_m": 0.8, "width_m": 1.2, "gain": 0.3 } } },
+    { "kind": "source", "id": 303, "position": [0.5, 3.0, -0.5],
+      "sound": { "model": "water", "preset": "drips", "params": { "drips_hz": 0.15, "drop_height_m": 1.0, "depth_m": 0.05, "gain": 0.4 } } },
+
+    { "kind": "tree", "id": 1, "species": "alder",  "position": [ 1.5,  0.5, -1.7], "canopy_height": 5.0, "canopy_radius": 3.0 },
+    { "kind": "tree", "id": 2, "species": "birch",  "position": [13.0,  6.5, -1.7], "canopy_height": 6.0 },
+    { "kind": "tree", "id": 3, "species": "alder",  "position": [ 6.0, -4.5, -1.7], "canopy_height": 4.5 },
+    { "kind": "tree", "id": 4, "species": "willow", "position": [ 1.0,  6.0, -1.7], "canopy_height": 2.5, "canopy_radius": 1.5 },
+    { "kind": "tree", "id": 5, "species": "birch",  "position": [-6.0,  5.0, -1.7], "canopy_height": 3.0 },
+    { "kind": "tree", "id": 6, "species": "spruce", "position": [-10.0,  2.0, -1.7], "canopy_height": 7.0 },
+    { "kind": "tree", "id": 7, "species": "spruce", "position": [-11.0, -3.0, -1.7], "canopy_height": 8.0 },
+    { "kind": "tree", "id": 8, "species": "spruce", "position": [-22.0, -12.0, -1.7], "canopy_height": 10.0 },
+
+    { "kind": "source", "id": 500, "position": [-40.0, 0.0, 5.0], "sound": { "model": "wind", "preset": "forest_roar", "params": { "gain": 0.3 } } },
+    { "kind": "source", "id": 404, "position": [-35.0, 20.0, 4.0], "sound": { "model": "insects", "preset": "woodpecker" } },
+
+    { "kind": "bird", "id": 100, "species": "robin",
+      "behaviour": { "type": "flyby", "first": 45, "interval": [120, 240], "min_distance": 1.8, "height": 0.2, "reach": 15 } },
+    { "kind": "bird", "id": 101, "species": "chaffinch",   "behaviour": { "type": "resident", "home": 4, "roam": 0.3 } },
+    { "kind": "bird", "id": 102, "species": "song_thrush", "behaviour": { "type": "resident", "home": 8, "roam": 0.2 } },
+    { "kind": "bird", "id": 103, "species": "robin",       "behaviour": { "type": "resident", "home": 5, "roam": 0.3 }, "loudness": 0.7 }
+  ]
+}

@@ -5,18 +5,20 @@ import simd
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|none] [--expand water|wind|none] [--more] [--spectrogram] [--orbit 0..1]
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|clip|none] [--seconds s] [--scenes] [--expand water|wind|none] [--more] [--spectrogram] [--orbit 0..1]
 ///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
 ///  [--flight speed] [--seed n] [--steer yaw°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
     @MainActor
-    static func run(path: String, seconds: Double = 11) {
+    static func run(path: String) {
         let args = CommandLine.arguments
         func value(_ flag: String) -> String? {
             args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
         }
+        // Clip scenes take a while to bring their sounds on stage.
+        let seconds = value("--seconds").flatMap(Double.init) ?? 11
         IconView.still = true
         let model = AppModel()
         let stage = model.stage
@@ -64,7 +66,8 @@ enum Snapshot {
             }
             model.audio.simulate(seconds: 1 / fps)
             stage.step(dt: 1 / fps)
-            if i == 2 {
+            // Clips come and go: pick one shortly before the frame is taken.
+            if i == (selectKind == "clip" ? max(Int(seconds * fps) - 15, 2) : 2) {
                 // Select something and move it a little, the way a user would.
                 switch selectKind {
                 case "tree":
@@ -79,6 +82,13 @@ enum Snapshot {
                     }
                 case "river":
                     stage.select(.river)
+                case "clip":
+                    // The nearest sound that moves (or any), so the selection shows its trail.
+                    let clips = stage.things.filter { $0.kind == .clip }
+                    let moving = clips.filter { t in model.audio.scene.clips[t.ids[0]]?.moves == true }
+                    if let t = (moving.isEmpty ? clips : moving).min(by: { simd_length($0.anchor) < simd_length($1.anchor) }) {
+                        stage.select(t.key)
+                    }
                 default:
                     break
                 }
@@ -107,7 +117,7 @@ enum Snapshot {
         let expand = value("--expand") ?? "none"
         let drawer = controls.macros.first { $0.key == expand || $0.key.hasPrefix(expand + ".") }?.id
         let showAll = args.contains("--more")
-        let levers = LeverPanel.visible(controls.macros, flying: model.audio.flying, showAll: showAll)
+        let levers = LeverPanel.levers(controls.macros, scene: model.audio.scene, flying: model.audio.flying, showAll: showAll)
         let rows = LeverPanel.layout(levers)
         let tracksSize = SIMD2(Float(Popover.sliderWidth), Float(Popover.leverHeight) * Float(max(levers.count, 1)))
         let hover: SIMD2<Float>? = spectrogramOpen ? SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38) : nil
@@ -124,7 +134,8 @@ enum Snapshot {
         else { return }
 
         let stills = StillFrames(scene: scene, spectrogram: spec, tracks: tracks, spectrogramHover: hover,
-                                 drawer: drawer, showAll: showAll, spectrogramOpen: spectrogramOpen)
+                                 drawer: drawer, showAll: showAll, spectrogramOpen: spectrogramOpen,
+                                 scenesOpen: args.contains("--scenes"))
         let renderer = ImageRenderer(content: Popover(model: model, stills: stills))
         renderer.scale = CGFloat(scale)
         guard let image = renderer.cgImage,
