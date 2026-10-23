@@ -49,6 +49,77 @@ final class MenuBarController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The panel's frame while it is open (the onboarding grows out of it when re-run).
+    var openFrame: NSRect? { isOpen ? panel?.frame : nil }
+
+    /// Where the panel is placed now (after `landingFrame`): the glide follows it if the
+    /// content's size settles while the window is on its way.
+    var placedFrame: NSRect? { panel?.frame }
+
+    /// Where the panel will sit when it opens: built and laid out now if needed, so the
+    /// onboarding window can glide into exactly this frame before the panel appears in it.
+    /// `preload`: also put it on screen, fully transparent and ignoring the mouse, so the scene
+    /// has rendered its first frames by the time the window lands (no empty ground).
+    func landingFrame(preload: Bool = false) -> NSRect {
+        let panel = self.panel ?? makePanel()
+        self.panel = panel
+        if let view = panel.contentViewController?.view {
+            view.layoutSubtreeIfNeeded()
+            let fit = view.fittingSize
+            if fit.width > 0, fit.height > 0, fit != panel.frame.size { panel.setContentSize(fit) }
+        }
+        place(panel)
+        if preload, !panel.isVisible {
+            // On screen but invisible: no ground, no shadow, the sections hidden
+            // (PanelArrival), the mouse passing through. The scene renders its first frames
+            // while the onboarding window glides here.
+            PanelArrival.shared.settled = false
+            panel.contentViewController?.view.layer?.backgroundColor = NSColor.clear.cgColor
+            panel.hasShadow = false
+            panel.alphaValue = 1
+            panel.ignoresMouseEvents = true
+            panel.orderFront(nil)
+        }
+        return panel.frame
+    }
+
+    /// The window is about to land: the sections start settling in over its ground.
+    func beginArrival() {
+        PanelArrival.shared.settled = true
+    }
+
+    /// The window has landed in the preloaded panel's frame: the panel takes its ground and
+    /// shadow (the same as the window's, so nothing changes on screen) and the keyboard.
+    func land() {
+        guard let panel else { return open() }
+        panel.contentViewController?.view.layer?.backgroundColor = NSColor(Ink.panel).cgColor
+        panel.hasShadow = true
+        panel.invalidateShadow()
+        panel.ignoresMouseEvents = false
+        PanelArrival.shared.settled = true
+        open()
+    }
+
+    /// Opens the panel by fading it in where it lands (Reduce Motion: no glide, a cross-fade).
+    func open(fadeIn seconds: TimeInterval, completion: (() -> Void)? = nil) {
+        _ = landingFrame()
+        guard let panel else { return }
+        panel.ignoresMouseEvents = false
+        PanelArrival.shared.settled = true
+        panel.alphaValue = 0
+        open()
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = seconds
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }, completionHandler: {
+            MainActor.assumeIsolated {
+                panel.alphaValue = 1
+                completion?()
+            }
+        })
+    }
+
     func open() {
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -131,4 +202,33 @@ final class MenuPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) {
         MenuBarController.shared?.close()
     }
+}
+
+/// The panel's sections settling in after the onboarding glides into its frame: hidden while
+/// the panel waits, then each fades in and rises a few points, one after another.
+final class PanelArrival: ObservableObject {
+    static let shared = PanelArrival()
+    @Published var settled = true
+}
+
+private struct ArrivalModifier: ViewModifier {
+    @ObservedObject var arrival = PanelArrival.shared
+    let index: Int
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(arrival.settled ? 1 : 0)
+            .offset(y: arrival.settled || Motion.reduced ? 0 : 8)
+            .animation(arrival.settled ? animation : nil, value: arrival.settled)
+    }
+
+    private var animation: Animation {
+        Motion.reduced ? .easeOut(duration: 0.18)
+            : .spring(response: 0.46, dampingFraction: 0.88).delay(Double(index) * 0.05)
+    }
+}
+
+extension View {
+    /// One of the panel's sections, in order from the top (see PanelArrival).
+    func arrival(_ index: Int) -> some View { modifier(ArrivalModifier(index: index)) }
 }

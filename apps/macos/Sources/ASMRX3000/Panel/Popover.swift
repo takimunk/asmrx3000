@@ -25,21 +25,36 @@ struct Popover: View {
     @ObservedObject var head: HeadTracker
     @ObservedObject var controls: ControlsModel
     var stills: StillFrames?
+    /// What the hovered transport control does, shown over the scene's bottom-right corner.
+    @State private var hint: String?
 
     static let width: CGFloat = 540
     static let sceneHeight: CGFloat = 336
     static let gutter: CGFloat = Grid.x4
+    /// Pictograms: 18 pt (1.1 pt line) for buttons and levers, 16 pt (1 pt line) for compact
+    /// rows, drawer parameters and chips.
+    static let iconSize: CGFloat = 18
+    static let smallIconSize: CGFloat = 16
     /// World levers: pictogram, name, slider (the waveform), value, chevron.
+    /// A drawer's rows share the levers' height and columns, so names, sliders and values stay
+    /// put when a drawer opens.
     static let leverHeight: CGFloat = 26
-    static let childHeight: CGFloat = 28
+    static let childHeight: CGFloat = leverHeight
     static let iconColumn: CGFloat = 26
     static let nameColumn: CGFloat = 150
     static let valueColumn: CGFloat = 72
     static let chevronColumn: CGFloat = 20
-    /// Sound levels: two columns of compact rows.
+    /// Sound levels: two columns of compact rows, the same icon column as the levers.
     static let soundRowHeight: CGFloat = 22
     static let soundColumnGap: CGFloat = Grid.x4
+    static let soundNameColumn: CGFloat = 76
+    static let soundValueColumn: CGFloat = 48
     static var soundColumnWidth: CGFloat { (width - 2 * gutter - soundColumnGap) / 2 }
+    static let transportHeight: CGFloat = 48
+    /// A section header ("Звук ─── …") and a drawer's title line.
+    static let headerHeight: CGFloat = 20
+    static let volumeWidth: CGFloat = 48
+    static let sceneMenuWidth: CGFloat = 236
     static let spectrogramClosed: CGFloat = 24
     static let spectrogramOpen: CGFloat = 96
     /// The levers' slider width (the track scopes are drawn to it).
@@ -56,21 +71,30 @@ struct Popover: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SceneArea(model: model, stills: stills)
+            SceneArea(model: model, stills: stills, hint: hint)
+                .arrival(0)
             Transport(model: model, audio: audio, head: head, labels: model.stage.labels, meters: model.stage.meters,
-                      controls: controls)
+                      controls: controls, hint: $hint)
+                .arrival(1)
             if !audio.scene.isClip {
                 PromptField(prompt: model.prompt, stage: model.stage)
                     .padding(.horizontal, Self.gutter)
                     .padding(.top, Grid.x1)
+                    .arrival(2)
             }
             LeverPanel(model: model, controls: controls, stills: stills)
                 .padding(.horizontal, Self.gutter)
                 .padding(.top, Grid.x3)
+                .arrival(3)
             SpectrogramStrip(stage: model.stage, stills: stills)
                 .padding(.horizontal, Self.gutter)
                 .padding(.top, Grid.x3)
-                .padding(.bottom, Grid.x4)
+                .arrival(4)
+            PanelSettings(stills: stills)
+                .padding(.horizontal, Self.gutter)
+                .padding(.top, Grid.x3)
+                .padding(.bottom, Grid.x3)
+                .arrival(5)
         }
         .frame(width: Self.width)
         .background(Ink.panel)
@@ -83,6 +107,7 @@ struct Popover: View {
 private struct SceneArea: View {
     let model: AppModel
     var stills: StillFrames?
+    var hint: String?
     @State private var hovering = false
 
     var body: some View {
@@ -100,7 +125,22 @@ private struct SceneArea: View {
             SelectionChip(readout: model.stage.readout, meters: model.stage.meters, showHint: hovering || stills != nil,
                           clipScene: model.audio.scene.isClip)
                 .padding(Grid.x3)
+                // The transport's hint takes the corner while it is up, so the two never overlap.
+                .opacity(hint == nil ? 1 : 0)
         }
+        .overlay(alignment: .bottomTrailing) {
+            if let hint {
+                Text(hint)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(Ink.paper)
+                    .lineLimit(1)
+                    .chip()
+                    .padding(Grid.x3)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Motion.reduced ? nil : .easeOut(duration: 0.12), value: hint)
         .overlay(alignment: .topLeading) {
             ScenePicker(model: model, audio: model.audio, forceOpen: stills?.scenesOpen ?? false)
                 .padding(Grid.x3)
@@ -123,7 +163,7 @@ private struct SelectionChip: View {
             if let s = readout.selection {
                 VStack(alignment: .leading, spacing: Grid.x1) {
                     HStack(spacing: Grid.x2) {
-                        IconView(icon: icon(s.kind), color: Ink.paper, size: 15)
+                        IconView(icon: icon(s.kind), color: Ink.paper, size: Popover.smallIconSize, lineWidth: 1)
                         Text(s.title.map(ControlText.sentence) ?? name(s.kind)).font(Ink.text(Ink.Size.title)).foregroundStyle(Ink.paper)
                         Text(coordinates(s.position, withHeight: s.kind == .bird || s.kind == .clip))
                             .font(Ink.text(Ink.Size.caption))
@@ -207,7 +247,7 @@ private struct ScenePicker: View {
             }
             VStack(alignment: .leading, spacing: Grid.x1) {
                 Button { openState.toggle() } label: {
-                    HStack(spacing: Grid.x1 + 2) {
+                    HStack(spacing: Grid.x2) {
                         Text(audio.scene.title)
                             .font(Ink.text(Ink.Size.title))
                             .foregroundStyle(hoveringTitle || open ? Ink.paper : Ink.paper.opacity(0.85))
@@ -233,7 +273,8 @@ private struct ScenePicker: View {
                         ForEach(SceneEntry.all) { e in row(e) }
                     }
                     .padding(.vertical, Grid.x1)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ink.panel.opacity(0.92)))
+                    .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.94)))
+                    .overlay(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
                 }
                 if let error = audio.sceneError, !open {
                     Text(error)
@@ -255,20 +296,22 @@ private struct ScenePicker: View {
             audio.switchScene(to: e)
             model.stage.focusScene?()
         } label: {
-            HStack(spacing: Grid.x2) {
+            HStack(spacing: Grid.x1) {
                 Text(current ? "›" : loading ? "…" : " ")
                     .foregroundStyle(Ink.paper)
-                    .frame(width: 8, alignment: .leading)
+                    .frame(width: Grid.x2, alignment: .leading)
                 Text(e.title)
                     .foregroundStyle(lit ? Ink.paper : Ink.graphite)
                 Spacer(minLength: Grid.x4)
                 Text(Self.kind(e))
-                    .foregroundStyle(Ink.ash)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(hovered == e.id ? Ink.graphite : Ink.ash)
             }
             .font(Ink.text(Ink.Size.body))
-            .padding(.horizontal, Grid.x2 + 2)
-            .frame(width: 236, height: 24)
-            .background(RoundedRectangle(cornerRadius: 4).fill(hovered == e.id ? Ink.raised : .clear).padding(.horizontal, Grid.x1))
+            .padding(.horizontal, Grid.x3)
+            .frame(width: Popover.sceneMenuWidth, height: Grid.x6 + Grid.x1)
+            .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous)
+                .fill(hovered == e.id ? Ink.raised : .clear).padding(.horizontal, Grid.x1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -286,19 +329,29 @@ private struct ScenePicker: View {
     }
 }
 
+extension View {
+    /// Keyboard focus: one ring for every focusable control, concentric with its shape.
+    func focusRing(_ on: Bool, radius: CGFloat) -> some View {
+        overlay(RoundedRectangle(cornerRadius: radius + Grid.focusGap, style: .continuous)
+            .strokeBorder(on ? Ink.paper.opacity(0.7) : .clear, lineWidth: Grid.focusRing)
+            .padding(-Grid.focusGap))
+    }
+}
+
 private extension View {
     /// A small dark plate that keeps text legible over the scene.
     func chip() -> some View {
-        padding(.horizontal, Grid.x2 + 2)
-            .padding(.vertical, Grid.x1 + 2)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Ink.panel.opacity(0.86)))
+        padding(.horizontal, Grid.x3)
+            .padding(.vertical, Grid.x2 - 1)
+            .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.88)))
     }
 }
 
 // MARK: - Transport
 
 /// Play, volume, where the listener is (home, standing in the world or flying), head tracking and recenter;
-/// the status text on the right names whatever the pointer is over, with its key.
+/// the status on the right says where the head looks (or the hour). Whatever the pointer is
+/// over is named, with its key, in `hint` (drawn over the scene).
 private struct Transport: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
@@ -306,7 +359,7 @@ private struct Transport: View {
     @ObservedObject var labels: SceneLabels
     @ObservedObject var meters: Meters
     @ObservedObject var controls: ControlsModel
-    @State private var hint: String?
+    @Binding var hint: String?
 
     var body: some View {
         HStack(spacing: Grid.x1) {
@@ -334,14 +387,14 @@ private struct Transport: View {
             ToolButton(icon: .recenter, name: "Смотреть вперёд отсюда", key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
                 .disabled(!head.enabled)
                 .contextMenu { rerunOnboarding }
-            Spacer(minLength: Grid.x2)
+            Spacer(minLength: 0)
             status
             ToolButton(icon: .power, name: "Выйти из ASMR X3000", key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
                 .keyboardShortcut("q", modifiers: .command)
-                .padding(.leading, Grid.x1)
         }
-        .padding(.horizontal, Grid.x3)
-        .frame(height: 48)
+        // Button frames sit on the gutter, flush with the prompt's frame below.
+        .padding(.horizontal, Popover.gutter)
+        .frame(height: Popover.transportHeight)
     }
 
     /// Right click on "Голова" or recenter: the first-launch walkthrough again (permission,
@@ -355,27 +408,22 @@ private struct Transport: View {
         { f(); model.stage.focusScene?() }
     }
 
-    /// The hovered control's name, or the hour and where the head is turned.
+    /// Where the head is turned (the violet dot on "Голова" already says tracking is on), or
+    /// the hour when it is off.
     private var status: some View {
-        HStack(spacing: Grid.x2) {
-            if let hint {
-                Text(hint).foregroundStyle(Ink.paper)
-            } else {
-                if head.enabled {
-                    Circle()
-                        .fill(Ink.violet.opacity(labels.gaze == nil ? 0.35 : 1))
-                        .frame(width: 5, height: 5)
-                    Text(labels.gaze.map(Self.russian) ?? (head.connected ? "AirPods" : "нет AirPods"))
-                        .foregroundStyle(Ink.graphite)
-                } else if !audio.scene.isClip {
-                    // The hour is also the world's "Время суток" lever; here only when there is room.
-                    Text(labels.time).foregroundStyle(Ink.ash)
-                }
+        Group {
+            if head.enabled {
+                Text(labels.gaze.map(Self.russian) ?? (head.connected ? "AirPods" : "нет AirPods"))
+                    .foregroundStyle(labels.gaze == nil ? Ink.ash : Ink.graphite)
+            } else if !audio.scene.isClip {
+                // The hour is also the world's "Время суток" lever; here only when there is room.
+                Text(labels.time).foregroundStyle(Ink.ash)
             }
         }
         .font(Ink.text(Ink.Size.caption))
         .lineLimit(1)
-        .truncationMode(.head)
+        .truncationMode(.tail)
+        .padding(.trailing, Grid.x1)
         .accessibilityHidden(true)
     }
 
@@ -400,15 +448,18 @@ private struct ModeSwitch: View {
     @Binding var hint: String?
     let set: (Place) -> Void
     @State private var hovered: Place?
+    /// The segments sit 2 pt inside the frame.
+    private static let inset: CGFloat = 2
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Self.inset) {
             segment(.home, title: "Дома")
             segment(.standing, title: "Стоим")
             segment(.flying, title: "Летим")
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
+        .padding(Self.inset)
+        .frame(height: Grid.control)
+        .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Режим")
     }
@@ -432,17 +483,15 @@ private struct ModeSwitch: View {
     private func segment(_ to: Place, title: String) -> some View {
         let on = place == to
         return Button { set(to) } label: {
-            HStack(spacing: Grid.x1) {
-                Text(title)
-                    .font(Ink.text(Ink.Size.caption))
-                    .foregroundStyle(on ? Ink.paper : hovered == to ? Ink.paper : Ink.graphite)
-                    .fixedSize()
-            }
-            .padding(.horizontal, Grid.x2 - 1)
-            .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(on ? Ink.pressed : hovered == to ? Ink.raised : .clear))
-            .contentShape(Rectangle())
+            Text(title)
+                .font(Ink.text(Ink.Size.caption))
+                .foregroundStyle(on || hovered == to ? Ink.paper : Ink.graphite)
+                .fixedSize()
+                .padding(.horizontal, Grid.x2 - 2)
+                .frame(maxHeight: .infinity)
+                .background(RoundedRectangle(cornerRadius: Grid.radius - Self.inset, style: .continuous)
+                    .fill(on ? Ink.pressed : hovered == to ? Ink.raised : .clear))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
@@ -471,7 +520,7 @@ private struct LabeledToggle: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Grid.x1 + 2) {
-                IconView(icon: icon, color: on || hovering ? Ink.paper : Ink.graphite, size: 18,
+                IconView(icon: icon, color: on || hovering ? Ink.paper : Ink.graphite, size: Popover.iconSize,
                          animating: hovering && on, struck: !on)
                 Text(title)
                     .font(Ink.text(Ink.Size.caption))
@@ -482,7 +531,7 @@ private struct LabeledToggle: View {
                 }
             }
             .padding(.horizontal, Grid.x2)
-            .frame(height: 32)
+            .frame(height: Grid.control)
             .contentShape(Rectangle())
         }
         .buttonStyle(ToolStyle(style: on ? .on : .plain, hovering: hovering, focused: focused))
@@ -499,7 +548,7 @@ private struct LabeledToggle: View {
     }
 }
 
-/// A 32 pt square button: visible hit area on hover, pressed and focus states; `.primary` is
+/// A square button (Grid.control): visible hit area on hover, pressed and focus states; `.primary` is
 /// filled (the one thing to do when paused), `.on` marks a toggle that is on.
 private struct ToolButton: View {
     enum Style { case plain, primary, on, quiet }
@@ -516,8 +565,8 @@ private struct ToolButton: View {
 
     var body: some View {
         Button(action: action) {
-            IconView(icon: icon, color: iconColor, size: 18, animating: hovering && live)
-                .frame(width: 32, height: 32)
+            IconView(icon: icon, color: iconColor, size: Popover.iconSize, animating: hovering && live)
+                .frame(width: Grid.control, height: Grid.control)
                 .contentShape(Rectangle())
         }
         .buttonStyle(ToolStyle(style: style, hovering: hovering && enabled, focused: focused))
@@ -550,17 +599,15 @@ private struct ToolStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(fill(configuration.isPressed)))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(style == .on ? Ink.hairline.opacity(1.6) : .clear, lineWidth: 1))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(focused ? Ink.paper.opacity(0.7) : .clear, lineWidth: 1.5)
-                .padding(-2))
+            .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous).fill(fill(configuration.isPressed)))
+            .overlay(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
+                .strokeBorder(style == .on ? Ink.hairline : .clear, lineWidth: 1))
+            .focusRing(focused, radius: Grid.radius)
     }
 
     private func fill(_ pressed: Bool) -> Color {
         switch style {
-        case .primary: return pressed ? Ink.graphite : hovering ? Color(white: 1) : Ink.paper
+        case .primary: return pressed ? Ink.graphite : hovering ? .white : Ink.paper
         case .on: return pressed ? Ink.pressed : hovering ? Ink.pressed : Ink.raised
         case .plain, .quiet: return pressed ? Ink.pressed : hovering ? Ink.raised : .clear
         }
@@ -577,16 +624,17 @@ private struct VolumeSlider: View {
 
     var body: some View {
         HStack(spacing: Grid.x1) {
-            IconView(icon: .gain, color: hovering || dragging ? Ink.paper : Ink.graphite, size: 16)
+            IconView(icon: .gain, color: hovering || dragging ? Ink.paper : Ink.graphite, size: Popover.smallIconSize, lineWidth: 1)
             GeometryReader { geo in
                 let w = geo.size.width, x = CGFloat(control.fraction) * w
+                let knob = hovering || dragging ? Grid.knobActive : Grid.knob
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Ink.hairline).frame(height: 2)
-                    Capsule().fill(Ink.graphite).frame(width: x, height: 2)
+                    Capsule().fill(Ink.hairline).frame(height: Grid.rail)
+                    Capsule().fill(Ink.graphite).frame(width: x, height: Grid.rail)
                     RoundedRectangle(cornerRadius: 1)
                         .fill(Ink.paper)
-                        .frame(width: hovering || dragging ? 3 : 2, height: 12)
-                        .offset(x: min(max(x - 1, 0), w - 2))
+                        .frame(width: knob.width, height: knob.height)
+                        .offset(x: min(max(x - knob.width / 2, 0), w - knob.width))
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -598,7 +646,7 @@ private struct VolumeSlider: View {
                     }
                     .onEnded { _ in dragging = false; if !hovering { hint = nil } })
             }
-            .frame(width: 52, height: 32)
+            .frame(width: Popover.volumeWidth, height: Grid.control)
         }
         .onHover { h in
             hovering = h
@@ -643,7 +691,7 @@ private struct SpectrogramStrip: View {
                 }
             }
             .frame(width: w, height: h)
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous))
             .accessibilityLabel("Спектрограмма")
 
             if open {
@@ -651,10 +699,14 @@ private struct SpectrogramStrip: View {
                     let y = yFor(Float(hz), h: h)
                     if y > 7 && y < h - 7 {
                         Text(hz >= 1000 ? "\(hz / 1000) кГц" : "\(hz) Гц")
-                            .font(Ink.text(Ink.Size.caption - 1))
+                            .font(Ink.text(Ink.Size.caption))
                             .foregroundStyle(Ink.ash)
                             .fixedSize()
-                            .position(x: 26, y: CGFloat(y))
+                            .padding(.horizontal, Grid.x1)
+                            .background(Ink.panel.opacity(0.7))
+                            .frame(width: w, alignment: .leading)
+                            .padding(.leading, Grid.x2)
+                            .position(x: w / 2 + Grid.x2 / 2, y: CGFloat(y))
                             .allowsHitTesting(false)
                     }
                 }
@@ -662,12 +714,12 @@ private struct SpectrogramStrip: View {
                     Text(readout(at: p, w: Float(w), h: Float(h)))
                         .font(Ink.text(Ink.Size.caption))
                         .foregroundStyle(Ink.paper)
-                        .padding(.horizontal, Grid.x1 + 2)
-                        .padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(Ink.panel.opacity(0.85)))
+                        .padding(.horizontal, Grid.x2)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous).fill(Ink.panel.opacity(0.85)))
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .padding(.top, Grid.x1)
-                        .padding(.trailing, 30)
+                        .padding(.trailing, Grid.x6 + Grid.x2)
                         .allowsHitTesting(false)
                 }
             } else {
@@ -679,14 +731,17 @@ private struct SpectrogramStrip: View {
             }
 
             Button { openStored.toggle() } label: {
-                IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.ash, size: 14)
+                IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.graphite, size: 14, lineWidth: 1)
                     .rotationEffect(.degrees(open ? -90 : 90))
-                    .frame(width: 22, height: 22)
+                    .frame(width: Grid.x6, height: Grid.x6)
+                    .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous).fill(Ink.panel.opacity(0.7)))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.top, open ? 2 : 1)
+            .padding(.top, open ? Grid.x1 : 0)
+            .padding(.trailing, open ? Grid.x1 : 0)
             .accessibilityLabel(open ? "Закрыть спектрограмму" : "Открыть спектрограмму")
         }
         .frame(width: w, height: h)

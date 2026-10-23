@@ -157,10 +157,23 @@ enum PromptError: LocalizedError {
 }
 
 /// API keys: the environment first (handy from a terminal), then the login keychain
-/// (generic password), never in files or logs. The user adds one with
+/// (generic password), never in files or logs. The user adds one in the onboarding's last step
+/// or the panel's settings, or with
 ///     security add-generic-password -U -s com.asmrx3000.prompt -a <provider> -w
 enum Keychain {
     static let service = "com.asmrx3000.prompt"
+
+    /// The accounts the app knows, with their environment variables.
+    enum Account: String {
+        case typesafe, fal
+
+        var env: String {
+            switch self {
+            case .typesafe: return "TYPESAFE_API_KEY"
+            case .fal: return "FAL_KEY"
+            }
+        }
+    }
 
     /// A key from the environment.
     static func env(_ name: String) -> String? {
@@ -184,6 +197,91 @@ enum Keychain {
         else { return nil }
         return key
     }
+
+    // Read once per run (the first keychain read of an item the app did not write may show the
+    // "allow" dialog), and replaced when the app saves or removes a key, so a key added in the
+    // settings works at once.
+    private static let lock = NSLock()
+    private static var cache: [Account: String?] = [:]
+
+    /// The key in use for `account`: the environment, else the keychain.
+    static func stored(_ account: Account) -> String? {
+        lock.lock()
+        if let hit = cache[account] { lock.unlock(); return hit }
+        lock.unlock()
+        let v = env(account.env) ?? key(account: account.rawValue)
+        lock.lock(); cache[account] = .some(v); lock.unlock()
+        return v
+    }
+
+    /// Whether a key is set, without reading the secret (so no keychain dialog): the
+    /// environment, a key read or saved this run, or an item in the keychain.
+    static func has(_ account: Account) -> Bool {
+        if env(account.env) != nil { return true }
+        lock.lock()
+        let hit = cache[account]
+        lock.unlock()
+        if let hit { return hit != nil }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+    }
+
+    /// Whether the key comes from the environment (then the keychain item is not used).
+    static func fromEnvironment(_ account: Account) -> Bool { env(account.env) != nil }
+
+    /// Saves (or replaces) the key in the login keychain. True on success.
+    @discardableResult
+    static func save(_ value: String, account: Account) -> Bool {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, let data = key.data(using: .utf8) else { return false }
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+        ]
+        var status = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = match
+            add[kSecValueData as String] = data
+            add[kSecAttrLabel as String] = "ASMR X3000 (\(account.rawValue))"
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            NSLog("ASMR X3000: keychain save for %@ failed: %d", account.rawValue, status)
+            return false
+        }
+        lock.lock(); cache[account] = .some(env(account.env) ?? key); lock.unlock()
+        return true
+    }
+
+    /// Removes the key from the keychain (the environment, if set, still wins).
+    static func remove(_ account: Account) {
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+        ]
+        SecItemDelete(match as CFDictionary)
+        lock.lock(); cache[account] = .some(env(account.env)); lock.unlock()
+    }
+
+    /// A light check of what was pasted: no spaces, long enough, and for fal the "id:secret"
+    /// shape. Returns a short reason when it does not look like a key.
+    static func problem(_ value: String, account: Account) -> String? {
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if v.isEmpty { return "empty" }
+        if v.rangeOfCharacter(from: .whitespacesAndNewlines) != nil { return "has spaces" }
+        if v.count < 16 { return "too short" }
+        if account == .fal, !v.contains(":") { return "a fal key looks like id:secret" }
+        return nil
+    }
 }
 
 /// Picks the provider: `ASMR_PROMPT_PROVIDER=mock` forces the offline mock (snapshots,
@@ -199,8 +297,8 @@ enum Providers {
         return nil
     }
 
-    /// Read once per run: the first keychain read may show the "allow" dialog.
-    private static let typesafeKey: String? = Keychain.env("TYPESAFE_API_KEY") ?? Keychain.key(account: "typesafe")
+    /// Cached by Keychain (read once per run, replaced when a key is saved in the app).
+    private static var typesafeKey: String? { Keychain.stored(.typesafe) }
 }
 
 /// Offline stand-in: a handful of keyword rules that produce the same kind of patch a model

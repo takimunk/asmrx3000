@@ -612,7 +612,7 @@ final class IconLayerView: NSView {
     }
 }
 
-/// The palette: greys on a dark panel. The violet belongs to the listener alone.
+/// The palette: greys on a dark panel. The accent belongs to the listener alone.
 enum Ink {
     /// The popover's ground (the strips' shaders use the same value, PANEL).
     static let panel = Color(white: 0.078)
@@ -627,7 +627,10 @@ enum Ink {
     /// Hints, disabled.
     static let ash = Color(white: 0.42)
     static let black = Color(white: 0)
-    static let violet = Color(red: 0.53, green: 0.33, blue: 1.0)
+    /// The user's accent (Accent.swift, violet by default): "you", and nothing else.
+    static var accent: Color { Accent.color }
+    /// The accent's old name, kept so existing code reads the current accent.
+    static var violet: Color { accent }
 
     /// Coppice Mono (tools/font/coppice.py), bundled via ATSApplicationFontsPath. One face, four sizes:
     static func text(_ size: CGFloat = Size.body) -> Font { .custom("CoppiceMono-Regular", size: size) }
@@ -652,6 +655,22 @@ enum Grid {
     static let x3: CGFloat = 12
     static let x4: CGFloat = 16
     static let x6: CGFloat = 24
+
+    /// A button, a segmented switch and the prompt's inner buttons are 32 pt tall.
+    static let control: CGFloat = 32
+    /// Corner radii, one per depth: controls and fields 8, chips and menus 6, small plates and
+    /// rows nested in a menu or field 4. A shape inset in another one takes the outer radius
+    /// minus the inset, so the two curves stay concentric.
+    static let radius: CGFloat = 8
+    static let chipRadius: CGFloat = 6
+    static let innerRadius: CGFloat = 4
+    /// Sliders everywhere: a 2 pt rail; the knob 2 × 12 at rest, 3 × 16 under the pointer.
+    static let rail: CGFloat = 2
+    static let knob = CGSize(width: 2, height: 12)
+    static let knobActive = CGSize(width: 3, height: 16)
+    /// Keyboard focus: a 1.5 pt ring drawn 2 pt outside the control.
+    static let focusRing: CGFloat = 1.5
+    static let focusGap: CGFloat = 2
 }
 
 /// System "Reduce motion": decorative animation stops (icons, the menu bar wave, the cursor).

@@ -180,8 +180,8 @@ struct FalWhisper {
     let key: String
     static let endpoint = URL(string: "https://fal.run/fal-ai/whisper")!
 
-    /// Read once per run (the first keychain read may ask).
-    static let storedKey: String? = Keychain.env("FAL_KEY") ?? Keychain.key(account: "fal")
+    /// Cached by Keychain (read once per run, replaced when a key is saved in the app).
+    static var storedKey: String? { Keychain.stored(.fal) }
 
     func transcribe(_ file: URL, language: String = "ru") async throws -> String {
         let audio = try Data(contentsOf: file)

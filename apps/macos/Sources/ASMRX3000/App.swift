@@ -72,6 +72,19 @@ final class AppModel: ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &bag)
+        // A new accent: redraw the panel's views that use it (Ink.accent is read at render).
+        Accent.shared.$hue
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    self.objectWillChange.send()
+                    self.prompt.objectWillChange.send()
+                }
+            }
+            .store(in: &bag)
         // The popover is open exactly while the scene is on screen.
         stage.meters.$live
             .removeDuplicates()

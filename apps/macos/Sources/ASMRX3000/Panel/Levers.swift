@@ -186,7 +186,7 @@ struct LeverPanel: View {
             rows(shown, hour: hour)
             if !split.more.isEmpty {
                 MoreRow(more: split.more, hour: hour, showAll: showAll) { showAllStored.toggle() }
-                    .frame(height: 24)
+                    .frame(height: Popover.leverHeight)
             }
         }
     }
@@ -238,25 +238,24 @@ struct LeverPanel: View {
     }
 }
 
-/// "ЗВУК ───── громкость групп, дБ": a section's name, a hairline, and what its levers are.
+/// "Звук ───── громкость групп, дБ": a section's name, a hairline, and what its levers are.
 private struct SectionHeader: View {
     let title: String
     let note: String
 
     var body: some View {
         HStack(spacing: Grid.x2) {
-            Text(title.uppercased())
-                .font(Ink.text(Ink.Size.caption))
-                .tracking(1.2)
-                .foregroundStyle(Ink.paper.opacity(0.8))
+            Text(title)
+                .font(Ink.text(Ink.Size.body))
+                .foregroundStyle(Ink.paper)
                 .fixedSize()
             Rectangle().fill(Ink.hairline).frame(height: 1)
             Text(note)
                 .font(Ink.text(Ink.Size.caption))
                 .foregroundStyle(Ink.ash)
-                .fixedSize()
+                .lineLimit(1)
         }
-        .frame(height: 18)
+        .frame(height: Popover.headerHeight)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
     }
@@ -527,12 +526,12 @@ private struct SoundCell: View {
         let muted = c.isMuted
         let track = Track(group: c.group)
         let audible = track.map { meters.audible.contains($0) } ?? false
-        HStack(spacing: Grid.x1 + 2) {
+        HStack(spacing: 0) {
             Button(action: tapIcon) {
                 IconView(icon: Icon.forControl(c, hour: hour),
                          color: muted ? Ink.ash : hovering ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
-                         size: 16, animating: hovering && meters.live && !muted, struck: muted, lineWidth: 1)
-                    .frame(width: 20, height: Popover.soundRowHeight)
+                         size: Popover.smallIconSize, animating: hovering && meters.live && !muted, struck: muted, lineWidth: 1)
+                    .frame(width: Popover.iconColumn, height: Popover.soundRowHeight, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -544,7 +543,7 @@ private struct SoundCell: View {
                 .font(Ink.text(Ink.Size.caption))
                 .foregroundStyle(muted ? Ink.ash : hovering || dragging ? Ink.paper : Ink.graphite)
                 .lineLimit(1)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: Popover.soundNameColumn, alignment: .leading)
 
             GeometryReader { geo in
                 Rail(control: c, width: geo.size.width, active: hovering || dragging, muted: muted)
@@ -557,22 +556,26 @@ private struct SoundCell: View {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { set(c.id, isMix ? c.defaultValue : .nan) })
             }
 
+            // Value, then a chevron slot in every cell, so both columns' values line up whether
+            // or not the cell opens a drawer.
             if isMix {
                 Button(action: open) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 0) {
                         Text(ControlText.value(c))
-                        IconView(icon: .chevron, color: hovering ? Ink.graphite : Ink.ash, size: 11, lineWidth: 1)
+                            .foregroundStyle(hovering ? Ink.paper : Ink.paper.opacity(0.85))
+                            .frame(width: Popover.soundValueColumn, alignment: .trailing)
+                        Chevron(lit: hovering)
                     }
-                    .frame(width: 52, height: Popover.soundRowHeight, alignment: .trailing)
+                    .frame(height: Popover.soundRowHeight)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .foregroundStyle(Ink.paper.opacity(0.85))
             } else {
                 Text(ControlText.value(c))
                     .foregroundStyle(muted ? Ink.ash : c.value == 0 ? Ink.graphite : Ink.paper)
-                    .frame(width: 52, alignment: .trailing)
+                    .frame(width: Popover.soundValueColumn, alignment: .trailing)
+                    .padding(.trailing, Popover.chevronColumn)
             }
         }
         .font(Ink.text(Ink.Size.caption))
@@ -616,16 +619,13 @@ private struct Rail: View {
         let zero = control.max > control.min ? CGFloat((control.defaultValue - control.min) / (control.max - control.min)) * width : 0
         Canvas { ctx, size in
             let mid = size.height / 2
-            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: size.width, height: 2), cornerRadius: 1), with: .color(Ink.hairline))
-            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: x, height: 2), cornerRadius: 1),
-                     with: .color(muted ? Ink.hairline : Ink.graphite))
+            SliderInk.rail(ctx, width: size.width, mid: mid, fill: x, fillColor: muted ? Ink.hairline : Ink.graphite)
             if control.isLevel {
-                ctx.fill(Path(CGRect(x: min(max(zero - 0.5, 0), size.width - 1), y: mid - 4, width: 1, height: 8)),
+                // The 0 dB mark, as tall as the resting knob is wide apart: a quiet tick.
+                ctx.fill(Path(CGRect(x: min(max(zero - 0.5, 0), size.width - 1), y: mid - Grid.x1 - 1, width: 1, height: Grid.x2 + 2)),
                          with: .color(Ink.ash))
             }
-            let kw: CGFloat = active ? 3 : 2, kh: CGFloat = active ? 14 : 10
-            ctx.fill(Path(roundedRect: CGRect(x: min(max(x - kw / 2, 0), size.width - kw), y: mid - kh / 2, width: kw, height: kh),
-                          cornerRadius: 1), with: .color(muted ? Ink.ash : Ink.paper))
+            SliderInk.knob(ctx, at: x, width: size.width, mid: mid, active: active, color: muted ? Ink.ash : Ink.paper)
         }
         .contentShape(Rectangle())
     }
@@ -652,7 +652,7 @@ private struct WorldRow: View {
                 HStack(spacing: 0) {
                     IconView(icon: Icon.forControl(control, hour: hour),
                              color: lit ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
-                             size: 18, level: audible ? 0.6 : 0, animating: hovering && meters.live)
+                             size: Popover.iconSize, level: audible ? 0.6 : 0, animating: hovering && meters.live)
                         .frame(width: Popover.iconColumn, alignment: .leading)
                     Text(ControlText.lever(control))
                         .font(Ink.text(Ink.Size.body))
@@ -673,12 +673,13 @@ private struct WorldRow: View {
             GeometryReader { geo in
                 let w = geo.size.width
                 let x = CGFloat(control.fraction) * w
+                let knob = lit ? Grid.knobActive : Grid.knob
                 ZStack(alignment: .topLeading) {
                     Color.clear.contentShape(Rectangle())
                     RoundedRectangle(cornerRadius: 1)
                         .fill(Ink.paper)
-                        .frame(width: lit ? 3 : 2, height: lit ? 18 : 14)
-                        .position(x: min(max(x, 1.5), w - 1.5), y: geo.size.height / 2)
+                        .frame(width: knob.width, height: knob.height)
+                        .position(x: min(max(x, knob.width / 2), w - knob.width / 2), y: geo.size.height / 2)
                 }
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { g in
@@ -702,8 +703,8 @@ private struct WorldRow: View {
                 .frame(width: Popover.valueColumn, alignment: .trailing)
 
             Button(action: open) {
-                IconView(icon: .chevron, color: lit ? Ink.graphite : Ink.ash, size: 14)
-                    .frame(width: Popover.chevronColumn, height: Popover.leverHeight, alignment: .trailing)
+                Chevron(lit: lit)
+                    .frame(height: Popover.leverHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -727,7 +728,8 @@ private struct MoreRow: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: Grid.x2) {
-                IconView(icon: showAll ? .back : .more, color: hovering ? Ink.paper : Ink.graphite, size: 16)
+                IconView(icon: showAll ? .back : .more, color: hovering ? Ink.paper : Ink.graphite, size: Popover.smallIconSize,
+                         lineWidth: 1)
                     .rotationEffect(.degrees(showAll ? 90 : 0))
                     .frame(width: Popover.iconColumn - Grid.x2, alignment: .leading)
                 if showAll {
@@ -766,35 +768,43 @@ private struct Drawer: View {
     let close: () -> Void
     @State private var hoveringBack = false
 
-    static let maxHeight: CGFloat = 248
+    /// Nine and a half rows: the half row says there is more to scroll.
+    static let maxHeight: CGFloat = Popover.childHeight * 9.5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Same height and hairline as a section header, so the drawer reads as the section
+            // it replaced: "‹ Вода ───── Течение воды  60 %".
             HStack(spacing: Grid.x2) {
                 Button(action: close) {
                     HStack(spacing: Grid.x1) {
-                        IconView(icon: .back, color: hoveringBack ? Ink.paper : Ink.graphite, size: 14)
-                        IconView(icon: Icon.forControl(macro, hour: hour), color: Ink.paper, size: 18)
+                        IconView(icon: .back, color: hoveringBack ? Ink.paper : Ink.graphite, size: 14, lineWidth: 1)
                         Text(ControlText.group(macro))
-                            .font(Ink.text(Ink.Size.title))
+                            .font(Ink.text(Ink.Size.body))
                             .foregroundStyle(Ink.paper)
                     }
+                    .padding(.leading, Grid.x1)
                     .padding(.trailing, Grid.x2)
-                    .frame(height: Popover.childHeight)
+                    .frame(height: Popover.headerHeight)
+                    .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous)
+                        .fill(hoveringBack ? Ink.raised : .clear))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
+                .padding(.leading, -Grid.x1)
                 .onHover { hoveringBack = $0 }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
                 .accessibilityLabel("Назад ко всем рычагам")
                 .help("Назад   ⌘←")
-                Spacer()
-                Text("\(ControlText.lever(macro)): \(ControlText.value(macro))")
-                    .font(Ink.text(Ink.Size.body))
-                    .foregroundStyle(Ink.graphite)
+                Rectangle().fill(Ink.hairline).frame(height: 1)
+                Text("\(ControlText.lever(macro))  \(ControlText.value(macro))")
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(Ink.ash)
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .padding(.leading, -2)
+            .frame(height: Popover.headerHeight)
 
             let rows = VStack(spacing: 0) {
                 ForEach(children, id: \.id) { c in
@@ -821,25 +831,31 @@ private struct ChildRow: View {
     @State private var hovering = false
 
     var body: some View {
+        // The world levers' columns: pictogram, name, slider, then the value across the value
+        // and chevron columns (a parameter has no drawer), flush with the gutter.
         HStack(spacing: 0) {
-            IconView(icon: Icon.forControl(control, hour: hour), color: hovering ? Ink.paper : Ink.graphite, size: 14, lineWidth: 1)
-                .frame(width: 24, alignment: .leading)
+            IconView(icon: Icon.forControl(control, hour: hour), color: hovering ? Ink.paper : Ink.graphite,
+                     size: Popover.smallIconSize, lineWidth: 1)
+                .frame(width: Popover.iconColumn, alignment: .leading)
             Text(ControlText.name(control))
                 .font(Ink.text(Ink.Size.body))
                 .foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                 .lineLimit(1)
-                .frame(width: 136, alignment: .leading)
+                .truncationMode(.tail)
+                .frame(width: Popover.nameColumn - Grid.x2, alignment: .leading)
+                .padding(.trailing, Grid.x2)
             if control.isDiscrete {
                 Presets(control: control, set: set)
             } else {
                 GeometryReader { geo in
                     FineSlider(control: control, width: geo.size.width, active: hovering, set: set)
                 }
+                .frame(width: Popover.sliderWidth)
                 Text(ControlText.value(control))
                     .font(Ink.text(Ink.Size.body))
                     .foregroundStyle(control.isOverridden ? Ink.paper : Ink.graphite)
                     .lineLimit(1)
-                    .frame(width: 84, alignment: .trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .contentShape(Rectangle())
@@ -866,12 +882,9 @@ private struct FineSlider: View {
         let x = CGFloat(control.fraction) * width
         Canvas { ctx, size in
             let mid = size.height / 2
-            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: size.width, height: 2), cornerRadius: 1), with: .color(Ink.hairline))
-            ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - 1, width: x, height: 2), cornerRadius: 1),
-                     with: .color(control.isOverridden ? Ink.paper.opacity(0.85) : Ink.graphite))
-            let kw: CGFloat = active ? 3 : 2, kh: CGFloat = active ? 16 : 12
-            ctx.fill(Path(roundedRect: CGRect(x: min(max(x - kw / 2, 0), size.width - kw), y: mid - kh / 2, width: kw, height: kh),
-                          cornerRadius: 1), with: .color(Ink.paper))
+            SliderInk.rail(ctx, width: size.width, mid: mid, fill: x,
+                           fillColor: control.isOverridden ? Ink.paper.opacity(0.85) : Ink.graphite)
+            SliderInk.knob(ctx, at: x, width: size.width, mid: mid, active: active, color: Ink.paper)
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { g in
@@ -894,10 +907,10 @@ private struct Presets: View {
         HStack(spacing: 0) {
             ForEach(0..<n, id: \.self) { i in
                 Button { set(control.id, control.min + Float(i)) } label: {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(i == chosen ? Ink.paper : hovered == i ? Ink.graphite : Ink.hairline.opacity(1.8))
-                        .frame(width: 7, height: 7)
-                        .frame(width: 16, height: Popover.childHeight)
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(i == chosen ? Ink.paper : hovered == i ? Ink.graphite : Ink.ash.opacity(0.6))
+                        .frame(width: i == chosen ? 6 : 4, height: i == chosen ? 6 : 4)
+                        .frame(width: Grid.x4, height: Popover.childHeight)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -921,6 +934,32 @@ private struct Presets: View {
             return ControlText.option(control.options[index])
         }
         return String(index)
+    }
+}
+
+/// The "opens a drawer" mark at the end of a row: one size, one weight, everywhere.
+private struct Chevron: View {
+    var lit = false
+
+    var body: some View {
+        IconView(icon: .chevron, color: lit ? Ink.paper : Ink.ash, size: 14, lineWidth: 1)
+            .frame(width: Popover.chevronColumn, alignment: .trailing)
+    }
+}
+
+/// The rail and knob every slider in the panel draws (sound levels, drawer parameters; the
+/// world levers draw their rail in the tracks shader with the same values).
+enum SliderInk {
+    static func rail(_ ctx: GraphicsContext, width: CGFloat, mid: CGFloat, fill: CGFloat, fillColor: Color) {
+        let h = Grid.rail
+        ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - h / 2, width: width, height: h), cornerRadius: h / 2), with: .color(Ink.hairline))
+        ctx.fill(Path(roundedRect: CGRect(x: 0, y: mid - h / 2, width: fill, height: h), cornerRadius: h / 2), with: .color(fillColor))
+    }
+
+    static func knob(_ ctx: GraphicsContext, at x: CGFloat, width: CGFloat, mid: CGFloat, active: Bool, color: Color) {
+        let k = active ? Grid.knobActive : Grid.knob
+        ctx.fill(Path(roundedRect: CGRect(x: min(max(x - k.width / 2, 0), width - k.width), y: mid - k.height / 2,
+                                          width: k.width, height: k.height), cornerRadius: 1), with: .color(color))
     }
 }
 

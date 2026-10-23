@@ -54,6 +54,7 @@ enum Shaders {
         float4 world;        // flight relief: snow cover, sand cover, bare rock above this slope, flying 0/1
         float4 precip;       // rate mm/h, snow 1 / rain 0, fog distance scale, sea 0/1
         float4 motion;       // velocity of the air past the eye (m/s, travel frame), -
+        float4 accent;       // the user's accent rgb (Accent.swift), -
     };
 
     struct Inst {
@@ -618,7 +619,7 @@ enum Shaders {
         if (F.gazeHead.w > 0.5) {
             float live = F.gaze.w;
             float strength = mix(0.5, 1.0, live);
-            float3 violet = float3(0.53, 0.33, 1.0);
+            float3 violet = F.accent.xyz; // the user's accent, violet by default
             float3 head = F.listener.xyz;
             float3 dirB = normalize(F.gazeHead.xyz);
             float2 ndc = float2(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
@@ -655,9 +656,9 @@ enum Shaders {
             float disc = smoothstep(core + s, core - s, d) * hidden;
             // Mixed in rather than added, so the violet stays violet over the fog.
             float aBeam = clamp(beam * 0.8 * strength, 0.0, 0.75);
-            c = mix(c, mix(violet, float3(0.78, 0.68, 1.0), 0.35), aBeam);
+            c = mix(c, mix(violet, mix(violet, float3(1.0), 0.53), 0.35), aBeam);
             c = mix(c, violet, clamp(halo * strength, 0.0, 0.9));
-            c = mix(c, float3(0.93, 0.88, 1.0), disc * strength);
+            c = mix(c, mix(violet, float3(1.0), 0.85), disc * strength);
         }
         return float4(c, 1.0);
     }
@@ -738,9 +739,11 @@ enum Shaders {
         float cutX = r.w * u.size.x;
         bool before = px.x <= cutX;
 
-        float rail = cut(abs(px.y - mid), s) * (before ? 0.0 : 0.22);
+        // Past the knob: the panel's 2 pt rail in the hairline grey (Grid.rail, Ink.hairline), as
+        // on every other slider.
+        float rail = cut(abs(px.y - mid), 2.0 * s) * (before ? 0.0 : 1.0);
         float g = PANEL;
-        g = mix(g, 0.9, rail);
+        g = mix(g, 0.21, rail);
         float body;
         if (r.z >= 0.0) {
             float amp = scope.sample(smp, float2(px.x / u.size.x, (r.z + 0.5) / float(scope.get_height()))).r;

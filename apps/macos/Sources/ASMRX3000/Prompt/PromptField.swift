@@ -224,11 +224,18 @@ struct PromptField: View {
     @State private var stopOnRelease = false
     static let placeholder = "Скажите, каким быть лесу…"
     static let example = "Например: тише река, ночь, перенеси меня в горы"
+    /// The field is a control tall plus 4 pt around its buttons, whose corners follow the
+    /// field's (radius minus the inset).
+    static let inset: CGFloat = Grid.x1
+    static let height: CGFloat = Grid.control + 2 * inset
+    static let buttonRadius: CGFloat = Grid.radius - inset
+    /// The round "?" / "!" mark before a hint or an error.
+    static let mark: CGFloat = 13
     private let tick = Timer.publish(every: 0.35, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Grid.x1 + 2) {
-            HStack(spacing: Grid.x2 + 2) {
+        VStack(alignment: .leading, spacing: Grid.x2 - 2) {
+            HStack(spacing: Grid.x3) {
                 PromptMark(lit: focused || prompt.status.busy || prompt.status == .recording, blinking: focused && !Motion.reduced)
                     .accessibilityHidden(true)
                 if IconView.still {
@@ -255,17 +262,17 @@ struct PromptField: View {
                 send
             }
             .padding(.leading, Grid.x3)
-            .padding(.trailing, Grid.x1)
-            .frame(height: 40)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Ink.raised))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .padding(.trailing, Self.inset)
+            .frame(height: Self.height)
+            .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous).fill(Ink.raised))
+            .overlay(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
                 .strokeBorder(prompt.status == .recording ? Ink.violet : (focused ? Ink.paper.opacity(0.55) : Ink.hairline), lineWidth: 1))
             .contentShape(Rectangle())
             .onTapGesture { focused = true }
 
             statusLine
                 .padding(.horizontal, Grid.x3)
-                .frame(minHeight: 15, alignment: .leading)
+                .frame(minHeight: Grid.x4, alignment: .leading)
         }
         .background {
             // ⌘Z undoes the last prompt; ⌥Space starts / stops the voice.
@@ -288,8 +295,8 @@ struct PromptField: View {
         let recording = prompt.status == .recording
         let lit = recording || hoveringMic
         return MicGlyph(color: recording ? Ink.panel : (lit ? Ink.paper : Ink.graphite))
-            .frame(width: 32, height: 32)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .frame(width: Grid.control, height: Grid.control)
+            .background(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                 .fill(recording ? Ink.violet.opacity(dots % 2 == 0 || Motion.reduced ? 1 : 0.7) : (hoveringMic ? Ink.pressed : .clear)))
             .contentShape(Rectangle())
             .onHover { hoveringMic = $0 }
@@ -323,17 +330,18 @@ struct PromptField: View {
                     Circle().fill(i < dots || Motion.reduced ? Ink.paper : Ink.ash).frame(width: 3, height: 3)
                 }
             }
-            .frame(width: 32, height: 32)
+            .frame(width: Grid.control, height: Grid.control)
             .accessibilityLabel(prompt.status == .transcribing ? "Распознаю речь" : "Слушаю")
         } else {
             let ready = !prompt.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             Button { prompt.send() } label: {
+                // Ready to send: filled, like play while paused (the one thing to do now).
                 Text("⏎")
                     .font(Ink.text(Ink.Size.prompt))
-                    .foregroundStyle(ready ? (hoveringSend ? Ink.panel : Ink.paper) : Ink.ash)
-                    .frame(width: 32, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(ready && hoveringSend ? Ink.paper : .clear))
+                    .foregroundStyle(ready ? Ink.panel : Ink.ash)
+                    .frame(width: Grid.control, height: Grid.control)
+                    .background(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+                        .fill(ready ? (hoveringSend ? Color.white : Ink.paper) : .clear))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -354,7 +362,7 @@ struct PromptField: View {
             case .thinking:
                 Text("Слушаю" + dotted).foregroundStyle(Ink.graphite)
             case .recording:
-                Circle().fill(Ink.violet).frame(width: 7, height: 7)
+                Circle().fill(Ink.violet).frame(width: Self.mark - 6, height: Self.mark - 6)
                 Text("Говорите" + dotted + "  отпустите или нажмите ещё раз").foregroundStyle(Ink.paper.opacity(0.85))
             case .transcribing:
                 Text("Распознаю речь" + dotted).foregroundStyle(Ink.graphite)
@@ -372,13 +380,13 @@ struct PromptField: View {
             case let .hint(s):
                 Text("?")
                     .foregroundStyle(Ink.panel)
-                    .frame(width: 13, height: 13)
+                    .frame(width: Self.mark, height: Self.mark)
                     .background(Circle().fill(Ink.graphite))
                 Text(s).foregroundStyle(Ink.paper.opacity(0.85)).help(s)
             case let .failed(s):
                 Text("!")
                     .foregroundStyle(Ink.panel)
-                    .frame(width: 13, height: 13)
+                    .frame(width: Self.mark, height: Self.mark)
                     .background(Circle().fill(Ink.paper))
                 Text(s).foregroundStyle(Ink.paper).help(s)
             }

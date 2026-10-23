@@ -4,41 +4,72 @@ import SwiftUI
 /// The onboarding window, built like the popover so the hand-over into the panel feels like one
 /// product: the art full-bleed on top (where the popover has its scene), then the panel's ground,
 /// Coppice Mono at the panel's sizes, its greys and its buttons on the 4 pt grid. The art is
-/// her portrait through an ordered dither (Dither.swift): paper on the lit side, red in the
-/// shadow, violet only for the listener.
+/// her portrait through an ordered dither (Dither.swift): paper on the lit side, a neutral
+/// screen in the shadow, the accent only for the listener (the earbud, the iris).
 struct OnboardingView: View {
     @ObservedObject var flow: OnboardingFlow
+    @ObservedObject private var accent = Accent.shared
 
     static let artHeight: CGFloat = 256
+    /// The last step needs room for its rows: the art shrinks to a band across her eye.
+    static let keysArtHeight: CGFloat = 132
+    static let steps = 4
+
+    private var artHeight: CGFloat { flow.step == .keys ? Self.keysArtHeight : Self.artHeight }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Ink.panel
             VStack(alignment: .leading, spacing: 0) {
                 ArtStage(flow: flow)
-                    .frame(width: OnboardingController.size.width, height: Self.artHeight)
+                    .frame(width: OnboardingController.size.width, height: artHeight)
+                    .background(WindowDragArea())
                     .background(Color.black)
                     .clipped()
-                words
-                    .padding(.horizontal, Grid.x4)
-                    .padding(.top, Grid.x4)
-                    .padding(.bottom, Grid.x4)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                ZStack(alignment: .topLeading) {
+                    words
+                        .id(wordsKey)
+                        .transition(.opacity)
+                }
+                .padding(.horizontal, Grid.x6)
+                .padding(.top, Grid.x4 + 2)
+                .padding(.bottom, Grid.x6 - 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            if flow.step == .done, flow.geometry != nil {
+            if flow.step == .screen, flow.geometry != nil {
                 ScreenHandle(flow: flow)
             }
+            CloseMark { flow.dismiss() }
+                .padding(Grid.x2)
+                .frame(maxWidth: .infinity, alignment: .topTrailing)
         }
+        .animation(Motion.reduced ? nil : .easeInOut(duration: 0.28), value: wordsKey)
+        .animation(Motion.reduced ? nil : .spring(response: 0.5, dampingFraction: 0.9), value: artHeight)
         .coordinateSpace(name: ScreenHandle.space)
         .frame(width: OnboardingController.size.width, height: OnboardingController.size.height)
         .environment(\.colorScheme, .dark)
+    }
+
+    /// What the words show; a change cross-fades them.
+    private var wordsKey: String {
+        switch flow.step {
+        case .intro: return "intro"
+        case .waiting: return "waiting"
+        case .linked: return "linked"
+        case .noAirPods: return "noAirPods"
+        case .denied: return "denied"
+        case .centre: return "centre"
+        case .screen: return "screen"
+        case .keys: return "keys"
+        }
     }
 
     private var stepNumber: Int {
         switch flow.step {
         case .intro, .waiting, .linked, .noAirPods, .denied: return 1
         case .centre: return 2
-        case .done: return 3
+        case .screen: return 3
+        case .keys: return 4
         }
     }
 
@@ -82,17 +113,38 @@ struct OnboardingView: View {
             Words(title: "посмотри в центр", step: stepNumber,
                   lines: [flow.calibrated ? "готово: вперёд теперь там, где экран."
                           : flow.signalLost ? "нет сигнала от airpods. проверь, что они в ушах."
-                          : "на красный крест. замри на секунду."]) {
+                          : "на крест. замри на секунду."]) {
                 PanelButton(title: "пропустить") { flow.skipCentre() }
                     .opacity(flow.calibrated ? 0 : 1)
             }
-        case .done:
+        case .screen:
             Words(title: "последний штрих", step: stepNumber, lines: ["настрой экран"]) {
-                PanelButton(title: "слушать", primary: true) { flow.finish(play: true) }
+                PanelButton(title: "дальше", primary: true) { flow.toKeys() }
             } extra: {
                 ScreenControls(flow: flow)
             }
+        case .keys:
+            KeysWords(step: stepNumber) {
+                PanelButton(title: "слушать", primary: true) { flow.finish(play: true) }
+            }
         }
+    }
+}
+
+/// The step as four short marks: done in graphite, the current one in paper.
+private struct StepMarks: View {
+    let step: Int
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(1...OnboardingView.steps, id: \.self) { i in
+                Capsule()
+                    .fill(i == step ? Ink.paper : i < step ? Ink.graphite : Ink.hairline)
+                    .frame(width: i == step ? 14 : 8, height: 2)
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(Text("Step \(step) of \(OnboardingView.steps)"))
     }
 }
 
@@ -107,23 +159,22 @@ private struct Words<Actions: View, Extra: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center) {
                 Text(title)
                     .font(Ink.text(Ink.Size.prompt + 2))
                     .foregroundStyle(Ink.paper)
                 Spacer(minLength: Grid.x2)
-                Text("\(step) / 3")
-                    .font(Ink.text(Ink.Size.caption))
-                    .foregroundStyle(Ink.ash)
+                StepMarks(step: step)
             }
             VStack(alignment: .leading, spacing: Grid.x1) {
                 ForEach(lines, id: \.self) { Text($0).fixedSize(horizontal: false, vertical: true) }
             }
             .font(Ink.text(Ink.Size.body))
+            .lineSpacing(2)
             .foregroundStyle(Ink.graphite)
-            .padding(.top, Grid.x2)
+            .padding(.top, Grid.x2 + 2)
             extra
-                .padding(.top, Grid.x2)
+                .padding(.top, Grid.x3)
             Spacer(minLength: Grid.x2)
             HStack(spacing: Grid.x2) { actions }
         }
@@ -133,6 +184,42 @@ private struct Words<Actions: View, Extra: View>: View {
 extension Words where Extra == EmptyView {
     init(title: String, step: Int, lines: [String], @ViewBuilder actions: () -> Actions) {
         self.init(title: title, step: step, lines: lines, actions: actions, extra: { EmptyView() })
+    }
+}
+
+/// The last step: the accent, the two keys and the microphone, each optional, the same rows
+/// as the panel's settings (where they can be changed later).
+private struct KeysWords<Actions: View>: View {
+    let step: Int
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center) {
+                Text("keys and voice")
+                    .font(Ink.text(Ink.Size.prompt + 2))
+                    .foregroundStyle(Ink.paper)
+                Spacer(minLength: Grid.x2)
+                StepMarks(step: step)
+            }
+            Text("all optional, and in settings later. typesafe ai turns words into the forest; fal and the microphone are for voice.")
+                .font(Ink.text(Ink.Size.body))
+                .lineSpacing(2)
+                .foregroundStyle(Ink.graphite)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Grid.x2 + 2)
+            VStack(alignment: .leading, spacing: 2) {
+                AccentRow(nameWidth: 96)
+                KeyRow(account: .typesafe, name: "TypeSafe AI", placeholder: "Add your TypeSafe AI key", nameWidth: 96,
+                       help: KeyRow.typesafeHelp)
+                KeyRow(account: .fal, name: "fal.ai", placeholder: "Add your fal key", nameWidth: 96, help: KeyRow.falHelp)
+                MicrophoneRow(nameWidth: 96)
+            }
+            .textCase(.lowercase)
+            .padding(.top, Grid.x2)
+            Spacer(minLength: Grid.x2)
+            HStack(spacing: Grid.x2) { actions }
+        }
     }
 }
 
@@ -148,11 +235,11 @@ private struct PanelButton: View {
             Text(title)
                 .font(Ink.text(Ink.Size.title))
                 .foregroundStyle(primary ? Ink.panel : hovering ? Ink.paper : Ink.graphite)
-                .padding(.horizontal, Grid.x3)
+                .padding(.horizontal, Grid.x3 + 2)
                 .frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
                     .fill(primary ? (hovering ? Color(white: 1) : Ink.paper) : hovering ? Ink.raised : .clear))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .overlay(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
                     .strokeBorder(primary ? .clear : Ink.hairline, lineWidth: 1))
                 .contentShape(Rectangle())
         }
@@ -164,6 +251,44 @@ private struct PanelButton: View {
             button
         }
     }
+}
+
+/// A quiet × over the art's corner: closes the onboarding (counts as done, no playback). Esc too.
+private struct CloseMark: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Canvas { ctx, size in
+                var p = Path()
+                let r = size.width / 2 - 7
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                p.move(to: CGPoint(x: c.x - r, y: c.y - r)); p.addLine(to: CGPoint(x: c.x + r, y: c.y + r))
+                p.move(to: CGPoint(x: c.x + r, y: c.y - r)); p.addLine(to: CGPoint(x: c.x - r, y: c.y + r))
+                ctx.stroke(p, with: .color(hovering ? Ink.paper : Ink.ash), lineWidth: 1.2)
+            }
+            .frame(width: 22, height: 22)
+            .background(Circle().fill(hovering ? Ink.raised : .clear))
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { hovering = $0 }
+        .help(Text("Close"))
+        .accessibilityLabel(Text("Close"))
+    }
+}
+
+/// Drags the borderless window from the art (behind it; the screen handle sits on top).
+private struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// The screen's distance and angle, each with plain steps and arrow keys.
@@ -208,7 +333,7 @@ private struct ScreenControls: View {
                     .font(Ink.text(Ink.Size.title))
                     .foregroundStyle(hovering ? Ink.paper : Ink.graphite)
                     .frame(width: 22, height: 20)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Ink.raised : .clear))
+                    .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(hovering ? Ink.raised : .clear))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -226,6 +351,8 @@ final class ArtAnimator {
     var blend = 0.0, blendV = 0.0
     var real = HeadPose()
     var gaze = SIMD2<Double>(0, 0), gazeV = SIMD2<Double>(0, 0)
+    var pod: SIMD2<Double>?
+    var podProfile = false
     var ring = 0.0
     var last: Date?
 
@@ -234,7 +361,7 @@ final class ArtAnimator {
     @MainActor
     func pose(_ flow: OnboardingFlow, at date: Date, dt: Double) -> HeadPose {
         let t = date.timeIntervalSince(flow.started)
-        let following = [.linked, .done].contains(flow.step) && flow.live
+        let following = [.linked, .screen, .keys].contains(flow.step) && flow.live
             && (flow.linkTime.map { date.timeIntervalSince($0) > 0.9 } ?? false)
         let stiffness = 28.0, damping = 2 * stiffness.squareRoot() * 0.72
         blendV += (((following ? 1 : 0) - blend) * stiffness - blendV * damping) * dt
@@ -284,7 +411,8 @@ private struct ArtStage: View {
 enum Art {
     /// One dither cell, points.
     nonisolated static let cell: CGFloat = 2
-    static let red = Color(red: 0xA3 / 255.0, green: 0x26 / 255.0, blue: 0x2E / 255.0)
+    /// The shadow side's dots: a neutral, smoggy grey (the accent is kept for the listener).
+    static let shade = Color(red: 0.36, green: 0.375, blue: 0.355)
 
     static func cg(_ c: Color) -> CGColor { NSColor(c).cgColor }
 
@@ -295,7 +423,7 @@ enum Art {
 
     /// A dither frame at `origin` (points), one cell per `cell` points, no smoothing.
     static func put(_ ctx: CGContext, _ f: DitherFrame, at origin: CGPoint) {
-        guard let img = f.image(paper: rgb(Ink.paper), red: rgb(red), violet: rgb(Ink.violet)) else { return }
+        guard let img = f.image(paper: rgb(Ink.paper), shade: rgb(shade), accent: rgb(Ink.accent)) else { return }
         let rect = CGRect(x: origin.x, y: origin.y, width: CGFloat(f.cols) * cell, height: CGFloat(f.rows) * cell)
         ctx.saveGState()
         ctx.interpolationQuality = .none
@@ -311,15 +439,19 @@ enum Art {
             eyeShot(ctx, size: size, flow: flow, anim: anim, date: date, dt: dt)
             return
         }
+        if flow.step == .keys {
+            eyeBand(ctx, size: size, flow: flow, date: date)
+            return
+        }
         let w = Double(size.width), t = date.timeIntervalSince(flow.started)
 
         // Hum: a slow standing wave on the wires while nothing is linked yet.
         let unlinked = [.intro, .waiting, .noAirPods, .denied].contains(flow.step)
         let hum = Motion.reduced || !unlinked ? 0 : 1.6 * sin(2 * .pi * 0.45 * t)
-        // The link: one pulse down the wire (0.8 s), then the earbud is violet.
+        // The link: one pulse down the wire (0.8 s), then the earbud takes the accent.
         var pulse: Double?
         var linked = false
-        if let lt = flow.linkTime, [.linked, .done].contains(flow.step) {
+        if let lt = flow.linkTime, [.linked, .screen].contains(flow.step) {
             let p = date.timeIntervalSince(lt) / 0.8
             if Motion.reduced || p >= 1 { linked = true } else if p > 0 { pulse = p }
         }
@@ -335,11 +467,20 @@ enum Art {
 
         var look = PortraitLook()
         look.pose = anim.pose(flow, at: date, dt: dt)
-        look.linked = linked
-        let profile = flow.step == .done
+        let profile = flow.step == .screen
         let portrait = profile ? SideLayout.portraitSize : 118
         let origin = profile ? SideLayout.portraitOrigin : CGPoint(x: 250 - Double(portrait), y: 20)
-        let (frame, pod) = PortraitDither.head(look, cols: portrait, rows: portrait, size: portrait, profile: profile)
+        var (frame, rawPod) = PortraitDither.head(look, cols: portrait, rows: portrait, size: portrait, profile: profile)
+        // The earbud eases to where the views put it (a turn can hand it from one ear to the
+        // other); a new shot (the profile) starts it in place.
+        if anim.pod == nil || profile != anim.podProfile || dt == 0 {
+            anim.pod = rawPod
+        } else if let p = anim.pod {
+            anim.pod = p + (rawPod - p) * (1 - exp(-dt * 14))
+        }
+        anim.podProfile = profile
+        let pod = anim.pod ?? rawPod
+        if linked { frame.tint(around: pod, radius: Double(portrait) * 0.035) }
         let podPoint = CGPoint(x: Double(origin.x) + pod.x * Double(cell), y: Double(origin.y) + pod.y * Double(cell))
 
         // The drop wire from the second line into her earbud, drawn under her.
@@ -438,7 +579,7 @@ enum Art {
     // MARK: Step 2
 
     /// Her eye across the art; on the window's (and the screen's) exact centre, below it, a
-    /// small red cross with a ring that closes as you hold still.
+    /// small cross with a ring that closes as you hold still.
     static func eyeShot(_ ctx: CGContext, size: CGSize, flow: OnboardingFlow, anim: ArtAnimator, date: Date, dt: Double) {
         let t = date.timeIntervalSince(flow.started)
         let inStep = date.timeIntervalSince(flow.stepStart)
@@ -473,7 +614,7 @@ enum Art {
 
         let dim = flow.signalLost && !flow.calibrated
         ctx.setLineCap(.butt)
-        ctx.setStrokeColor(cg(red.opacity(dim ? 0.45 : 1)))
+        ctx.setStrokeColor(cg(Ink.paper.opacity(dim ? 0.4 : 0.9)))
         ctx.setLineWidth(1.5)
         ctx.move(to: CGPoint(x: cx - 5, y: cy)); ctx.addLine(to: CGPoint(x: cx + 5, y: cy))
         ctx.move(to: CGPoint(x: cx, y: cy - 5)); ctx.addLine(to: CGPoint(x: cx, y: cy + 5))
@@ -485,9 +626,25 @@ enum Art {
         if anim.ring > 0.005 {
             let end = -Double.pi / 2 + 2 * .pi * min(1, anim.ring)
             ctx.addArc(center: CGPoint(x: cx, y: cy), radius: 12, startAngle: -.pi / 2, endAngle: end, clockwise: false)
-            ctx.setStrokeColor(cg(flow.calibrated ? Ink.violet : Ink.paper))
+            ctx.setStrokeColor(cg(flow.calibrated ? Ink.accent : Ink.paper))
             ctx.strokePath()
         }
+    }
+}
+
+extension Art {
+    /// The last step's band: her eye across the art, the iris in the accent (it follows the
+    /// picker), blinking now and then.
+    static func eyeBand(_ ctx: CGContext, size: CGSize, flow: OnboardingFlow, date: Date) {
+        let t = date.timeIntervalSince(flow.started)
+        let cols = Int(size.width / cell), rows = max(8, Int(size.height / cell))
+        var shot = EyeShot()
+        shot.open = Motion.reduced ? 1 : Blink.openness(at: t, seed: 0.9)
+        shot.gaze = SIMD2(0.15 * sin(t * 0.3), -0.1)
+        shot.locked = true
+        let frame = EyeDither.render(shot, cols: cols, rows: rows, size: 214,
+                                     centre: SIMD2(Double(cols) / 2 + 6, Double(rows) * 0.5))
+        put(ctx, frame, at: .zero)
     }
 }
 
@@ -540,7 +697,6 @@ private struct ScreenHandle: View {
             Color.clear
                 .frame(width: 36, height: max(44, h))
                 .contentShape(Rectangle())
-                .position(c)
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)).onChanged { v in
                     let dx = Double(v.location.x - SideLayout.eye.x)
                     let dy = Double(SideLayout.eye.y - min(v.location.y, OnboardingView.artHeight - 4))
@@ -553,6 +709,9 @@ private struct ScreenHandle: View {
                     hovering = inside
                 }
                 .accessibilityLabel("Экран: тяни, чтобы задать расстояние и угол")
+                // Placed last: `.position` fills the whole window, and a gesture attached after
+                // it took every click in the window (the step's buttons could not be pressed).
+                .position(c)
         }
     }
 }
