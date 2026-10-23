@@ -573,6 +573,14 @@ impl Engine {
         self.shared.params.get(id as usize).map_or(0.0, |p| p.load())
     }
 
+    /// Tests: look at the director between renders (same thread, not while rendering).
+    #[cfg(test)]
+    pub(crate) fn with_director<R>(&self, f: impl FnOnce(&Director) -> R) -> R {
+        // SAFETY: test-only, called from the thread that renders, between renders.
+        let dsp = unsafe { &*self.dsp.get() };
+        f(&dsp.director)
+    }
+
     pub fn telemetry(&self, id: u32) -> f32 {
         self.shared.telemetry.get(id as usize).map_or(0.0, |p| p.load())
     }
@@ -974,6 +982,9 @@ impl Dsp {
             storm: p(param::STORM).clamp(0.0, 1.0),
         };
         self.director.step(dt, &env, &mut self.world);
+        if let Some(g) = self.director.take_gust() {
+            self.wind.kick(g);
+        }
         let screen = crate::clips::Screen {
             width: p(param::SCREEN_WIDTH).clamp(0.1, 3.0),
             height: p(param::SCREEN_HEIGHT).clamp(0.1, 2.0),
@@ -1387,7 +1398,7 @@ mod tests {
         let rms = (energy / (2.0 * (blocks * 512) as f64)).sqrt();
         assert!(rms > 1e-3, "rms = {rms}");
         let mut src = [SourceInfo::default(); MAX_SOURCES];
-        assert_eq!(engine.sources(&mut src), 48);
+        assert_eq!(engine.sources(&mut src), 53);
         let mut spec = [0.0f32; 32];
         engine.spectrum(&mut spec);
         assert!(spec.iter().any(|v| *v > 0.0));
@@ -1430,7 +1441,7 @@ mod tests {
         assert_eq!(engine.param(param::TIME_OF_DAY), 9.0);
         let mut objs = [ObjectInfo::default(); 64];
         let n = engine.objects(&mut objs);
-        assert_eq!(n, 36);
+        assert_eq!(n, 38);
         let tree = objs[..n].iter().find(|o| o.id == 2).unwrap();
         assert_eq!(tree.kind, ObjectKind::Tree as u32);
         assert_ne!(tree.flags & object_flags::MOVABLE, 0);

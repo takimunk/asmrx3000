@@ -169,7 +169,15 @@ pub struct Agent {
     flick: f32,
     next_flick: f32,
     flick_rng: u64,
+    /// A performer whose entrances the scene's encounter director cues (encounters.rs):
+    /// off stage (or waiting on its perch, for circling birds) until [`Agent::cue`].
+    directed: bool,
+    /// Ground feeding keeps at least this far from the listener, m.
+    personal_space: f32,
 }
+
+/// Seconds a directed performer waits off stage: until it is cued.
+const CUED: f32 = 1.0e9;
 
 fn v3(a: [f32; 3]) -> Vec3 {
     Vec3::new(a[0], a[1], a[2])
@@ -287,6 +295,8 @@ impl Agent {
             flick: 0.0,
             next_flick: 8.0 + 40.0 * phase,
             flick_rng: seed ^ 0xF11C_F11C,
+            directed: false,
+            personal_space: 1.2,
         };
         if let Some(h) = home {
             let at = a.perch_in(h, entities, false);
@@ -313,6 +323,63 @@ impl Agent {
 
     pub fn position(&self) -> Vec3 {
         self.position
+    }
+
+    /// Fly-bys, circling and approaches wait for the encounter director's cue instead of
+    /// their own `interval` timers. Residents are not affected.
+    pub fn set_directed(&mut self) {
+        if self.is_resident() {
+            return;
+        }
+        self.directed = true;
+        match &mut self.state {
+            State::Absent { left } => *left = CUED,
+            State::Perched { left, .. } if matches!(self.behaviour, Behaviour::Circle { .. }) => *left = CUED,
+            _ => {}
+        }
+    }
+
+    /// Keep ground feeding at least `m` metres from the listener (a directed scene keeps its
+    /// birds' calls out of arm's reach).
+    pub fn set_personal_space(&mut self, m: f32) {
+        self.personal_space = m.max(1.2);
+    }
+
+    /// A directed performer waiting for its entrance (off stage, or on its perch).
+    pub fn waiting(&self) -> bool {
+        self.directed
+            && match self.state {
+                State::Absent { left } => left > CUED * 0.5,
+                State::Perched { left, .. } => matches!(self.behaviour, Behaviour::Circle { .. }) && left > CUED * 0.5,
+                _ => false,
+            }
+    }
+
+    /// Kind of entrance: 0 fly-by, 1 circling, 2 approach (None for residents).
+    pub fn performance(&self) -> Option<u8> {
+        match self.behaviour {
+            Behaviour::Flyby { .. } => Some(0),
+            Behaviour::Circle { .. } => Some(1),
+            Behaviour::Approach { .. } => Some(2),
+            _ => None,
+        }
+    }
+
+    /// Awake enough at this hour to perform (the same test as an undirected entrance).
+    pub fn can_perform(&self, env: &Environment) -> bool {
+        self.awake(env) > 0.2 && env.birds > 0.0
+    }
+
+    /// Cue a waiting performer: it enters (or starts circling) on its next step.
+    pub fn cue(&mut self) -> bool {
+        if !self.waiting() {
+            return false;
+        }
+        match &mut self.state {
+            State::Absent { left } | State::Perched { left, .. } => *left = 0.0,
+            _ => {}
+        }
+        true
     }
 
     pub fn velocity(&self) -> Vec3 {
@@ -366,6 +433,13 @@ impl Agent {
     }
 
     /// A neighbour just finished its song: reply within the next few seconds.
+    /// Its turn in the scene's song budget: start the next phrase soon, as an answer would.
+    pub fn give_turn(&mut self) {
+        if self.answer <= 0.0 {
+            self.answer = self.rng.range(2.0, 4.0);
+        }
+    }
+
     pub fn invite_answer(&mut self) {
         if self.answer <= 0.0 && self.rng.uniform() < self.species.def().answer {
             self.answer = self.rng.range(2.5, 5.0);
@@ -462,14 +536,20 @@ impl Agent {
             }
         };
         let mut p = Vec3::new(c.x, c.y, self.ground_z + 0.05);
-        for _ in 0..6 {
+        for _ in 0..12 {
             let a = self.rng.uniform() * TAU;
             let d = r * self.rng.uniform().sqrt().max(0.15);
             p = Vec3::new(c.x + d * a.cos(), c.y + d * a.sin(), self.ground_z + 0.05);
             // Keep clear of the water and of the listener's feet.
-            if water_distance(entities, p) > 1.2 && flat(p).length() > 1.2 {
+            if water_distance(entities, p) > 1.2 && flat(p).length() > self.personal_space {
                 break;
             }
+        }
+        // Still too close (a home tree right by the listener): on the far side of the area.
+        if flat(p).length() < self.personal_space {
+            let away = normalize(flat(c));
+            let d = (self.personal_space + 0.5 - flat(c).length()).max(0.15 * r).max(0.5);
+            p = Vec3::new(c.x + away.x * d, c.y + away.y * d, self.ground_z + 0.05);
         }
         p
     }
@@ -642,6 +722,9 @@ impl Agent {
     }
 
     fn off_stage_interval(&mut self) -> f32 {
+        if self.directed {
+            return CUED;
+        }
         match self.behaviour {
             Behaviour::Flyby { interval, .. } | Behaviour::Circle { interval, .. } | Behaviour::Approach { interval, .. } => {
                 range(&mut self.rng, interval)
@@ -819,7 +902,7 @@ impl Agent {
                 if self.awake(env) > 0.2 {
                     self.start_circle(env, entities);
                 } else if let State::Perched { left, .. } = &mut self.state {
-                    *left = range(&mut self.rng, interval);
+                    *left = if self.directed { CUED } else { range(&mut self.rng, interval) };
                 }
             }
             Behaviour::Approach { speed, .. } => {
@@ -848,6 +931,7 @@ impl Agent {
                         let l = self.linger();
                         if self.iway + 3 == self.nway { l * 1.5 } else { l }
                     }
+                    Behaviour::Circle { .. } if self.directed => CUED,
                     Behaviour::Circle { interval, .. } => range(&mut self.rng, interval),
                     _ if mode == Mode::Alert => self.rng.range(4.0, 10.0),
                     _ => self.dwell(),
@@ -1222,8 +1306,10 @@ impl Agent {
                     if awake > 0.2 && density > 0.0 {
                         self.enter(env, entities);
                     } else {
-                        // Asleep at this hour: look again in a while.
-                        self.state = State::Absent { left: self.rng.range(10.0, 30.0) };
+                        // Asleep at this hour: look again in a while (a directed performer
+                        // waits for its next cue).
+                        let left = if self.directed { CUED } else { self.rng.range(10.0, 30.0) };
+                        self.state = State::Absent { left };
                     }
                 }
             }

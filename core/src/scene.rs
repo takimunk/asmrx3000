@@ -166,11 +166,16 @@ pub struct DirectorDesc {
     pub flock_interval: [f32; 2],
     /// Time of the first flock event; omitted = drawn from `flock_interval`.
     pub first_flock: Option<f32>,
+    /// Directed scene (director/encounters.rs): a song budget by hour, slow pulse and lulls,
+    /// and fly-bys, circling, visitors, flocks and gusts cued one at a time instead of each on
+    /// its own timer (`flock_interval` and the performers' `first`/`interval` are then unused).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encounters: Option<crate::director::EncountersDesc>,
 }
 
 impl Default for DirectorDesc {
     fn default() -> Self {
-        Self { flock_interval: [60.0, 150.0], first_flock: None }
+        Self { flock_interval: [60.0, 150.0], first_flock: None, encounters: None }
     }
 }
 
@@ -290,6 +295,10 @@ pub struct RiverDesc {
     /// Legacy: scales air entrainment relative to 350.
     #[serde(default = "default_bubble_rate")]
     pub bubble_rate: f32,
+    /// Contrast between riffles and pools along the stream (0 = an even stream, 1 = the
+    /// natural alternation, where one shallow riffle can be ~18 dB louder than the pools).
+    #[serde(default = "one")]
+    pub riffles: f32,
     /// Water model (model `water`); omitted = `brook_pebbles`. `length_m` defaults to the
     /// river length per segment.
     #[serde(default)]
@@ -689,7 +698,7 @@ impl World {
                     for k in 0..r.segments {
                         let u = (k as f32 + 0.5) / r.segments as f32;
                         let at = sample_polyline(&rel, u);
-                        let s = (core::f32::consts::TAU * u * length / spacing + phase).sin() + 0.4 * rng.gauss();
+                        let s = r.riffles.clamp(0.0, 1.0) * ((core::f32::consts::TAU * u * length / spacing + phase).sin() + 0.4 * rng.gauss());
                         let variation = [(0.2 * s).exp(), (-0.15 * s + 0.1 * rng.gauss()).exp(), -0.05 * s];
                         let seg = vary_water(&cfg, variation);
                         push(&mut emitters, SourceKind::Water, at, ModelConfig::Water(seg).build(sample_rate, rng.next_u64()), r.flow.clamp(0.0, 2.0));
