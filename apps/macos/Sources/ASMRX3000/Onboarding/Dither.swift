@@ -3,8 +3,9 @@ import Foundation
 import ImageIO
 import simd
 
-// The onboarding's art: original anime portraits (Resources/Onboarding, generated for the app)
-// drawn through an ordered dither: Bayer 8×8 on the luminance, one ink per pixel, a crisp grid of
+// The onboarding's art: her 3D head (Head3D.swift, a mesh generated from her front portrait) and
+// original anime portraits (Resources/Onboarding, generated for the app), drawn through an
+// ordered dither: Bayer 8×8 on the luminance, one ink per pixel, a crisp grid of
 // 2 pt cells. Lit areas come out in paper, the shadow side in a neutral grey screen, lines and
 // pupils in the void; the accent only for the listener (the earbud once linked, the locked iris).
 // Plain Swift and CoreGraphics, no UI: OnboardingView draws the bitmaps, and frames can be
@@ -126,16 +127,11 @@ enum Portraits {
     static func load(_ name: String) -> DitherSource? { DitherSource(url: directory.appendingPathComponent(name + ".png")) }
 
     static let front = load("front")
-    /// Face turned towards the left of the image (the listener turned left, mirrored).
-    static let turnLeft = load("turn_left")
-    static let turnRight = load("turn_right")
     static let profileRight = load("profile_right")
     static let eye = load("eye")
 
     /// Where the visible earbud is in each view (u, v of the image).
     static let podFront = SIMD2<Double>(0.67, 0.47)
-    static let podTurnLeft = SIMD2<Double>(0.573, 0.44)
-    static let podTurnRight = SIMD2<Double>(0.427, 0.44)
     static let podProfile = SIMD2<Double>(0.467, 0.44)
     /// Her eye in the profile view, for the line of sight.
     static let eyeProfile = SIMD2<Double>(0.707, 0.36)
@@ -150,13 +146,17 @@ struct DitherFrame {
     let cols: Int
     let rows: Int
     var ink: [DitherInk]
+    /// Cells covered by the 3D head, inked or not (an earbud in her dark hair still shows).
+    var solid: [Bool]
 
     init(cols: Int, rows: Int) {
         self.cols = cols; self.rows = rows
         ink = Array(repeating: .none, count: cols * rows)
+        solid = Array(repeating: false, count: cols * rows)
     }
 
-    /// The earbud in the accent: the inked cells within `radius` of `centre` (cells).
+    /// The earbud in the accent: the inked cells within `radius` of `centre` (cells), and an
+    /// even screen of the covered ones.
     mutating func tint(around centre: SIMD2<Double>, radius r: Double) {
         let y0 = max(0, Int(centre.y - r)), y1 = min(rows - 1, Int(centre.y + r))
         let x0 = max(0, Int(centre.x - r)), x1 = min(cols - 1, Int(centre.x + r))
@@ -164,7 +164,9 @@ struct DitherFrame {
         for y in y0...y1 {
             for x in x0...x1 {
                 let dx = Double(x) - centre.x, dy = Double(y) - centre.y
-                if dx * dx + dy * dy <= r * r, ink[y * cols + x] != .none { ink[y * cols + x] = .accent }
+                guard dx * dx + dy * dy <= r * r else { continue }
+                let i = y * cols + x
+                if ink[i] != .none || (solid[i] && Dither.bayer[(y & 7) * 8 + (x & 7)] < 0.55) { ink[i] = .accent }
             }
         }
     }
@@ -236,154 +238,126 @@ struct PortraitLook {
     var linked = false
 }
 
-/// The head, turning continuously in 3D (2.5D): each keyframe (front, the two three-quarter
-/// views) is mapped onto a sphere round her skull, rotated by the difference between the pose
-/// asked for and the pose it was drawn in, and projected back; the two nearest keyframes,
-/// now showing the same pose, are blended by the yaw. Pitch tilts the same sphere. So every
-/// yaw and pitch is a distinct, smoothly moving picture, never a cut between shots; then the
-/// roll and the dither, as before.
+/// The head: her 3D mesh (Head3D.swift) turned to the pose, drawn offscreen at two pixels a
+/// cell and dithered: per cell the drawing's luminance (half the mean of the four pixels, half
+/// the darkest, so thin line art survives), lit by a hard side light from the screen's left
+/// whose shadow side takes the shade ink. Only the head turns; the shoulders stay. Without the
+/// mesh (or for the side view of the screen step) a drawn view, flat.
 enum PortraitDither {
-    /// One drawn view: its image, the yaw it was drawn at (radians, + = her nose to the left of
-    /// the screen), the sphere of her head in it (u, v centre and radii) and the earbud.
-    struct Key {
-        let source: DitherSource
-        let yaw: Double
-        let centre: SIMD2<Double>
-        let radius: SIMD2<Double>
-        let pod: SIMD2<Double>
-    }
-
-    /// The three-quarter views' yaw.
-    static let turnYaw = 0.6
-    /// Beyond the last view she keeps turning by the warp alone, up to this.
-    static let maxYaw = 1.0
-    static let maxPitch = 0.38
-
-    static let keys: [Key] = {
-        var k: [Key] = []
-        if let s = Portraits.turnRight {
-            k.append(Key(source: s, yaw: -turnYaw, centre: SIMD2(0.50, 0.36), radius: SIMD2(0.27, 0.28), pod: Portraits.podTurnRight))
-        }
-        if let s = Portraits.front {
-            k.append(Key(source: s, yaw: 0, centre: SIMD2(0.48, 0.36), radius: SIMD2(0.25, 0.28), pod: Portraits.podFront))
-        }
-        if let s = Portraits.turnLeft {
-            k.append(Key(source: s, yaw: turnYaw, centre: SIMD2(0.50, 0.36), radius: SIMD2(0.27, 0.28), pod: Portraits.podTurnLeft))
-        }
-        return k
-    }()
-
-    /// The (at most two) keyframes for a yaw and their weights. Between two views the blend is
-    /// eased and kept to the middle of the interval (a long one shows two faces at once): both
-    /// are warped to the same pose, so the hand-over dissolves rather than cuts.
-    static func blend(_ yaw: Double) -> [(Key, Double)] {
-        guard !keys.isEmpty else { return [] }
-        let sorted = keys.sorted { $0.yaw < $1.yaw }
-        if yaw <= sorted[0].yaw { return [(sorted[0], 1)] }
-        if yaw >= sorted[sorted.count - 1].yaw { return [(sorted[sorted.count - 1], 1)] }
-        for i in 0..<(sorted.count - 1) where yaw <= sorted[i + 1].yaw {
-            let a = sorted[i], b = sorted[i + 1]
-            let s = (yaw - a.yaw) / (b.yaw - a.yaw)
-            let e = max(0, min(1, (s - 0.36) / 0.28))
-            let k = e * e * (3 - 2 * e)
-            return k < 0.001 ? [(a, 1)] : k > 0.999 ? [(b, 1)] : [(a, 1 - k), (b, k)]
-        }
-        return [(sorted[sorted.count - 1], 1)]
-    }
-
-    /// Where on the keyframe (u, v) the point (u, v) of the head turned by `dYaw` and tilted by
-    /// `pitch` comes from, and how much the keyframe sees of it (0 = its far side).
-    @inline(__always)
-    static func source(_ u: Double, _ v: Double, key: Key, dYaw: Double, pitch: Double) -> (Double, Double, Double) {
-        let ca = cos(dYaw), sa = sin(dYaw), cb = cos(pitch), sb = sin(pitch)
-        let x = (u - key.centre.x) / key.radius.x, y = (v - key.centre.y) / key.radius.y
-        let r2 = x * x + y * y
-        func back(_ x: Double, _ y: Double, _ z: Double) -> (Double, Double, Double) {
-            let y1 = y * cb + z * sb, z1 = -y * sb + z * cb
-            let x2 = x * ca + z1 * sa, z2 = -x * sa + z1 * ca
-            return (x2, y1, z2)
-        }
-        if r2 < 1 {
-            let (xs, ys, zs) = back(x, y, (1 - r2).squareRoot())
-            let vis = max(0, min(1, zs / 0.22))
-            return (key.centre.x + xs * key.radius.x, key.centre.y + ys * key.radius.y, vis)
-        }
-        // Outside the sphere (hair ends, neck, shoulders): the rim's displacement, fading out.
-        let r = r2.squareRoot()
-        let bx = x / r, by = y / r
-        let (xs, ys, _) = back(bx, by, 0)
-        let f = pow(max(0, 1 - (r - 1) / 0.4), 2)
-        return (key.centre.x + (x + (xs - bx) * f) * key.radius.x, key.centre.y + (y + (ys - by) * f) * key.radius.y, 1)
-    }
-
-    /// Where a keyframe's point lands once turned by `dYaw` and tilted by `pitch`.
-    static func forward(_ p: SIMD2<Double>, key: Key, dYaw: Double, pitch: Double) -> SIMD2<Double> {
-        let x = (p.x - key.centre.x) / key.radius.x, y = (p.y - key.centre.y) / key.radius.y
-        let z = max(0, 1 - x * x - y * y).squareRoot()
-        let x1 = x * cos(dYaw) - z * sin(dYaw), z1 = x * sin(dYaw) + z * cos(dYaw)
-        let y2 = y * cos(pitch) - z1 * sin(pitch)
-        return SIMD2(key.centre.x + x1 * key.radius.x, key.centre.y + y2 * key.radius.y)
-    }
+    static let maxYaw = 1.15
+    static let maxPitch = 0.45
+    static let maxRoll = 0.4
+    /// Pixels of the offscreen drawing per cell, each way.
+    static let supersample = 2
+    /// The generated texture is darker than the drawings: gain and lift bring its skin, hair and
+    /// sweater up to theirs (measured at yaw 0 against front.png).
+    static let exposure = SIMD2<Float>(1.15, 0.04)
 
     /// Renders `cols × rows` cells showing the portrait square in the middle (`size` cells).
-    /// Returns the frame and where the earbud is, in cells.
-    /// In profile she faces the screen on the right, and it lights her face: the shadow side
-    /// flips to the left.
-    static func head(_ look: PortraitLook, cols: Int, rows: Int, size: Int, profile: Bool = false) -> (DitherFrame, SIMD2<Double>) {
-        var frame = DitherFrame(cols: cols, rows: rows)
-        // Mirror image: turning left (yaw +) turns her face towards the left of the screen.
-        let yaw = max(-maxYaw, min(maxYaw, look.pose.yaw))
-        let pitch = profile ? 0 : max(-maxPitch, min(maxPitch, look.pose.pitch * 0.8))
-        var views: [(Key, Double, Double)] = [] // key, weight, yaw difference
-        if profile {
-            if let s = Portraits.profileRight {
-                views = [(Key(source: s, yaw: 0, centre: SIMD2(0.5, 0.36), radius: SIMD2(0.27, 0.28), pod: Portraits.podProfile), 1, 0)]
+    /// Returns the frame, where the earbud is (cells) and whether it is in sight (not behind
+    /// her head). In profile she faces the screen on the right, lit from there.
+    static func head(_ look: PortraitLook, cols: Int, rows: Int, size: Int, profile: Bool = false) -> (DitherFrame, SIMD2<Double>, Bool) {
+        if !profile, let model = HeadModel.shared {
+            var pose = look.pose
+            pose.yaw = max(-maxYaw, min(maxYaw, pose.yaw))
+            pose.pitch = max(-maxPitch, min(maxPitch, pose.pitch))
+            pose.roll = max(-maxRoll, min(maxRoll, pose.roll))
+            // A still head (Reduce Motion, no tracking) is drawn once.
+            let key = Cached(pose: pose, linked: look.linked, cols: cols, rows: rows, size: size)
+            if let c = cache, c.0 == key { return c.1 }
+            if let buf = model.render(pose, size: size * supersample) {
+                let out = mesh(buf, model: model, pose: pose, linked: look.linked, cols: cols, rows: rows, size: size)
+                cache = (key, out)
+                return out
             }
-        } else {
-            views = blend(yaw).map { ($0.0, $0.1, yaw - $0.0.yaw) }
         }
-        guard !views.isEmpty else { return (frame, SIMD2(Double(cols) / 2, Double(rows) / 2)) }
+        return flat(look, cols: cols, rows: rows, size: size, profile: profile)
+    }
 
-        let ox = Double(cols - size) / 2, oy = Double(rows - size) / 2
-        let shiftV = profile ? 0 : -look.pose.pitch * 0.025
-        let c = cos(-look.pose.roll), s = sin(-look.pose.roll)
-        // Rotate about the neck.
-        let pu = 0.5, pv = 0.85
-        let r = 0.35 / Double(size)
+    private struct Cached: Equatable {
+        let pose: HeadPose, linked: Bool, cols: Int, rows: Int, size: Int
+    }
+    private static var cache: (Cached, (DitherFrame, SIMD2<Double>, Bool))?
+
+    static func mesh(_ buf: HeadBuffer, model: HeadModel, pose: HeadPose, linked: Bool,
+                     cols: Int, rows: Int, size: Int) -> (DitherFrame, SIMD2<Double>, Bool) {
+        var frame = DitherFrame(cols: cols, rows: rows)
+        let ox = (cols - size) / 2, oy = (rows - size) / 2
+        let ss = supersample, n = buf.size
+        var lums = [Float](repeating: 0, count: ss * ss)
         for y in 0..<rows {
+            let py0 = (y - oy) * ss
+            guard py0 >= 0, py0 + ss <= n else { continue }
+            let v0 = (Double(y - oy) + 0.5) / Double(size)
             for x in 0..<cols {
-                let u0 = (Double(x) + 0.5 - ox) / Double(size), v0 = (Double(y) + 0.5 - oy) / Double(size)
-                let du = u0 - pu, dv = v0 - pv
-                let u = pu + du * c - dv * s, v = pv + du * s + dv * c - shiftV
-                var lum: Float = 0, lumW: Float = 0, cov: Float = 0
-                for (key, w, dYaw) in views {
-                    let (su, sv, vis) = source(u, v, key: key, dYaw: dYaw, pitch: pitch)
-                    let (l, a) = key.source.cell(su, sv, r)
-                    // A view's far side counts only where no view sees the point.
-                    let k = Float(w * (0.03 + vis)) * a
-                    lum += l * k
-                    lumW += k
-                    cov += a * Float(w)
+                let px0 = (x - ox) * ss
+                guard px0 >= 0, px0 + ss <= n else { continue }
+                var cover: Float = 0, shade: Float = 0, sum: Float = 0, lo: Float = 1, k = 0
+                for j in 0..<ss {
+                    for i in 0..<ss {
+                        let p = (py0 + j) * n + px0 + i
+                        guard buf.cover[p] > 0 else { continue }
+                        cover += 1
+                        shade += buf.shade[p]
+                        lums[k] = buf.lum[p]; sum += lums[k]; lo = min(lo, lums[k]); k += 1
+                    }
                 }
-                guard cov > 0.35, lumW > 0 else { continue }
-                let lu = profile ? 0.94 - u0 : u0 - 0.04
-                let t = lum / lumW * Dither.light(lu)
+                cover /= Float(ss * ss)
+                guard cover > 0.35, k > 0 else { continue }
+                frame.solid[y * cols + x] = true
+                let l = (0.5 * sum / Float(k) + 0.5 * lo) * exposure.x + exposure.y
+                let sh = shade / Float(k)
+                let t = l * (1.12 - 0.3 * sh)
+                let u0 = (Double(x - ox) + 0.5) / Double(size)
                 let th = Dither.bayer[(y & 7) * 8 + (x & 7)]
                 // The image's sides and bottom dissolve into the void (no cut-off shoulders).
                 let edge = min(1, min(u0, 1 - u0) / 0.14, (1 - v0) / 0.2)
                 guard th < Float(edge) * 1.05 else { continue }
+                frame.ink[y * cols + x] = Dither.ink(t, th, shade: sh, alt: Dither.alt(x, y))
+            }
+        }
+        // The earbud: in her left ear (the screen's right) until she turns that ear away, then
+        // in the right one (the canvas eases the hand-over). In sight where nothing is in front.
+        let ear = pose.yaw > -0.3 ? model.markers.earLeft : model.markers.earRight
+        let p = model.place(ear, pose)
+        let cell = SIMD2(Double(ox) + (Double(p.x) + 0.5) * Double(size), Double(oy) + (0.5 - Double(p.y)) * Double(size))
+        let bx = Int((Double(p.x) + 0.5) * Double(n)), by = Int((0.5 - Double(p.y)) * Double(n))
+        var visible = false
+        for dy in -2...2 {
+            for dx in -2...2 {
+                let xx = bx + dx, yy = by + dy
+                guard xx >= 0, yy >= 0, xx < n, yy < n else { continue }
+                let i = yy * n + xx
+                if buf.cover[i] > 0, buf.depth[i] <= p.z + 0.025 { visible = true }
+            }
+        }
+        if linked, visible { frame.tint(around: cell, radius: Double(size) * 0.035) }
+        return (frame, cell, visible)
+    }
+
+    /// A drawn view as it is (the profile, or the front when the mesh is missing).
+    static func flat(_ look: PortraitLook, cols: Int, rows: Int, size: Int, profile: Bool) -> (DitherFrame, SIMD2<Double>, Bool) {
+        var frame = DitherFrame(cols: cols, rows: rows)
+        guard let src = profile ? Portraits.profileRight : Portraits.front else { return (frame, SIMD2(Double(cols) / 2, Double(rows) / 2), false) }
+        let ox = Double(cols - size) / 2, oy = Double(rows - size) / 2
+        let r = 0.35 / Double(size)
+        for y in 0..<rows {
+            for x in 0..<cols {
+                let u = (Double(x) + 0.5 - ox) / Double(size), v = (Double(y) + 0.5 - oy) / Double(size)
+                let (l, a) = src.cell(u, v, r)
+                guard a > 0.35 else { continue }
+                let lu = profile ? 0.94 - u : u - 0.04
+                let t = l * Dither.light(lu)
+                let th = Dither.bayer[(y & 7) * 8 + (x & 7)]
+                let edge = min(1, min(u, 1 - u) / 0.14, (1 - v) / 0.2)
+                guard th < Float(edge) * 1.05 else { continue }
                 frame.ink[y * cols + x] = Dither.ink(t, th, shade: Dither.shade(lu), alt: Dither.alt(x, y))
             }
         }
-        // The earbud: the leading view's, carried by the same turn (the views can show different
-        // ears, so they are not averaged; the canvas eases the hand-over); then the roll.
-        let lead = views.max { $0.1 < $1.1 }!
-        let pod = forward(lead.0.pod, key: lead.0, dYaw: lead.2, pitch: pitch)
-        let du = pod.x - pu, dv = pod.y + shiftV - pv
-        let pu0 = pu + du * c + dv * s, pv0 = pv - du * s + dv * c
-        let cell = SIMD2(ox + pu0 * Double(size), oy + pv0 * Double(size))
+        let pod = profile ? Portraits.podProfile : Portraits.podFront
+        let cell = SIMD2(ox + pod.x * Double(size), oy + pod.y * Double(size))
         if look.linked { frame.tint(around: cell, radius: Double(size) * 0.035) }
-        return (frame, cell)
+        return (frame, cell, true)
     }
 }
 

@@ -489,7 +489,7 @@ enum Art {
         let profile = flow.step == .screen
         let portrait = profile ? SideLayout.portraitSize : 118
         let origin = profile ? SideLayout.portraitOrigin : CGPoint(x: 250 - Double(portrait), y: 20)
-        var (frame, rawPod) = PortraitDither.head(look, cols: portrait, rows: portrait, size: portrait, profile: profile)
+        var (frame, rawPod, podVisible) = PortraitDither.head(look, cols: portrait, rows: portrait, size: portrait, profile: profile)
         // The earbud eases to where the views put it (a turn can hand it from one ear to the
         // other); a new shot (the profile) starts it in place.
         if anim.pod == nil || profile != anim.podProfile || dt == 0 {
@@ -499,7 +499,7 @@ enum Art {
         }
         anim.podProfile = profile
         let pod = anim.pod ?? rawPod
-        if linked { frame.tint(around: pod, radius: Double(portrait) * 0.035) }
+        if linked, podVisible { frame.tint(around: pod, radius: Double(portrait) * 0.035) }
         let podPoint = CGPoint(x: Double(origin.x) + pod.x * Double(cell), y: Double(origin.y) + pod.y * Double(cell))
 
         // The drop wire from the second line into her earbud, drawn under her.
