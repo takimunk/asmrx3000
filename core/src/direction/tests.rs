@@ -93,7 +93,8 @@ fn a_day_runs_on_its_own() {
     }
     assert!(lo[RAIN] >= 0.0 && hi[RAIN] <= 100.0 && lo[STORM] >= 0.0 && hi[STORM] <= 1.0);
     assert!(lo[HUMIDITY] >= 0.0 && hi[HUMIDITY] <= 1.0 && lo[BIRDS] >= 0.0 && hi[BIRDS] <= 1.0);
-    assert!(lo[WIND] >= 0.0 && hi[WIND] < 20.0, "{} {}", lo[WIND], hi[WIND]);
+    // Strongest in a gust front, never a gale (whatever hour the scene starts at).
+    assert!(lo[WIND] >= 0.0 && hi[WIND] < 14.0, "{} {}", lo[WIND], hi[WIND]);
     // The day's cycle: a cool night, a warm afternoon.
     assert!(hi[TEMP] - lo[TEMP] > 6.0, "{} {}", lo[TEMP], hi[TEMP]);
     // A full turn of the clock.

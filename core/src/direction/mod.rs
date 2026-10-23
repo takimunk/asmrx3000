@@ -412,7 +412,7 @@ impl Direction {
             }
             let mut w = e.weight;
             if let Some(h) = e.hours {
-                w *= if in_hours(hour, h) { 1.0 } else { 0.3 };
+                w *= if in_hours(hour, h) { 1.0 } else { 0.12 };
             }
             if !e.seasons.is_empty() && !e.seasons.contains(&self.base.season) {
                 // Out of season; asked for wetter weather, a long rain still comes now and then.
@@ -656,8 +656,11 @@ impl Direction {
         let t = self.targets;
         let clim_temp = b.temp + 5.0 * (diurnal(hour) - diurnal(b.hour));
         let clim_hum = (b.humidity - 0.15 * (diurnal(hour) - diurnal(b.hour))).clamp(0.0, 1.0);
-        let clim_wind = b.wind_ms * wind_cycle(hour) / wind_cycle(b.hour);
-        let wind = (t.wind.unwrap_or(clim_wind) * (0.4 * e_axis).exp() * (1.0 + ou_wind).max(0.2)).clamp(0.0, 30.0);
+        // The scene's wind is its typical daytime wind (whatever hour it starts at).
+        let clim_wind = b.wind_ms * wind_cycle(hour) / wind_cycle(12.0);
+        // A fast segment (a gust front) is one event, not weather texture: no wander on it.
+        let texture = if t.ease.is_some() { 1.0 } else { (1.0 + ou_wind).clamp(0.6, 1.3) };
+        let wind = (t.wind.unwrap_or(clim_wind) * (0.4 * e_axis).exp() * texture).clamp(0.0, 30.0);
         let rain = (t.rain.unwrap_or(0.0) * (0.5 * w_axis).exp() * (1.0 + ou_rain).clamp(0.3, 2.0)).clamp(0.0, 100.0);
         self.bird_mult = t.birds.unwrap_or(1.0);
         let mut target = [0.0; CHANNELS];

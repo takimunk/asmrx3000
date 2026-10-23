@@ -74,7 +74,7 @@ pub struct Episode {
     pub name: String,
     /// Weight among the episodes that may come next (0 = only through `then`, a script or a cue).
     pub weight: f32,
-    /// Hours it belongs to, `[from, to]` (wraps past midnight); elsewhere 0.3 as likely.
+    /// Hours it belongs to, `[from, to]` (wraps past midnight); elsewhere 0.12 as likely.
     pub hours: Option<[f32; 2]>,
     /// Seasons it belongs to (empty = all); in others 1/6 as likely.
     pub seasons: Vec<Season>,
