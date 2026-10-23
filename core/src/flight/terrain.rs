@@ -323,7 +323,7 @@ impl Params {
         let u = c * x + sn * y;
         let v = -sn * x + c * y;
         let band = (v / BIG_RIVER_SPACING).round();
-        let ph = (hash(s, band as i64, 0, 0xB17) >> 40) as f64 / 16_777_216.0 * 6.283;
+        let ph = (hash(s, band as i64, 0, 0xB17) >> 40) as f64 / 16_777_216.0 * core::f64::consts::TAU;
         let tau = core::f64::consts::TAU;
         let (a1, l1, a2, l2) = (160.0, 1900.0, 55.0, 620.0);
         let mid = band * BIG_RIVER_SPACING + a1 * (tau * u / l1 + ph).sin() + a2 * (tau * u / l2 + 2.0 * ph).sin();

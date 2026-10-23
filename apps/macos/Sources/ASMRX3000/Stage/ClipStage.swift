@@ -230,9 +230,12 @@ struct MeshBuilder {
         var rng = SeededGenerator(seed)
         let jitter = p.map { _ in rng.next() }
         let s1 = Float(seed % 7), s2 = Float(seed % 5)
+        // Split up: as one expression this takes the type checker too long on CI.
         let q = p.enumerated().map { i, d -> SIMD3<Float> in
-            let n = sin(2.3 * d.x + s1) * sin(2.9 * d.y + s2) + 0.6 * sin(4.1 * d.z + s1) * sin(3.3 * d.x + s2)
-            return d * (1 + bumps * (0.6 * n + 0.8 * (jitter[i] - 0.5))) * squash
+            let a: Float = sin(2.3 * d.x + s1) * sin(2.9 * d.y + s2)
+            let b: Float = 0.6 * sin(4.1 * d.z + s1) * sin(3.3 * d.x + s2)
+            let k: Float = 1 + bumps * (0.6 * (a + b) + 0.8 * (jitter[i] - 0.5))
+            return d * k * squash
         }
         flat(faces.map { (q[$0.0], q[$0.1], q[$0.2]) }, part: part)
     }

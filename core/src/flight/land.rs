@@ -1244,7 +1244,7 @@ impl Land {
         // A lake in a basin, at the level of the lowest point of its rim.
         if r.uniform() < 0.8 * b.lake {
             let (cx, cy) = at(&mut r);
-            let (a, bb, rot) = (r.range(b.lake_size[0], b.lake_size[1]), r.range(0.75 * b.lake_size[0], 0.8 * b.lake_size[1]), r.range(0.0, 3.1416));
+            let (a, bb, rot) = (r.range(b.lake_size[0], b.lake_size[1]), r.range(0.75 * b.lake_size[0], 0.8 * b.lake_size[1]), r.range(0.0, core::f32::consts::PI));
             let (s, c) = (rot as f64).sin_cos();
             let ell = |t: f64, shrink: f64| {
                 let (u, v) = ((a as f64 - shrink) * t.cos(), (bb as f64 - shrink) * t.sin());
@@ -1291,7 +1291,7 @@ impl Land {
         if r.uniform() < 0.8 * b.ridge {
             let (cx, cy) = at(&mut r);
             let half = r.range(40.0, 90.0) as f64;
-            let th = r.range(0.0, 3.1416) as f64;
+            let th = r.range(0.0, core::f32::consts::PI) as f64;
             let (dx, dy) = (th.cos(), th.sin());
             let bend = r.range(-10.0, 10.0) as f64;
             let height = r.range(6.0, 16.0) * (1.0 + 0.6 * (b.relief.mountains > 0.0) as u8 as f32);
