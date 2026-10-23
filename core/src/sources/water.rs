@@ -387,6 +387,11 @@ pub struct Water {
     wash: [NoiseBand; 2],
     wash_mod: Ramp,
     ripple_lp: f32,
+    /// Fast flicker of the unresolved bed (see `render_block`): low-passed noise, its depth,
+    /// and its own generator (the other random streams stay as they were).
+    flicker: f32,
+    flicker_depth: f32,
+    flicker_rng: Rng,
 }
 
 /// Babbling spots (clustered entrainment). Air is not entrained at a steady rate: a stone
@@ -521,6 +526,9 @@ impl Water {
             wash: WASH_BANDS.map(|(_, f, q)| NoiseBand::new(f, q, sr)),
             wash_mod: Ramp::new(1.0),
             ripple_lp: 0.0,
+            flicker: 0.0,
+            flicker_depth: 0.0,
+            flicker_rng: Rng::new(seed ^ 0xF11C_4E55),
             rng,
             cfg,
         }
@@ -559,9 +567,12 @@ impl Water {
     pub fn brook_pebbles() -> WaterConfig {
         WaterConfig::default()
     }
-    /// Steeper mountain brook among bigger stones with little steps.
+    /// Faster brook over cobbles and stones, broken by the stones rather than by steps.
+    /// (Was 25 cm boulders with 15 cm steps: their 1 cm bubbles and plunge put 125–500 Hz
+    /// 4–8 dB over the brook references, the few big stones shed bursts too regularly —
+    /// a lumpy 1–4 Hz pulse, `ioi_cv` 0.60 against 0.84 — and it "boomed"; distance 0.75 → 0.50.)
     pub fn brook_rocks() -> WaterConfig {
-        WaterConfig { flow_ms: 1.3, depth_m: 0.25, width_m: 2.5, rock_d50_m: 0.25, turbulence: 0.35, aeration: 0.5, drop_height_m: 0.15, ..Default::default() }
+        WaterConfig { flow_ms: 1.4, depth_m: 0.2, width_m: 2.5, rock_d50_m: 0.10, turbulence: 0.5, aeration: 0.5, ..Default::default() }
     }
     pub fn rapids() -> WaterConfig {
         WaterConfig { flow_ms: 2.5, depth_m: 0.4, width_m: 6.0, length_m: 5.0, rock_d50_m: 0.4, turbulence: 0.5, aeration: 0.6, ..Default::default() }
@@ -737,6 +748,9 @@ impl Water {
         let dense = (hyd.bubbles_per_s / 700.0).max(1.0).powf(0.35).min(1.8);
         let depth = 0.6 * chatter;
         self.babble.tune(v_imp, cfg.rock_d50_m, depth.max((depth * dense).min(0.35)));
+        // (A plunge's bed is a dense curtain: only a trace of it, or the small-waterfall
+        // references' 1–16 Hz modulation is overshot by 2–4 dB.)
+        self.flicker_depth = 0.8 * chatter * if p > 0.0 { 0.3 } else { 1.0 };
         let q = u * cfg.depth_m * cfg.width_m;
         let r_cloud = (0.12 + 0.25 * q.sqrt()).clamp(0.08, 1.5);
         let beta = 0.05;
@@ -959,7 +973,16 @@ impl Water {
         for b in self.plunge.iter_mut() {
             b.render_add(white, bed);
         }
-        self.bed_mod.to((self.wander * gate).sqrt(), len);
+        // The unresolved bubbles are no steady hiss either: hundreds of them come and go in
+        // every few tens of ms, so the bed flickers at 16–64 Hz. A stationary bed left every
+        // brook 4–5 dB short there (`am_16-64` −17 dB against −12 in the references). Log-normal
+        // power flicker, ~30 Hz low-passed, mean 1.
+        let a = 1.0 - (-core::f32::consts::TAU * 30.0 * dt).exp();
+        self.flicker += a * (self.flicker_rng.gauss() - self.flicker);
+        let sd = (a / (2.0 - a)).sqrt();
+        let k = self.flicker_depth;
+        let fl = (k * self.flicker / sd - 0.5 * k * k).exp();
+        self.bed_mod.to((self.wander * gate * fl).sqrt(), len);
         for (o, b) in out.iter_mut().zip(bed.iter()) {
             *o += b * self.bed_mod.next();
         }

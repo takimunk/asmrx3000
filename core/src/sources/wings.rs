@@ -287,7 +287,8 @@ impl Wings {
             self.clap *= clap_decay;
             // The thump is the pressure pulse itself (smooth, one lobe); the body and the hiss
             // are turbulence on top of it.
-            let push = self.thump * self.tn * thump * env.sqrt();
+            // (`env` can round to a hair below zero at the end of a stroke: no NaN from it.)
+            let push = self.thump * self.tn * thump * env.max(0.0).sqrt();
             *o = amp * (self.force * env * (bp * 2.0 * self.bn + hiss) + self.force * push + click * 0.5);
         }
         self.body.flush();

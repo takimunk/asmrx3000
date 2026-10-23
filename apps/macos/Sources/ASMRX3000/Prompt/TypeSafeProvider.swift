@@ -1,3 +1,4 @@
+// l10n-ok-file: Russian here is LLM prompt text and the offline parser's keywords, not UI.
 import Foundation
 
 /// TypeSafe System One (Jev): POST https://api.typesafe.ai/v1/systemone. Jev answers typed
@@ -50,7 +51,6 @@ struct TypeSafeProvider: PromptProvider {
 
     /// Turns Jev's answers into a patch and the user's line. Pure: tested via --prompt-live.
     static func reply(answers: [String: Any], knobs: [Knob], scene: SceneState, request: PromptRequest) -> PromptReply {
-        let russian = request.text.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil
         let intent = pick(answers["intent"]) ?? "change"
         var changes: [[String: Any]] = []
         var said: [String] = []
@@ -79,15 +79,15 @@ struct TypeSafeProvider: PromptProvider {
                 let same = k.preset ? (k.key == "flight.on" ? target.label == (scene.switches["flight.on"] ?? "off") : scene.option(k.key) == target.label)
                     : abs(target.value - current) < 1e-3
                 if same {
-                    already.append((k.alreadyRu[target.label] != nil || k.key == "flight.biome", k.already(target, russian)))
+                    already.append((k.alreadyText[target.label] != nil || k.key == "flight.biome", k.already(target)))
                     continue
                 }
                 changes.append(["key": k.key, "value": k.preset ? target.label as Any : target.value])
                 // The place leads the line.
                 if k.key.hasPrefix("flight.on") || k.key == "flight.biome" {
-                    said.insert(k.describe(target, current, russian), at: 0)
+                    said.insert(k.describe(target, current), at: 0)
                 } else {
-                    said.append(k.describe(target, current, russian))
+                    said.append(k.describe(target, current))
                 }
             }
         }
@@ -109,7 +109,7 @@ struct TypeSafeProvider: PromptProvider {
         // "Landing" together with a new landscape is a contradiction: a place means flying.
         if keys.contains("flight.biome"), let i = changes.firstIndex(where: { $0["key"] as? String == "flight.on" && $0["value"] as? String == "off" }) {
             changes[i]["value"] = "on"
-            said.removeAll { $0 == "домой" || $0 == "home" }
+            said.removeAll { $0 == tr("going home") }
         }
         let flyingAfter = keys.contains("flight.on") ? changes.contains { $0["key"] as? String == "flight.on" && $0["value"] as? String == "on" } : scene.switches["flight.on"] == "on" || (!inWorld && keys.contains("flight.biome"))
         if flyingAfter && !keys.contains("flight.speed") && (scene.values["flight.speed"] ?? 0) < 1 {
@@ -118,12 +118,12 @@ struct TypeSafeProvider: PromptProvider {
 
         if let f = pick(answers["focus"], min: 0.7), f != "none", intent != "describe", scene.values["mix.focus.\(f)"] != nil {
             changes.append(["key": "mix.focus.\(f)", "value": 0.8])
-            said.append(russian ? "в фокусе \(focusRu[f] ?? f)" : "focus on \(f)")
+            said.append(tr("focus on %@", tr(focusName[f] ?? f)))
         }
         var moves: [[String: Any]] = []
         if intent != "describe", let side = pick(answers["birds.side"]), side != "none", let tree = scene.nearestMovableTree(to: side) {
             moves.append(["object": tree.id, "position": tree.position])
-            said.append(russian ? "птицы \(sideRu[side] ?? side)" : "birds \(side)")
+            said.append(tr("birds %@", tr(sideName[side] ?? side)))
         }
         let glide = glideSeconds[pick(answers["glide"]) ?? "normal"] ?? 4
 
@@ -134,25 +134,23 @@ struct TypeSafeProvider: PromptProvider {
         if !said.isEmpty {
             kind = .patch
             let shown = said.prefix(5).joined(separator: ", ")
-            let more = said.count > 5 ? (russian ? " и ещё \(said.count - 5)" : " and \(said.count - 5) more") : ""
+            let more = said.count > 5 ? " " + tr("and %d more", said.count - 5) : ""
             explanation = shown.capitalizedFirst + more + "."
             if intent == "both", !answer.isEmpty { explanation += " " + answer }
         } else if intent == "describe" || intent == "both" {
             kind = .answer
-            explanation = answer.isEmpty ? (russian ? "Не могу описать сцену." : "Cannot describe the scene.") : answer
+            explanation = answer.isEmpty ? tr("Can not describe the scene.") : answer
         } else if !already.isEmpty {
             kind = .nothing
             let best = already.filter(\.0).map(\.1)
             explanation = (best.isEmpty ? Array(already.prefix(1).map(\.1)) : Array(best.prefix(2))).joined(separator: ", ").capitalizedFirst + "."
         } else if intent == "off_topic" {
             kind = .nothing
-            explanation = russian ? "Это не про звук. Я меняю воду, погоду, время, птиц, место и полёт." : "That is not about the sound scene."
+            explanation = tr("That is not about sound. I change water, weather, time, birds, place and flight.")
         } else {
             kind = .unmatched
-            let near = nearest(answers, knobs).map { russian ? " (ближе всего — \($0.ru))" : " (closest: \($0.en))" } ?? ""
-            explanation = russian
-                ? "Не понял, что изменить\(near). Скажите иначе: «тише река», «ночь», «в тайгу»."
-                : "Nothing to change for that\(near)."
+            let near = nearest(answers, knobs).map { tr(" (closest: %@)", tr($0.name)) } ?? ""
+            explanation = tr("Did not get what to change%@. Say it another way: \"quieter river\", \"night\", \"to the taiga\".", near)
         }
         let patch: [String: Any] = ["explanation": explanation, "glide_s": glide, "changes": changes, "moves": moves]
         // Serialization of plain values cannot fail.
@@ -239,7 +237,7 @@ struct TypeSafeProvider: PromptProvider {
             }
             guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let answers = o["answers"] as? [String: Any]
-            else { throw PromptError.badReply("нет ответов на вопросы") }
+            else { throw PromptError.badReply(tr("no answers to the questions")) }
             return answers
         }
         throw PromptError.http(429, "")
@@ -247,7 +245,11 @@ struct TypeSafeProvider: PromptProvider {
 
     // MARK: Request kind, topic, pace, side, focus
 
-    static let context = "The listener talks to a real-time soundscape (a forest by a river, or flight over generated landscapes). Their words are in `request` (often Russian), current values in `scene`, what is around now in `scene_now`. "
+    /// The listener's language is the app's: they write in it (or the other one), and the line they
+    /// get back is composed in it.
+    static var context: String {
+        "The listener talks to a real-time soundscape (a forest by a river, or flight over generated landscapes). Their words are in `request` (English or Russian; the app language is \(L10n.current.englishName)), current values in `scene`, what is around now in `scene_now`. "
+    }
 
     static let intentInstructions = "What does the request want?"
     static let intentOptions: [String: Any] = [
@@ -284,7 +286,7 @@ struct TypeSafeProvider: PromptProvider {
         "ahead": "Birds in front ('впереди').",
         "behind": "Birds behind ('сзади').",
     ]
-    static let sideRu = ["left": "слева", "right": "справа", "ahead": "впереди", "behind": "сзади"]
+    static let sideName = ["left": N_("on the left"), "right": N_("on the right"), "ahead": N_("ahead"), "behind": N_("behind")]
 
     static let focusInstructions = "Does the request say which sound to listen to, to bring to the foreground ('хочу слушать реку', 'focus on the birds', 'к морю' = the water)? Not about loudness alone."
     static let focusOptions: [String: Any] = [
@@ -296,7 +298,7 @@ struct TypeSafeProvider: PromptProvider {
         "insects": "Crickets and insects.",
         "fire": "The campfire.",
     ]
-    static let focusRu = ["water": "вода", "wind": "ветер", "birds": "птицы", "rain": "дождь", "insects": "насекомые", "fire": "костёр"]
+    static let focusName = ["water": N_("water"), "wind": N_("wind"), "birds": N_("birds"), "rain": N_("rain"), "insects": N_("insects"), "fire": N_("campfire")]
 }
 
 /// One control (or switch) as a Choice: relative steps, physical anchors, or presets.
@@ -307,7 +309,8 @@ struct Knob {
 
     let key: String
     let what: String
-    let ru: String
+    /// English name of the control as the lines to the user say it (a key: shown through `tr`).
+    let name: String
     var step: Step?
     var floor: Double = 0
     var range: ClosedRange<Double> = 0...1
@@ -315,10 +318,10 @@ struct Knob {
     var anchors: [(String, Double, String)] = []
     /// Preset controls: option names → descriptions.
     var presets: [(String, String)] = []
-    /// Words for the explanation: up, down (Russian).
+    /// Words for the explanation: up, down (keys; arrows when there are none).
     var upDown: (String, String) = ("↑", "↓")
-    /// "Already so" phrases by option or anchor name (Russian).
-    var alreadyRu: [String: String] = [:]
+    /// "Already so" phrases by option or anchor name (keys).
+    var alreadyText: [String: String] = [:]
     /// Stricter bar for this knob: it moves only if P(unchanged) is below this.
     var bar: Double?
     /// The winning option must be at least this likely (presets that tempt the model).
@@ -331,14 +334,6 @@ struct Knob {
     var amount: Bool { ["water.flow", "rain.rate", "birds.activity", "wind.speed", "insects.activity", "fire.heat"].contains(key) }
 
     var preset: Bool { !presets.isEmpty }
-
-    /// Short English label: the group ("wind", "birds"), or the parameter for env/storm/regime.
-    var en: String {
-        let parts = key.split(separator: ".").map(String.init)
-        if key == "rain.storm" { return "thunder" }
-        if parts[0] == "env" || key == "water.regime" || parts[0] == "flight" { return parts.last!.replacingOccurrences(of: "_", with: " ") }
-        return parts[0]
-    }
 
     static let relative: [(String, Int, String)] = [
         ("much_less", -3, "much less / much lower / far quieter"),
@@ -382,44 +377,47 @@ struct Knob {
         return Target(value: min(max(v, range.lowerBound), range.upperBound), label: pick, relative: k)
     }
 
-    func describe(_ t: Target, _ current: Double, _ russian: Bool) -> String {
-        let name = russian ? ru : en
+    func describe(_ t: Target, _ current: Double) -> String {
+        let label = tr(name)
         if key == "flight.on" {
             switch t.label {
-            case "on": return russian ? "летим" : "flying"
-            case "stand": return russian ? "стоим здесь" : "standing here"
-            default: return russian ? "домой" : "home"
+            case "on": return tr("flying")
+            case "stand": return tr("standing here")
+            default: return tr("going home")
             }
         }
-        if key == "flight.biome" { return russian ? Self.biomeRu(t.label) : t.label.replacingOccurrences(of: "_", with: " ") }
+        if key == "flight.biome" { return tr(Self.biomeName(t.label)) }
         if preset {
-            let label = russian ? (Self.presetRu[t.label] ?? t.label.replacingOccurrences(of: "_", with: " ")) : t.label.replacingOccurrences(of: "_", with: " ")
-            return key == "env.season" ? label : "\(name): \(label)"
+            let option = tr(Self.presetName[t.label] ?? t.label.replacingOccurrences(of: "_", with: " "))
+            return key == "env.season" ? option : "\(label): \(option)"
         }
         if key == "env.time_of_day" { return t.label }
         let up = t.value > current
-        if russian, upDown.0 != "↑" { return "\(name) \(up ? upDown.0 : upDown.1)" }
-        return "\(name) " + (up ? "↑" : "↓")
+        if upDown.0 != "↑" { return "\(label) \(tr(up ? upDown.0 : upDown.1))" }
+        return "\(label) " + (up ? "↑" : "↓")
     }
 
-    func already(_ t: Target, _ russian: Bool) -> String {
-        if let s = alreadyRu[t.label], russian { return s }
-        if key == "flight.biome" { return russian ? "уже \(Self.biomeRu(t.label))" : "already \(t.label)" }
-        return russian ? "\(ru): уже так" : "\(en) already"
+    func already(_ t: Target) -> String {
+        if let s = alreadyText[t.label] { return tr(s) }
+        if key == "flight.biome" { return tr("already %@", tr(Self.biomeName(t.label))) }
+        return tr("%@ already", tr(name))
     }
 
-    static let presetRu = [
-        "spring": "весна", "summer": "лето", "autumn": "осень", "winter": "зима",
-        "scene": "как в сцене", "still_lake": "тихое озеро", "lake_lapping": "плеск озера", "slow_river": "медленная река",
-        "brook_pebbles": "ручей по гальке", "brook_rocks": "ручей по камням", "rapids": "пороги", "small_waterfall": "водопад",
-        "drips": "капель", "trickle": "струйка",
+    static let presetName = [
+        "spring": N_("spring"), "summer": N_("summer"), "autumn": N_("autumn"), "winter": N_("winter"),
+        "scene": N_("as in the scene"), "still_lake": N_("still lake"), "lake_lapping": N_("lapping lake"), "slow_river": N_("slow river"),
+        "brook_pebbles": N_("brook over pebbles"), "brook_rocks": N_("brook over rocks"), "rapids": N_("rapids"), "small_waterfall": N_("waterfall"),
+        "drips": N_("drips"), "trickle": N_("trickle"),
     ]
 
-    static func biomeRu(_ name: String) -> String {
-        ["mixed": "смешанный лес", "broadleaf": "лиственный лес", "taiga": "тайга", "river_valley": "речная долина",
-         "meadows": "луга", "highlands": "нагорье", "desert": "пустыня", "snowy_mountains": "снежные горы",
-         "lake_shore": "берег озера", "sea_coast": "морское побережье", "big_river": "большая река",
-         "journey": "путешествие"][name] ?? name.replacingOccurrences(of: "_", with: " ")
+    /// The landscape's name, as a key (an unknown one reads as its id).
+    static func biomeName(_ name: String) -> String {
+        [
+            "mixed": N_("mixed forest"), "broadleaf": N_("broadleaf forest"), "taiga": N_("taiga"), "river_valley": N_("river valley"),
+            "meadows": N_("meadows"), "highlands": N_("highlands"), "desert": N_("desert"), "snowy_mountains": N_("snowy mountains"),
+            "lake_shore": N_("lake shore"), "sea_coast": N_("sea coast"), "big_river": N_("big river"),
+            "journey": N_("journey"),
+        ][name] ?? name.replacingOccurrences(of: "_", with: " ")
     }
 
     /// What Jev reads about a landscape preset (English and the Russian words people use).
@@ -445,83 +443,84 @@ struct Knob {
     /// landscapes (the presets from the state).
     static func all(for scene: SceneState) -> [Knob] {
         var out = fixed.filter { scene.values[$0.key] != nil && ($0.key != "fire.heat" || scene.kinds.contains("fire")) }
-        let loudness: [(String, String, String)] = [
-            ("water", "the water", "вода"), ("rain", "the rain", "дождь"), ("birds", "the birds", "птицы"),
-            ("wind", "the wind and leaves", "ветер"), ("insects", "the insects", "насекомые"), ("fire", "the campfire", "костёр"),
+        // (group, what it is for the model, its name for the user, the word listeners say)
+        let loudness: [(String, String, String, String)] = [
+            ("water", "the water", N_("water"), "вода"), ("rain", "the rain", N_("rain"), "дождь"), ("birds", "the birds", N_("birds"), "птицы"),
+            ("wind", "the wind and leaves", N_("wind"), "ветер"), ("insects", "the insects", N_("insects"), "насекомые"), ("fire", "the campfire", N_("campfire"), "костёр"),
         ]
-        for (g, what, ru) in loudness {
-            let loudWhat = "how LOUD \(what) sounds (volume only; \(what) itself stays as it is: 'громче \(ru)', 'тише \(ru)', 'сделай \(ru) тише')"
+        for (g, what, name, said) in loudness {
+            let loudWhat = "how LOUD \(what) sounds (volume only; \(what) itself stays as it is: 'громче \(said)', 'тише \(said)', 'сделай \(said) тише')"
             if scene.values["\(g).level"] != nil {
                 let r = scene.ranges["\(g).level"] ?? -40...12
-                out.append(Knob(key: "\(g).level", what: loudWhat, ru: ru, step: .add(4), range: r,
+                out.append(Knob(key: "\(g).level", what: loudWhat, name: name, step: .add(4), range: r,
                                 anchors: [("muted", r.lowerBound, "silent, muted"), ("far_background", -20, "far in the background"),
                                           ("as_calibrated", 0, "normal loudness")],
-                                upDown: ("громче", "тише")))
+                                upDown: (N_("louder"), N_("quieter"))))
             } else if scene.values["\(g).gain"] != nil, g != "fire" || scene.kinds.contains("fire") {
-                out.append(Knob(key: "\(g).gain", what: loudWhat, ru: ru, step: .times(1.6), floor: 0.2, range: scene.ranges["\(g).gain"] ?? 0...4,
+                out.append(Knob(key: "\(g).gain", what: loudWhat, name: name, step: .times(1.6), floor: 0.2, range: scene.ranges["\(g).gain"] ?? 0...4,
                                 anchors: [("muted", 0, "silent, muted"), ("normal", 1, "normal loudness")],
-                                upDown: ("громче", "тише")))
+                                upDown: (N_("louder"), N_("quieter"))))
             }
         }
         if scene.switches["flight.on"] != nil {
-            out.append(Knob(key: "flight.on", what: "where we are: flying through generated landscapes, standing still in one, or home in the forest by the river", ru: "полёт",
+            out.append(Knob(key: "flight.on", what: "where we are: flying through generated landscapes, standing still in one, or home in the forest by the river", name: N_("flight"),
                             presets: [("on", "Start flying, fly on, or travel somewhere else: 'полетели', 'летим', 'дальше', 'перенеси меня в …', 'в пустыню', 'к морю', 'в горы'."),
                                       ("stand", "Stop right here and stand on the ground in this landscape: 'стоп', 'остановись', 'зависни', 'постоим', 'приземлись здесь'."),
                                       ("off", "Go home, back to the forest by the river: 'домой', 'приземлись домой', 'вернись домой'.")],
-                            alreadyRu: ["on": "уже летим", "stand": "и так стоим", "off": "и так дома"]))
+                            alreadyText: ["on": N_("already flying"), "stand": N_("already standing"), "off": N_("already home")]))
         }
         if let biomes = scene.options["flight.biome"], !biomes.isEmpty {
-            out.append(Knob(key: "flight.biome", what: "the landscape to be in (a place request: desert, mountains, sea, lake, taiga…)", ru: "место",
+            out.append(Knob(key: "flight.biome", what: "the landscape to be in (a place request: desert, mountains, sea, lake, taiga…)", name: N_("place"),
                             presets: biomes.map { ($0, biomeCriteria($0)) }))
         }
         if scene.values["flight.speed"] != nil {
-            out.append(Knob(key: "flight.speed", what: "the flight speed (only while flying: 'быстрее', 'медленнее'; 'стоп' / 'зависни' is flight.on stand)", ru: "скорость",
+            out.append(Knob(key: "flight.speed", what: "the flight speed (only while flying: 'быстрее', 'медленнее'; 'стоп' / 'зависни' is flight.on stand)", name: N_("speed"),
                             step: .times(1.6), floor: 2, range: 0...25,
                             anchors: [("hover", 0, "hover in place"), ("walk", 1.5, "walking pace"), ("glide", 8, "gentle glide"), ("fast", 20, "fast flight")],
-                            upDown: ("быстрее", "медленнее")))
+                            upDown: (N_("faster"), N_("slower"))))
         }
         return out
     }
 
     static let fixed: [Knob] = [
-        Knob(key: "water.flow", what: "how much water flows (the physical river: high water, a dry brook; NOT its loudness — 'тише река' / 'громче вода' alone are about loudness)", ru: "река",
+        Knob(key: "water.flow", what: "how much water flows (the physical river: high water, a dry brook; NOT its loudness — 'тише река' / 'громче вода' alone are about loudness)", name: N_("river"),
              step: .add(0.1), anchors: [("dry", 0.05, "almost no flow"), ("low_brook", 0.35, "low summer brook"),
                                          ("as_built", 0.6, "normal"), ("high_water", 0.8, "high water"), ("flood", 1, "spring flood")],
-             upDown: ("полноводнее", "мельче"), alreadyRu: ["dry": "река и так почти пересохла"]),
-        Knob(key: "water.regime", what: "the character of the water", ru: "вода",
+             upDown: (N_("fuller"), N_("shallower")), alreadyText: ["dry": N_("river almost dry already")]),
+        Knob(key: "water.regime", what: "the character of the water", name: N_("water"),
              presets: [("scene", "As the scene was built."), ("still_lake", "A still lake."), ("lake_lapping", "Small waves lapping a lake shore."),
                        ("slow_river", "A deep slow river."), ("brook_pebbles", "A babbling pebble brook."), ("brook_rocks", "A splashy rocky brook."),
                        ("rapids", "Roaring rapids, white water."), ("small_waterfall", "A small waterfall nearby."),
                        ("drips", "Cave-like water drips."), ("trickle", "A thin trickle.")], minWinner: 0.6),
-        Knob(key: "wind.speed", what: "the wind", ru: "ветер", step: .times(1.35), floor: 1.5, range: 0...30,
+        Knob(key: "wind.speed", what: "the wind", name: N_("wind"), step: .times(1.35), floor: 1.5, range: 0...30,
              anchors: [("calm", 0.3, "dead calm"), ("light_air", 1.5, "light air"), ("gentle_breeze", 4, "gentle breeze"),
                        ("fresh_wind", 8, "fresh wind"), ("strong_wind", 12, "strong wind"), ("gale", 17, "gale"), ("storm_wind", 25, "storm wind")],
-             upDown: ("сильнее", "слабее"), alreadyRu: ["calm": "и так безветрие"]),
-        Knob(key: "rain.rate", what: "how much it rains (snow is not rain: snowfall means winter, keep rain unchanged or dry)", ru: "дождь", step: .times(1.8), floor: 0.6, range: 0...100,
+             upDown: (N_("stronger"), N_("weaker")), alreadyText: ["calm": N_("already calm")]),
+        Knob(key: "rain.rate", what: "how much it rains (snow is not rain: snowfall means winter, keep rain unchanged or dry)", name: N_("rain"), step: .times(1.8), floor: 0.6, range: 0...100,
              anchors: [("dry", 0, "no rain, stop the rain"), ("drizzle", 0.3, "drizzle"), ("light_rain", 1, "light rain"), ("steady_rain", 4, "steady rain"),
                        ("heavy_rain", 10, "heavy rain"), ("downpour", 25, "downpour"), ("cloudburst", 60, "cloudburst")],
-             upDown: ("сильнее", "слабее"), alreadyRu: ["dry": "дождя и так нет"]),
-        Knob(key: "rain.storm", what: "thunder and lightning", ru: "гроза", step: .add(0.2),
+             upDown: (N_("stronger"), N_("weaker")), alreadyText: ["dry": N_("no rain anyway")]),
+        Knob(key: "rain.storm", what: "thunder and lightning", name: N_("thunder"), step: .add(0.2),
              anchors: [("no_thunder", 0, "no thunder"), ("distant_rumbles", 0.2, "distant rumbles"),
                        ("storm_nearby", 0.6, "thunderstorm nearby"), ("overhead", 0.9, "storm right overhead")],
-             alreadyRu: ["no_thunder": "грозы и так нет"]),
-        Knob(key: "birds.activity", what: "how many birds sing (the number of birds, not their loudness)", ru: "птицы", step: .add(0.15),
+             alreadyText: ["no_thunder": N_("no thunder anyway")]),
+        Knob(key: "birds.activity", what: "how many birds sing (the number of birds, not their loudness)", name: N_("birds"), step: .add(0.15),
              anchors: [("silent", 0, "no birdsong"), ("few_birds", 0.25, "a few birds"), ("normal", 0.6, "normal"), ("full_chorus", 1, "full chorus")],
-             upDown: ("больше", "меньше"), alreadyRu: ["silent": "птиц и так нет", "full_chorus": "птиц и так полный хор"]),
-        Knob(key: "insects.activity", what: "how many crickets and other insects there are", ru: "насекомые", step: .times(1.4), floor: 0.5, range: 0...2,
+             upDown: (N_("more"), N_("fewer")), alreadyText: ["silent": N_("no birds anyway"), "full_chorus": N_("birds already in full chorus")]),
+        Knob(key: "insects.activity", what: "how many crickets and other insects there are", name: N_("insects"), step: .times(1.4), floor: 0.5, range: 0...2,
              anchors: [("silent", 0, "no insects"), ("normal", 1, "as in the scene"), ("loud", 2, "loud crickets")],
-             upDown: ("больше", "меньше"), alreadyRu: ["silent": "насекомых и так нет"]),
-        Knob(key: "master.volume", what: "the overall volume of everything (only when the request is about all sound, not one thing)", ru: "громкость", step: .add(0.07), range: 0...1.5, upDown: ("выше", "ниже"), bar: 0.25),
-        Knob(key: "env.temperature", what: "the air temperature", ru: "температура", step: .add(3), range: -20...40,
+             upDown: (N_("more"), N_("fewer")), alreadyText: ["silent": N_("no insects anyway")]),
+        Knob(key: "master.volume", what: "the overall volume of everything (only when the request is about all sound, not one thing)", name: N_("volume"), step: .add(0.07), range: 0...1.5, upDown: (N_("higher"), N_("lower")), bar: 0.25),
+        Knob(key: "env.temperature", what: "the air temperature", name: N_("temperature"), step: .add(3), range: -20...40,
              anchors: [("freezing", -5, "freezing"), ("cold", 5, "cold"), ("cool", 12, "cool"), ("mild", 18, "mild"), ("warm", 24, "warm"), ("hot", 32, "hot")],
-             upDown: ("теплее", "холоднее")),
-        Knob(key: "env.season", what: "the season (snow = winter)", ru: "сезон",
+             upDown: (N_("warmer"), N_("colder"))),
+        Knob(key: "env.season", what: "the season (snow = winter)", name: N_("season"),
              presets: [("spring", "Spring."), ("summer", "Summer."), ("autumn", "Autumn, fall."), ("winter", "Winter, snow.")]),
-        Knob(key: "fire.heat", what: "the campfire", ru: "костёр", step: .times(1.8), floor: 5, range: 1...1000,
+        Knob(key: "fire.heat", what: "the campfire", name: N_("campfire"), step: .times(1.8), floor: 5, range: 1...1000,
              anchors: [("embers", 5, "glowing embers"), ("campfire", 20, "a campfire"), ("big_fire", 100, "a big fire"), ("bonfire", 500, "a bonfire")],
-             upDown: ("жарче", "тише")),
-        Knob(key: "env.time_of_day", what: "the time of day", ru: "время", anchors: hours),
-        Knob(key: "env.wind_direction", what: "where the wind blows from (a compass side; ahead = north, left = west)", ru: "ветер откуда", range: 0...360,
+             upDown: (N_("hotter"), N_("calmer"))),
+        Knob(key: "env.time_of_day", what: "the time of day", name: N_("time"), anchors: hours),
+        Knob(key: "env.wind_direction", what: "where the wind blows from (a compass side; ahead = north, left = west)", name: N_("wind from"), range: 0...360,
              anchors: [("north", 0, "from the north, ahead"), ("northeast", 45, "from the northeast"), ("east", 90, "from the east, the right"),
                        ("southeast", 135, "from the southeast"), ("south", 180, "from the south, behind"), ("southwest", 225, "from the southwest"),
                        ("west", 270, "from the west, the left"), ("northwest", 315, "from the northwest")]),

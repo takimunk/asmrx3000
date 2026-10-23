@@ -84,6 +84,12 @@ still_lake 2.5, woodpecker 2.35, lake_lapping 2.0, slow_river 2.1.
 | `lake_lapping` (lake_lapping) | 2.01 | 0.55 | 0.51 | shore wash bed under the laps (following the wave groups), soft entrained bubbles (×0.12, was a loud burst), fizzier backwash: centroid 2.9 → 1.6 kHz (ref 1.1), `band_504`-`635` -17/-18 → -9/-8 dB (ref -10/-9), spread 32 → 15 dB (ref 14) |
 | `still_lake` (still_lake_ambience) | 2.48 | 1.61 | 1.62 | same lapping changes; still too bright against references dominated by wind/boat rumble (centroid 1.8 kHz vs 150 Hz), not tuned further |
 
+Later the same month (docs/scenes/forest.md): `brook_rocks` re-parameterised (cobbles d50 0.10 m, U 1.4 m/s, h 0.2 m, no
+steps; was boulders 0.25 m with 0.15 m steps): 125-500 Hz excess 4-8 → 1-3 dB, `am_1-4` -13.8 → -18.4 dB (ref -20.2), `ioi_cv`
+0.60 → 0.77 (ref 0.84), distance 0.75 → 0.50 (seed 2: 0.59). The unresolved bubble bed now flickers (log-normal power, ~30 Hz
+low-passed, depth 0.8 × chatter, 0.3 × under a plunge): `am_16-64` of the rocky brook -16.8 → -14.0 dB (ref -12.3);
+`small_waterfall` 0.48 → 0.40; `brook_pebbles` unchanged within seed spread (0.51-0.56).
+
 Seed 1 is what `render_ours.sh` uses. Remaining water mismatches:
 * `brook_pebbles`: 4.9 vs 3.3 onsets/s and events 120 vs 170 ms: still a few too many separate bubbles.
 * `brook_rocks`: 200-320 Hz 5-7 dB too strong (largest bubbles r ~ 1 cm, cloud thrum of the 15 cm step), 16-64 Hz

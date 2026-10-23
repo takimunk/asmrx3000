@@ -28,16 +28,20 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
+# The system permission prompts (microphone, motion) follow the macOS language.
+for l in en ru; do mkdir -p "$APP/Contents/Resources/$l.lproj"; cp "$APP_PKG/Support/$l.lproj/InfoPlist.strings" "$APP/Contents/Resources/$l.lproj/"; done
 cp "$APP_PKG/Resources/models.bin" "$APP/Contents/Resources/models.bin"
 cp "$APP_PKG/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$APP_PKG/Resources/Fonts" "$APP/Contents/Resources/Fonts"
 cp -R "$APP_PKG/Resources/Onboarding" "$APP/Contents/Resources/Onboarding"
+# Strings (L10n.swift reads Localization/<lang>.lproj/*.strings itself: SwiftPM's Bundle.module does not resolve in a hand-made .app).
+cp -R "$APP_PKG/Resources/Localization" "$APP/Contents/Resources/Localization"
 # Scenes and their sound files (the scene picker; the app points ASMR_SOUNDS_DIR at sounds/).
 mkdir -p "$APP/Contents/Resources/scenes" "$APP/Contents/Resources/sounds"
 # The scenes the picker offers (Scenes.swift; the *_real variants on field recordings are
 # kept in the repo for comparison but not shipped), and only the sound files they use.
 # The .wav files are not in git: fetch them first (assets/sounds/SOURCES.md, tools/).
-SCENES=(forest_river forest_waterfall underwater_drift space_still demo_flyby open_country)
+SCENES=(forest_river underwater_drift space_still demo_flyby open_country)
 for s in "${SCENES[@]}"; do cp "$ROOT/core/scenes/$s.json" "$APP/Contents/Resources/scenes/"; done
 missing=$(cd "$APP/Contents/Resources/scenes" && grep -ho '"[^"]*\.wav"' *.json | tr -d '"' | sort -u | while read -r f; do
   if [[ -f "$ROOT/assets/sounds/$f" ]]; then

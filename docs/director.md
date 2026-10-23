@@ -21,6 +21,7 @@ engine.rs: apply_moves (UI) → director.step → world.update_emitters → дл
 | `core/src/director/mod.rs` | `Director`, `Environment`, социальный слой: перекличка соседей, тревоги, стаи |
 | `core/src/director/agent.rs` | Поведенческие агенты: жизнь птицы (территория, присады, кормёжка, стиль полёта) |
 | `core/src/director/species.rs` | Каталог видов: суточные кривые, стиль полёта, бюджет времени, реакции; биомы (`species_weights_for_biome`) |
+| `core/src/director/encounters.rs` | Режиссёр встреч (сцены с `director.encounters`): бюджет песен по часу, медленный пульс и затишья, пролёты, круги, гости, стаи и порывы по одному, с новизной. Правила: `docs/scenes/forest.md` |
 | `core/src/director/voices.rs` | Голос вида: нейросетевой, если обучен, иначе процедурный |
 | `core/src/director/bridge.rs` | Телеметрия птиц для UI (`asmr_get_birds`) |
 | `core/src/sources/mod.rs` | Интерфейс генератора `Generator::render(out, &Controls)`, `Flyer` = голос + крылья |
@@ -55,7 +56,8 @@ engine.rs: apply_moves (UI) → director.step → world.update_emitters → дл
     "wind": 0.45, "birds": 0.6, "water": 0.6,   // необязательно: стартовые значения слайдеров
     "ground_z": -1.7
   },
-  "director": { "flock_interval": [60, 150], "first_flock": 30 },
+  "director": { "flock_interval": [60, 150], "first_flock": 30,
+                "encounters": { "gap": [70, 230], "lull_every": [180, 360], "lull": [20, 60] } },  // необязательно
   "entities": [
     { "kind": "river", "id": 50, "path": [[4,-10,-1.2], [3.6,0,-1.2], [4.1,10,-1.2]],
       "flow": 1.0, "segments": 5, "bubble_rate": 350 },
@@ -80,6 +82,7 @@ engine.rs: apply_moves (UI) → director.step → world.update_emitters → дл
 | `flyby` | Вне сцены → пролёт по почти прямой мимо головы на расстоянии `min_distance` с пением/позывками → улетает. Слышно приближение, переход справа налево (или наоборот) и удаление. | `first`, `interval`, `speed`, `min_distance`, `height`, `reach` |
 | `circle` | Прилетает, делает `laps` кругов вокруг `center` (по умолчанию — голова слушателя), улетает или садится на `home`. | `center`, `radius`, `height`, `speed`, `laps`, `first`, `interval`, `home` |
 | `approach` | Появляется далеко (`far`), приближается перелётами (`hops`), на каждой остановке поёт, дольше всего — рядом (`near`); затем удаляется в другом направлении и исчезает. | `first`, `interval`, `far`, `near`, `hops`, `linger`, `speed` |
+| режиссёр встреч (`director.encounters`) | Если задан, пролёты, круги, подлёты и стаи ждут его сигнала и выходят по одному: следующая встреча через `gap` с, вид по весу и новизне, без повторов подряд; плюс порывы ветра через кроны. Резиденты поют в пределах бюджета фраз по часу суток; раз в `lull_every` с лес на `lull` с замолкает; птицы кормятся не ближе 6 м от слушателя. Подробно: `docs/scenes/forest.md` | `gap`, `first`, `lull_every`, `lull`, `songs`, `gusts` |
 | событие «стая» (`director`) | Несколько `resident`-птиц, сидящих на одном дереве, почти одновременно (разброс 0–0.8 с) взлетают и перелетают на дальнее дерево. | `flock_interval`, `first_flock` |
 
 Состояния агента: `Perched(anchor, Sing|Rest|Alert) | Ground | Flying(bezier, стиль, then) | Hawking | SongFlight | Circling | Absent`. Якорь `Tree{tree, offset}` следует за деревом, если его двигает пользователь (и в полёте конечная точка тоже пересчитывается).

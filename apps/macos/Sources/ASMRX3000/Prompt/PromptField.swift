@@ -22,9 +22,9 @@ final class PromptController: ObservableObject {
         var text: String {
             switch self {
             case .idle: return ""
-            case .thinking: return "Слушаю…"
-            case .recording: return "Говорите…"
-            case .transcribing: return "Распознаю речь…"
+            case .thinking: return tr("Thinking") + "…"
+            case .recording: return tr("Speak") + "…"
+            case .transcribing: return tr("Transcribing") + "…"
             case let .said(s), let .answer(s), let .hint(s), let .failed(s): return s
             }
         }
@@ -114,27 +114,28 @@ final class PromptController: ObservableObject {
     /// What the line under the field says after a reply: what changed, the answer, why
     /// nothing changed, or what the core rejected (in its own words).
     nonisolated static func line(for reply: PromptReply, result: [String: Any]) -> Status {
-        let errors = result["errors_ru"] as? [String] ?? (result["errors"] as? [String] ?? [])
+        let errorsEn = result["errors"] as? [String] ?? []
+        let errors = L10n.current == .ru ? (result["errors_ru"] as? [String] ?? errorsEn) : errorsEn
         let applied = ((result["applied"] as? [Any])?.count ?? 0) + ((result["moved"] as? [Any])?.count ?? 0)
         switch reply.kind {
         case .answer:
-            return .answer(reply.explanation.isEmpty ? "Не могу описать сцену." : reply.explanation)
+            return .answer(reply.explanation.isEmpty ? tr("Can't describe the scene.") : reply.explanation)
         case .nothing:
-            return .hint(reply.explanation.isEmpty ? "Менять нечего." : reply.explanation)
+            return .hint(reply.explanation.isEmpty ? tr("Nothing to change.") : reply.explanation)
         case .unmatched:
-            return .hint(reply.explanation.isEmpty ? "Не понял, что изменить. Скажите иначе: «тише река», «ночь», «в тайгу»." : reply.explanation)
+            return .hint(reply.explanation.isEmpty ? tr("Didn't get what to change. Try other words: “quieter river”, “night”, “to the taiga”.") : reply.explanation)
         case .patch:
             if applied == 0 {
-                return errors.isEmpty ? .hint("Ничего не изменилось.") : .failed(PromptError.rejected(errors).errorDescription ?? "")
+                return errors.isEmpty ? .hint(tr("Nothing changed.")) : .failed(PromptError.rejected(errors).errorDescription ?? "")
             }
-            var said = reply.explanation.isEmpty ? "Готово." : reply.explanation
+            var said = reply.explanation.isEmpty ? tr("Done.") : reply.explanation
             // The core's balance pulled back a group the change made much louder.
-            let names = ["water": "реку", "rain": "дождь", "wind": "ветер", "foliage": "листву"]
-            let pulled = (result["balanced"] as? [[String: Any]] ?? []).compactMap { ($0["key"] as? String)?.split(separator: ".").first.map(String.init) }.compactMap { names[$0] }
+            let names = ["water": N_("the river"), "rain": N_("the rain"), "wind": N_("the wind"), "foliage": N_("the foliage")]
+            let pulled = (result["balanced"] as? [[String: Any]] ?? []).compactMap { ($0["key"] as? String)?.split(separator: ".").first.map(String.init) }.compactMap { names[$0].map { tr($0) } }
             if !pulled.isEmpty {
-                said += " Баланс: чуть отвёл " + pulled.joined(separator: " и ") + "."
+                said += " " + tr("Balance: eased %@ back.", pulled.joined(separator: tr(" and ")))
             }
-            return errors.isEmpty ? .said(said) : .said(said + " Не вышло: " + errors[0] + ".")
+            return errors.isEmpty ? .said(said) : .said(said + " " + tr("Didn't work: %@.", errors[0]))
         }
     }
 
@@ -144,7 +145,7 @@ final class PromptController: ObservableObject {
         task?.cancel()
         audio.applyPatch(patch)
         canUndo = !undo.isEmpty
-        status = .said("Как было.")
+        status = .said(tr("Restored."))
     }
 
     // MARK: Voice
@@ -216,19 +217,27 @@ private func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ work: @escaping
 struct PromptField: View {
     @ObservedObject var prompt: PromptController
     let stage: Stage
+    @ObservedObject private var lang = Language.shared
     @FocusState private var focused: Bool
     @State private var hoveringSend = false
     @State private var hoveringMic = false
     @State private var dots = 0
     @State private var pressStart: Date?
     @State private var stopOnRelease = false
-    static let placeholder = "Скажите, каким быть лесу…"
-    static let example = "Например: тише река, ночь, перенеси меня в горы"
+    static var placeholder: String { tr("Tell the forest how to be…") }
+    static var example: String { tr("For example: quieter river, night, take me to the mountains") }
+    /// The field is a control tall plus 4 pt around its buttons, whose corners follow the
+    /// field's (radius minus the inset).
+    static let inset: CGFloat = Grid.x1
+    static let height: CGFloat = Grid.control + 2 * inset
+    static let buttonRadius: CGFloat = Grid.radius - inset
+    /// The round "?" / "!" mark before a hint or an error.
+    static let mark: CGFloat = 13
     private let tick = Timer.publish(every: 0.35, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Grid.x1 + 2) {
-            HStack(spacing: Grid.x2 + 2) {
+        VStack(alignment: .leading, spacing: Grid.x2 - 2) {
+            HStack(spacing: Grid.x3) {
                 PromptMark(lit: focused || prompt.status.busy || prompt.status == .recording, blinking: focused && !Motion.reduced)
                     .accessibilityHidden(true)
                 if IconView.still {
@@ -240,7 +249,7 @@ struct PromptField: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     TextField("", text: $prompt.text,
-                              prompt: Text(prompt.status == .recording ? "Говорите…" : Self.placeholder)
+                              prompt: Text(prompt.status == .recording ? tr("Speak") + "…" : Self.placeholder)
                                 .font(Ink.text(Ink.Size.prompt)).foregroundColor(Ink.graphite))
                         .textFieldStyle(.plain)
                         .font(Ink.text(Ink.Size.prompt))
@@ -249,32 +258,32 @@ struct PromptField: View {
                         .onSubmit { prompt.send() }
                         .onExitCommand { focused = false; stage.focusScene?() }
                         .disabled(prompt.status.busy)
-                        .accessibilityLabel("Запрос")
+                        .accessibilityLabel(tr("Prompt"))
                 }
                 mic
                 send
             }
             .padding(.leading, Grid.x3)
-            .padding(.trailing, Grid.x1)
-            .frame(height: 40)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Ink.raised))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .padding(.trailing, Self.inset)
+            .frame(height: Self.height)
+            .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous).fill(Ink.raised))
+            .overlay(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous)
                 .strokeBorder(prompt.status == .recording ? Ink.violet : (focused ? Ink.paper.opacity(0.55) : Ink.hairline), lineWidth: 1))
             .contentShape(Rectangle())
             .onTapGesture { focused = true }
 
             statusLine
                 .padding(.horizontal, Grid.x3)
-                .frame(minHeight: 15, alignment: .leading)
+                .frame(minHeight: Grid.x4, alignment: .leading)
         }
         .background {
             // ⌘Z undoes the last prompt; ⌥Space starts / stops the voice.
-            Button("Отменить запрос") { prompt.undoLast() }
+            Button(tr("Undo prompt")) { prompt.undoLast() }
                 .keyboardShortcut("z", modifiers: .command)
                 .disabled(!prompt.canUndo)
                 .opacity(0)
                 .accessibilityHidden(true)
-            Button("Голосом") { prompt.toggleVoice() }
+            Button(tr("Voice")) { prompt.toggleVoice() }
                 .keyboardShortcut(.space, modifiers: .option)
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -288,8 +297,8 @@ struct PromptField: View {
         let recording = prompt.status == .recording
         let lit = recording || hoveringMic
         return MicGlyph(color: recording ? Ink.panel : (lit ? Ink.paper : Ink.graphite))
-            .frame(width: 32, height: 32)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .frame(width: Grid.control, height: Grid.control)
+            .background(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
                 .fill(recording ? Ink.violet.opacity(dots % 2 == 0 || Motion.reduced ? 1 : 0.7) : (hoveringMic ? Ink.pressed : .clear)))
             .contentShape(Rectangle())
             .onHover { hoveringMic = $0 }
@@ -310,8 +319,8 @@ struct PromptField: View {
                 }
             })
             .disabled(prompt.status.busy)
-            .help(recording ? "Отпустите или нажмите ещё раз — отправить" : "Сказать голосом: нажмите или держите   ⌥Пробел")
-            .accessibilityLabel(recording ? "Остановить запись" : "Сказать голосом")
+            .help(recording ? tr("Release or click again to send") : tr("Speak: click or hold   ⌥Space"))
+            .accessibilityLabel(recording ? tr("Stop recording") : tr("Speak aloud"))
             .accessibilityAddTraits(.isButton)
     }
 
@@ -323,25 +332,26 @@ struct PromptField: View {
                     Circle().fill(i < dots || Motion.reduced ? Ink.paper : Ink.ash).frame(width: 3, height: 3)
                 }
             }
-            .frame(width: 32, height: 32)
-            .accessibilityLabel(prompt.status == .transcribing ? "Распознаю речь" : "Слушаю")
+            .frame(width: Grid.control, height: Grid.control)
+            .accessibilityLabel(prompt.status == .transcribing ? tr("Transcribing") : tr("Thinking"))
         } else {
             let ready = !prompt.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             Button { prompt.send() } label: {
+                // Ready to send: filled, like play while paused (the one thing to do now).
                 Text("⏎")
                     .font(Ink.text(Ink.Size.prompt))
-                    .foregroundStyle(ready ? (hoveringSend ? Ink.panel : Ink.paper) : Ink.ash)
-                    .frame(width: 32, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(ready && hoveringSend ? Ink.paper : .clear))
+                    .foregroundStyle(ready ? Ink.panel : Ink.ash)
+                    .frame(width: Grid.control, height: Grid.control)
+                    .background(RoundedRectangle(cornerRadius: Self.buttonRadius, style: .continuous)
+                        .fill(ready ? (hoveringSend ? Color.white : Ink.paper) : .clear))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
             .disabled(!ready)
             .onHover { hoveringSend = $0 }
-            .help("Отправить   Enter")
-            .accessibilityLabel("Отправить")
+            .help(tr("Send") + "   Enter")
+            .accessibilityLabel(tr("Send"))
         }
     }
 
@@ -350,20 +360,20 @@ struct PromptField: View {
         HStack(alignment: .firstTextBaseline, spacing: Grid.x2) {
             switch prompt.status {
             case .idle:
-                Text(prompt.canUndo ? "⌘Z вернуть как было" : Self.example).foregroundStyle(Ink.ash)
+                Text(prompt.canUndo ? tr("⌘Z restore") : Self.example).foregroundStyle(Ink.ash)
             case .thinking:
-                Text("Слушаю" + dotted).foregroundStyle(Ink.graphite)
+                Text(tr("Thinking") + dotted).foregroundStyle(Ink.graphite)
             case .recording:
-                Circle().fill(Ink.violet).frame(width: 7, height: 7)
-                Text("Говорите" + dotted + "  отпустите или нажмите ещё раз").foregroundStyle(Ink.paper.opacity(0.85))
+                Circle().fill(Ink.violet).frame(width: Self.mark - 6, height: Self.mark - 6)
+                Text(tr("Speak") + dotted + "  " + tr("release or click again")).foregroundStyle(Ink.paper.opacity(0.85))
             case .transcribing:
-                Text("Распознаю речь" + dotted).foregroundStyle(Ink.graphite)
+                Text(tr("Transcribing") + dotted).foregroundStyle(Ink.graphite)
             case let .said(s):
                 Text(s).foregroundStyle(Ink.paper.opacity(0.85))
                     .truncationMode(.tail)
                     .help(s)
                 Spacer(minLength: Grid.x2)
-                if prompt.canUndo { Text("⌘Z отменить").foregroundStyle(Ink.ash).fixedSize() }
+                if prompt.canUndo { Text(tr("⌘Z undo")).foregroundStyle(Ink.ash).fixedSize() }
             case let .answer(s):
                 Text(s).foregroundStyle(Ink.paper.opacity(0.9))
                     .lineLimit(3)
@@ -372,13 +382,13 @@ struct PromptField: View {
             case let .hint(s):
                 Text("?")
                     .foregroundStyle(Ink.panel)
-                    .frame(width: 13, height: 13)
+                    .frame(width: Self.mark, height: Self.mark)
                     .background(Circle().fill(Ink.graphite))
                 Text(s).foregroundStyle(Ink.paper.opacity(0.85)).help(s)
             case let .failed(s):
                 Text("!")
                     .foregroundStyle(Ink.panel)
-                    .frame(width: 13, height: 13)
+                    .frame(width: Self.mark, height: Self.mark)
                     .background(Circle().fill(Ink.paper))
                 Text(s).foregroundStyle(Ink.paper).help(s)
             }

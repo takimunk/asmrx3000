@@ -22,6 +22,7 @@ private struct FrameUniforms {
     var world: SIMD4<Float>     // snow cover, sand cover, bare rock above this slope, flying (0..1)
     var precip: SIMD4<Float>    // rate mm/h, snow (1) or rain (0), fog distance scale, sea
     var motion: SIMD4<Float>    // velocity of the air past the eye (travel frame, m/s), -
+    var accent: SIMD4<Float>    // the user's accent rgb (Accent.swift), -
 }
 
 private struct Instance {
@@ -142,7 +143,7 @@ final class SceneRenderer {
             plumb: .zero, sun: SIMD4(sunDir, 0),
             env: SIMD4(Self.daylight(stage.hour), stage.telemetry.wetness, stage.telemetry.lightning, 0),
             gaze: .zero, gazeHead: .zero, haze: .zero, listener: .zero, invViewProj: vp.inverse,
-            world: .zero, precip: .zero, motion: .zero
+            world: .zero, precip: .zero, motion: .zero, accent: SIMD4(Accent.rgb, 0)
         )
         precipitation(&u)
         // The horizon: where level ground meets the sky, straight ahead of the camera.

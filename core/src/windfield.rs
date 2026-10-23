@@ -141,6 +141,12 @@ impl WindField {
         self.gust
     }
 
+    /// An extra gust pulse of `strength` (mean gusts are 1): it travels with the wind like
+    /// any other (the scene director's "wave through the crowns").
+    pub fn kick(&mut self, strength: f32) {
+        self.kick += strength.max(0.0);
+    }
+
     /// Gust strength at world offset (`x` north, `y` west, metres) from the listener.
     pub fn at(&self, x: f32, y: f32) -> f32 {
         let along = x * self.to.0 + y * self.to.1; // downwind distance

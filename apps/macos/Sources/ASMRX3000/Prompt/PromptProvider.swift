@@ -1,3 +1,4 @@
+// l10n-ok-file: Russian here is LLM prompt text and the offline parser's keywords, not UI.
 import Foundation
 import Security
 
@@ -31,7 +32,7 @@ struct PromptRequest {
         guard let o = try JSONSerialization.jsonObject(with: promptJSON) as? [String: Any],
               let tool = o["tool"] as? [String: Any],
               let schema = tool["input_schema"]
-        else { throw PromptError.badReply("ядро не отдало промпт") }
+        else { throw PromptError.badReply(tr("the core gave no prompt")) }
         self.text = text
         system = o["system"] as? String ?? ""
         context = o["context"] as? String ?? ""
@@ -64,7 +65,7 @@ struct PromptReply {
 
     init(patch: Data, kind: Kind? = nil) throws {
         guard let o = try? JSONSerialization.jsonObject(with: patch) as? [String: Any] else {
-            throw PromptError.badReply("ответ не JSON-объект")
+            throw PromptError.badReply(tr("the reply is not a JSON object"))
         }
         self.patch = patch
         explanation = (o["explanation"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -93,33 +94,33 @@ enum PromptError: LocalizedError {
     case timeout
     case http(Int, String)
     case badReply(String)
-    /// The core applied nothing: its own reasons (Russian).
+    /// The core applied nothing: its own reasons.
     case rejected([String])
 
-    /// One line for the popover: what failed, precisely, in Russian.
+    /// One line for the popover: what failed, precisely, in the current language.
     var errorDescription: String? {
         switch self {
         case .noProvider:
-            return "Модель не подключена: нет ключа TypeSafe (см. docs/prompt-control.md). Ползунки работают."
+            return tr("No model connected: no TypeSafe key (see docs/prompt-control.md). The sliders work.")
         case let .noKey(service):
-            return "Нет ключа \(service)."
+            return tr("No %@ key.", service)
         case .offline:
-            return "Нет сети: модель недоступна. Ползунки работают."
+            return tr("No network: the model is unreachable. The sliders work.")
         case .timeout:
-            return "Модель не ответила за \(Int(PromptController.timeout)) с — попробуйте ещё раз."
+            return tr("The model did not answer in %d s. Try again.", Int(PromptController.timeout))
         case let .http(code, body):
             let detail = Self.detail(body)
             switch code {
-            case 401, 403: return "Ключ не принят (\(code)): проверьте ключ в связке ключей."
-            case 429: return "Модель перегружена или кончилась квота (429). Попробуйте позже."
-            case 400, 422: return "Модель отклонила запрос (\(code))" + (detail.isEmpty ? "." : ": \(detail)")
-            case 500...599: return "Сервис модели сбоит (\(code)). Попробуйте позже."
-            default: return "Ошибка сервиса (\(code))" + (detail.isEmpty ? "." : ": \(detail)")
+            case 401, 403: return tr("Key rejected (%d): check the key in the keychain.", code)
+            case 429: return tr("The model is overloaded or out of quota (429). Try later.")
+            case 400, 422: return tr("The model rejected the request (%d)", code) + (detail.isEmpty ? "." : ": \(detail)")
+            case 500...599: return tr("The model service is failing (%d). Try later.", code)
+            default: return tr("Service error (%d)", code) + (detail.isEmpty ? "." : ": \(detail)")
             }
         case let .badReply(why):
-            return "Модель ответила непонятно: \(why)."
+            return tr("The model replied with something unreadable: %@.", why)
         case let .rejected(reasons):
-            return "Не применилось: " + reasons.prefix(2).joined(separator: "; ") + "."
+            return tr("Not applied: %@.", reasons.prefix(2).joined(separator: "; "))
         }
     }
 
@@ -149,7 +150,7 @@ enum PromptError: LocalizedError {
             case .timedOut:
                 return .timeout
             default:
-                return .badReply("сеть: \(u.localizedDescription)")
+                return .badReply(tr("network: %@", u.localizedDescription))
             }
         }
         return .badReply(error.localizedDescription)
@@ -157,10 +158,23 @@ enum PromptError: LocalizedError {
 }
 
 /// API keys: the environment first (handy from a terminal), then the login keychain
-/// (generic password), never in files or logs. The user adds one with
+/// (generic password), never in files or logs. The user adds one in the onboarding's last step
+/// or the panel's settings, or with
 ///     security add-generic-password -U -s com.asmrx3000.prompt -a <provider> -w
 enum Keychain {
     static let service = "com.asmrx3000.prompt"
+
+    /// The accounts the app knows, with their environment variables.
+    enum Account: String {
+        case typesafe, fal
+
+        var env: String {
+            switch self {
+            case .typesafe: return "TYPESAFE_API_KEY"
+            case .fal: return "FAL_KEY"
+            }
+        }
+    }
 
     /// A key from the environment.
     static func env(_ name: String) -> String? {
@@ -184,6 +198,91 @@ enum Keychain {
         else { return nil }
         return key
     }
+
+    // Read once per run (the first keychain read of an item the app did not write may show the
+    // "allow" dialog), and replaced when the app saves or removes a key, so a key added in the
+    // settings works at once.
+    private static let lock = NSLock()
+    private static var cache: [Account: String?] = [:]
+
+    /// The key in use for `account`: the environment, else the keychain.
+    static func stored(_ account: Account) -> String? {
+        lock.lock()
+        if let hit = cache[account] { lock.unlock(); return hit }
+        lock.unlock()
+        let v = env(account.env) ?? key(account: account.rawValue)
+        lock.lock(); cache[account] = .some(v); lock.unlock()
+        return v
+    }
+
+    /// Whether a key is set, without reading the secret (so no keychain dialog): the
+    /// environment, a key read or saved this run, or an item in the keychain.
+    static func has(_ account: Account) -> Bool {
+        if env(account.env) != nil { return true }
+        lock.lock()
+        let hit = cache[account]
+        lock.unlock()
+        if let hit { return hit != nil }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+    }
+
+    /// Whether the key comes from the environment (then the keychain item is not used).
+    static func fromEnvironment(_ account: Account) -> Bool { env(account.env) != nil }
+
+    /// Saves (or replaces) the key in the login keychain. True on success.
+    @discardableResult
+    static func save(_ value: String, account: Account) -> Bool {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, let data = key.data(using: .utf8) else { return false }
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+        ]
+        var status = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = match
+            add[kSecValueData as String] = data
+            add[kSecAttrLabel as String] = "ASMR X3000 (\(account.rawValue))"
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            NSLog("ASMR X3000: keychain save for %@ failed: %d", account.rawValue, status)
+            return false
+        }
+        lock.lock(); cache[account] = .some(env(account.env) ?? key); lock.unlock()
+        return true
+    }
+
+    /// Removes the key from the keychain (the environment, if set, still wins).
+    static func remove(_ account: Account) {
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account.rawValue,
+        ]
+        SecItemDelete(match as CFDictionary)
+        lock.lock(); cache[account] = .some(env(account.env)); lock.unlock()
+    }
+
+    /// A light check of what was pasted: no spaces, long enough, and for fal the "id:secret"
+    /// shape. Returns a short reason when it does not look like a key.
+    static func problem(_ value: String, account: Account) -> String? {
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if v.isEmpty { return "empty" }
+        if v.rangeOfCharacter(from: .whitespacesAndNewlines) != nil { return "has spaces" }
+        if v.count < 16 { return "too short" }
+        if account == .fal, !v.contains(":") { return "a fal key looks like id:secret" }
+        return nil
+    }
 }
 
 /// Picks the provider: `ASMR_PROMPT_PROVIDER=mock` forces the offline mock (snapshots,
@@ -199,8 +298,8 @@ enum Providers {
         return nil
     }
 
-    /// Read once per run: the first keychain read may show the "allow" dialog.
-    private static let typesafeKey: String? = Keychain.env("TYPESAFE_API_KEY") ?? Keychain.key(account: "typesafe")
+    /// Cached by Keychain (read once per run, replaced when a key is saved in the app).
+    private static var typesafeKey: String? { Keychain.stored(.typesafe) }
 }
 
 /// Offline stand-in: a handful of keyword rules that produce the same kind of patch a model
@@ -224,7 +323,7 @@ struct MockProvider: PromptProvider {
         func scaled(_ key: String, _ f: Double) { set(key, (values[key] ?? 0) * f) }
 
         if has("что вокруг", "что слышно", "где птиц", "опиши", "what's around", "describe") {
-            let answer = request.summary.isEmpty ? "Не знаю, что вокруг." : request.summary
+            let answer = request.summary.isEmpty ? tr("I do not know what is around.") : request.summary
             let patch: [String: Any] = ["explanation": answer, "changes": []]
             return try PromptReply(patch: JSONSerialization.data(withJSONObject: patch), kind: .answer)
         }
@@ -232,46 +331,46 @@ struct MockProvider: PromptProvider {
         let water = has("вод", "рек", "river", "water")
         if (loud || quiet) && water {
             if scene.values["water.level"] != nil { set("water.level", loud ? 6 : -8) } else { scaled("water.gain", loud ? 2 : 0.4) }
-            said.append(loud ? "вода громче" : "вода тише")
+            said.append(loud ? tr("water louder") : tr("water quieter"))
         } else if has("спокой", "тише", "calm", "quiet") {
             scaled("wind.speed", 0.55); scaled("rain.rate", 0.4); scaled("water.flow", 0.8)
             scaled("birds.activity", 0.65); scaled("master.volume", 0.92)
-            said.append("спокойнее")
+            said.append(tr("calmer"))
         }
-        if has("ноч", "night") { set("env.time_of_day", 23.5); set("birds.activity", 0.25); said.append("ночь") }
-        if has("утр", "рассвет", "dawn", "morning") { set("env.time_of_day", 5.5); set("birds.activity", 1); said.append("рассвет") }
+        if has("ноч", "night") { set("env.time_of_day", 23.5); set("birds.activity", 0.25); said.append(tr("night")) }
+        if has("утр", "рассвет", "dawn", "morning") { set("env.time_of_day", 5.5); set("birds.activity", 1); said.append(tr("dawn")) }
         if has("убери дожд", "без дожд", "no rain") {
             if (values["rain.rate"] ?? 0) < 0.05 {
-                let patch: [String: Any] = ["explanation": "Дождя и так нет.", "changes": []]
+                let patch: [String: Any] = ["explanation": tr("There is no rain anyway."), "changes": []]
                 return try PromptReply(patch: JSONSerialization.data(withJSONObject: patch), kind: .nothing)
             }
-            set("rain.rate", 0); set("rain.storm", 0); said.append("без дождя")
+            set("rain.rate", 0); set("rain.storm", 0); said.append(tr("no rain"))
         } else if has("гроз", "storm") {
-            set("rain.rate", 25); set("rain.storm", 0.8); set("wind.speed", 11); said.append("гроза")
+            set("rain.rate", 25); set("rain.storm", 0.8); set("wind.speed", 11); said.append(tr("thunderstorm"))
         } else if has("дожд", "rain") {
-            set("rain.rate", has("лёгк", "легк", "light", "мелк") ? 1 : 6); said.append("дождь")
+            set("rain.rate", has("лёгк", "легк", "light", "мелк") ? 1 : 6); said.append(tr("rain"))
         }
-        if has("снег", "зим", "snow") { set("env.season", "winter"); set("env.temperature", -6); said.append("зима") }
+        if has("снег", "зим", "snow") { set("env.season", "winter"); set("env.temperature", -6); said.append(tr("winter")) }
         if has("стиха", "fading", "постепенно", "slowly") { glide = 25; if has("дожд", "rain") { set("rain.rate", 0.2) } }
         if has("водопад", "waterfall") {
-            set("water.regime", "small_waterfall"); set("water.flow", 0.9); set("water.aeration", 1.3); said.append("водопад")
+            set("water.regime", "small_waterfall"); set("water.flow", 0.9); set("water.aeration", 1.3); said.append(tr("waterfall"))
         }
-        if has("больше птиц", "more birds") { set("birds.activity", min(1, (values["birds.activity"] ?? 0.6) + 0.3)); said.append("больше птиц") }
-        if loud && !water { scaled("master.volume", 1.2); said.append("громче") }
+        if has("больше птиц", "more birds") { set("birds.activity", min(1, (values["birds.activity"] ?? 0.6) + 0.3)); said.append(tr("more birds")) }
+        if loud && !water { scaled("master.volume", 1.2); said.append(tr("louder")) }
         // Where it blows from (compound sides first).
-        let sides: [(words: [String], deg: Double, ru: String)] = [
-            (["северо-запад", "northwest", "north-west"], 315, "с северо-запада"), (["северо-восток", "northeast", "north-east"], 45, "с северо-востока"),
-            (["юго-запад", "southwest", "south-west"], 225, "с юго-запада"), (["юго-восток", "southeast", "south-east"], 135, "с юго-востока"),
-            (["с севера", "северн", "from the north", "northerly"], 0, "с севера"), (["с юга", "южн", "from the south", "southerly"], 180, "с юга"),
-            (["с запада", "западн", "from the west", "westerly"], 270, "с запада"), (["с востока", "восточн", "from the east", "easterly"], 90, "с востока"),
+        let sides: [(words: [String], deg: Double, name: String)] = [
+            (["северо-запад", "northwest", "north-west"], 315, N_("from the northwest")), (["северо-восток", "northeast", "north-east"], 45, N_("from the northeast")),
+            (["юго-запад", "southwest", "south-west"], 225, N_("from the southwest")), (["юго-восток", "southeast", "south-east"], 135, N_("from the southeast")),
+            (["с севера", "северн", "from the north", "northerly"], 0, N_("from the north")), (["с юга", "южн", "from the south", "southerly"], 180, N_("from the south")),
+            (["с запада", "западн", "from the west", "westerly"], 270, N_("from the west")), (["с востока", "восточн", "from the east", "easterly"], 90, N_("from the east")),
         ]
         let side = sides.first(where: { s in s.words.contains { t.contains($0) } })
         // A side alone ("ветер с севера") turns the wind; it gets stronger only when asked.
         if has("ветер", "ветр", "wind") && !has("гроз", "storm") && (side == nil || has("сильн", "strong", "ветрен", "windy")) {
-            set("wind.speed", 9); said.append("ветер")
+            set("wind.speed", 9); said.append(tr("wind"))
         }
         if let side {
-            set("env.wind_direction", side.deg); said.append("ветер \(side.ru)")
+            set("env.wind_direction", side.deg); said.append(tr("wind %@", tr(side.name)))
         }
         // Places: the first landscape whose words match and that exists.
         let places: [(words: [String], biomes: [String])] = [
@@ -288,14 +387,14 @@ struct MockProvider: PromptProvider {
            let biome = place.biomes.first(where: options.contains) {
             set("flight.on", "on"); set("flight.biome", biome)
             if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 5) }
-            said.append(biome)
+            said.append(tr(Knob.biomeName(biome)))
         } else if has("полет", "полёт", "лети", "летим", "fly") {
-            set("flight.on", "on"); if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 8) }; said.append("полёт")
+            set("flight.on", "on"); if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 8) }; said.append(tr("flying"))
         }
-        if has("домой", "home") { set("flight.on", "off"); said.append("дома") }
-        else if has("приземл", "land", "стоп", "останов", "завис") { set("flight.on", "stand"); said.append("стоим") }
+        if has("домой", "home") { set("flight.on", "off"); said.append(tr("at home")) }
+        else if has("приземл", "land", "стоп", "останов", "завис") { set("flight.on", "stand"); said.append(tr("standing here")) }
 
-        let explanation = said.isEmpty ? "" : "Мок: " + said.joined(separator: ", ") + "."
+        let explanation = said.isEmpty ? "" : tr("Mock: %@.", said.joined(separator: ", "))
         let patch: [String: Any] = ["explanation": explanation, "glide_s": glide, "changes": changes]
         return try PromptReply(patch: JSONSerialization.data(withJSONObject: patch), kind: said.isEmpty ? .unmatched : .patch)
     }

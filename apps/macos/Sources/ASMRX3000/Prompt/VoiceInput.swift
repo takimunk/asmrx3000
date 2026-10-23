@@ -19,23 +19,23 @@ enum VoiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noKey: return "Нет ключа fal.ai: задайте FAL_KEY или добавьте ключ в связку (account fal)."
-        case .denied: return "Нет доступа к микрофону: Системные настройки → Конфиденциальность → Микрофон."
-        case .noMicrophone: return "Микрофон не найден."
-        case let .recording(why): return "Не удалось записать: \(why)."
-        case .tooShort: return "Слишком коротко: держите кнопку и говорите."
-        case .nothingHeard: return "Ничего не расслышал — попробуйте ещё раз."
-        case .offline: return "Нет сети: речь не распознать."
-        case .timeout: return "fal.ai не ответил вовремя."
+        case .noKey: return tr("No fal.ai key: set FAL_KEY or add the key to the keychain (account fal).")
+        case .denied: return tr("No microphone access: System Settings → Privacy & Security → Microphone.")
+        case .noMicrophone: return tr("No microphone found.")
+        case let .recording(why): return tr("Could not record: %@.", why)
+        case .tooShort: return tr("Too short: hold the button and speak.")
+        case .nothingHeard: return tr("Heard nothing. Try again.")
+        case .offline: return tr("No network: speech can not be recognised.")
+        case .timeout: return tr("fal.ai did not answer in time.")
         case let .http(code, body):
             let detail = PromptError.detail(body)
             switch code {
-            case 401, 403: return "Ключ fal.ai не принят (\(code))."
-            case 429: return "fal.ai: лимит запросов или нет средств (429)."
-            case 400, 422: return "fal.ai не принял запись (\(code))" + (detail.isEmpty ? "." : ": \(detail)")
-            default: return "Ошибка fal.ai (\(code))" + (detail.isEmpty ? "." : ": \(detail)")
+            case 401, 403: return tr("fal.ai key rejected (%d).", code)
+            case 429: return tr("fal.ai: rate limit or out of credit (429).")
+            case 400, 422: return tr("fal.ai rejected the recording (%d)", code) + (detail.isEmpty ? "." : ": \(detail)")
+            default: return tr("fal.ai error (%d)", code) + (detail.isEmpty ? "." : ": \(detail)")
             }
-        case .badReply: return "fal.ai ответил непонятно."
+        case .badReply: return tr("fal.ai replied with something unreadable.")
         }
     }
 
@@ -91,13 +91,13 @@ final class VoiceRecorder: NSObject, AVCaptureFileOutputRecordingDelegate, @unch
         for i in session.inputs { session.removeInput(i) }
         guard session.canAddInput(input) else {
             session.commitConfiguration()
-            throw VoiceError.recording("микрофон занят")
+            throw VoiceError.recording(tr("the microphone is busy"))
         }
         session.addInput(input)
         if !session.outputs.contains(output) {
             guard session.canAddOutput(output) else {
                 session.commitConfiguration()
-                throw VoiceError.recording("нельзя записать файл")
+                throw VoiceError.recording(tr("the file can not be recorded"))
             }
             session.addOutput(output)
         }
@@ -180,10 +180,10 @@ struct FalWhisper {
     let key: String
     static let endpoint = URL(string: "https://fal.run/fal-ai/whisper")!
 
-    /// Read once per run (the first keychain read may ask).
-    static let storedKey: String? = Keychain.env("FAL_KEY") ?? Keychain.key(account: "fal")
+    /// Cached by Keychain (read once per run, replaced when a key is saved in the app).
+    static var storedKey: String? { Keychain.stored(.fal) }
 
-    func transcribe(_ file: URL, language: String = "ru") async throws -> String {
+    func transcribe(_ file: URL, language: String = L10n.current.rawValue) async throws -> String {
         let audio = try Data(contentsOf: file)
         let body: [String: Any] = [
             "audio_url": "data:audio/wav;base64," + audio.base64EncodedString(),

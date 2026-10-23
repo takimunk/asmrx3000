@@ -9,16 +9,28 @@ import Foundation
 struct SceneEntry: Identifiable, Equatable {
     /// Stored in UserDefaults ("scene").
     let id: String
-    /// Russian, as the picker shows it.
-    let title: String
+    /// The picker's title: an English key (translated when shown), or, for a `--scene` file,
+    /// the file's own name, shown verbatim.
+    let titleKey: String
+    private let verbatim: Bool
+    var title: String { verbatim ? titleKey : tr(titleKey) }
     /// File in the scenes folder; nil = the core's built-in forest by the river.
     let file: String?
 
+    /// A scene whose title is shown as given (a `--scene` file's name).
+    init(id: String, title: String, file: String?) {
+        self.id = id; titleKey = title; verbatim = true; self.file = file
+    }
+
+    /// A catalogue scene: `key` is the English title, translated at display time.
+    init(id: String, key: String, file: String?) {
+        self.id = id; titleKey = key; verbatim = false; self.file = file
+    }
+
     static let all: [SceneEntry] = [
-        SceneEntry(id: "forest", title: "Лес", file: nil),
-        SceneEntry(id: "waterfall", title: "Водопад", file: "forest_waterfall.json"),
-        SceneEntry(id: "underwater", title: "Под водой", file: "underwater_drift.json"),
-        SceneEntry(id: "space", title: "Космос", file: "space_still.json"),
+        SceneEntry(id: "forest", key: N_("Forest"), file: nil),
+        SceneEntry(id: "underwater", key: N_("Underwater"), file: "underwater_drift.json"),
+        SceneEntry(id: "space", key: N_("Space"), file: "space_still.json"),
     ]
 
     static let forest = all[0]
@@ -43,8 +55,9 @@ struct ClipInfo {
     var cls: Class
     /// fixed, pass, drift, escort, orbit, sweep, portal.
     var motion: String
-    /// Russian, for the selection chip: "кит", "дельфины", "комета"…
-    var name: String
+    /// English key of the name for the selection chip ("whale", "dolphins", "comet"…).
+    var nameKey: String
+    var name: String { tr(nameKey) }
     var emitters: Int
     var spread: Float
     /// A sweep's lateral width far from the screen and its height, a pass into the screen.
@@ -56,14 +69,14 @@ struct ClipInfo {
     /// What the selection chip says about how it moves.
     var motionText: String {
         switch motion {
-        case "fixed": return "Звучит на месте"
-        case "escort": return "Держится рядом с вами"
-        case "drift": return "Проплывает мимо, пока вы плывёте вперёд"
-        case "pass": return toScreen ? "Проходит мимо и уходит в экран" : "Проходит мимо"
-        case "orbit": return "Кружит вокруг"
-        case "sweep": return "Волна сквозь голову и экран"
-        case "portal": return "Втягивается в экран"
-        default: return "Движется сам"
+        case "fixed": return tr("Sounds in place")
+        case "escort": return tr("Stays close to you")
+        case "drift": return tr("Drifts past as you swim forward")
+        case "pass": return toScreen ? tr("Passes by and goes into the screen") : tr("Passes by")
+        case "orbit": return tr("Circles around you")
+        case "sweep": return tr("A wave through your head and the screen")
+        case "portal": return tr("Pulled into the screen")
+        default: return tr("Moves on its own")
         }
     }
 }
@@ -73,8 +86,9 @@ struct SceneInfo {
     enum Look { case forest, underwater, space, void }
 
     var entry: SceneEntry
-    /// Title shown by the picker (the entry's, or the JSON's name for a `--scene` file).
-    var title: String
+    /// The JSON's name for a `--scene` file; otherwise the entry's title is shown.
+    var customTitle: String?
+    var title: String { customTitle ?? entry.title }
     var json: String?
     var look: Look
     var clips: [UInt32: ClipInfo]
@@ -86,7 +100,7 @@ struct SceneInfo {
     /// Clip scenes get their own levers and stage; the forest levers do nothing there.
     var isClip: Bool { !clips.isEmpty }
 
-    static let forest = SceneInfo(entry: .forest, title: SceneEntry.forest.title, json: nil, look: .forest, clips: [:],
+    static let forest = SceneInfo(entry: .forest, json: nil, look: .forest, clips: [:],
                                   groups: [], groundZ: -1.7)
 
     /// Reads a scene file from the scenes folder; nil when it is missing or unreadable.
@@ -104,7 +118,7 @@ struct SceneInfo {
         let entry = SceneEntry.all.first { $0.file == name } ?? SceneEntry(id: "file:" + path, title: name, file: nil)
         var info = parse(json, entry: entry)
         if entry.file == nil, let n = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["name"] as? String {
-            info.title = n
+            info.customTitle = n
         }
         return info
     }
@@ -128,7 +142,7 @@ struct SceneInfo {
                 func f(_ k: String) -> Float? { (motion[k] as? NSNumber)?.floatValue }
                 var sweep: (Float, Float, Float, Float)?
                 if type == "sweep" { sweep = (f("from_x") ?? -40, f("to_x") ?? 40, f("width") ?? 10, f("height") ?? 0) }
-                clips[id] = ClipInfo(id: id, cls: cls, motion: type, name: Scenes.name(files: files, cls: cls),
+                clips[id] = ClipInfo(id: id, cls: cls, motion: type, nameKey: Scenes.name(files: files, cls: cls),
                                      emitters: (e["emitters"] as? NSNumber)?.intValue ?? 1,
                                      spread: (e["spread"] as? NSNumber)?.floatValue ?? 0,
                                      sweep: sweep, toScreen: motion["to_screen"] as? Bool ?? false)
@@ -158,7 +172,7 @@ struct SceneInfo {
         } else {
             look = .void
         }
-        return SceneInfo(entry: entry, title: entry.title, json: json, look: look, clips: clips, groups: groups,
+        return SceneInfo(entry: entry, json: json, look: look, clips: clips, groups: groups,
                          groundZ: (env["ground_z"] as? NSNumber)?.floatValue ?? -1.7)
     }
 }
@@ -183,24 +197,24 @@ enum Scenes {
         setenv("ASMR_SOUNDS_DIR", r.path, 0)
     }
 
-    /// A Russian name from the clip's files: the first keyword that matches.
+    /// An English name key from the clip's files (translated when shown): the first keyword that matches.
     static func name(files: [String], cls: ClipInfo.Class) -> String {
         let text = files.joined(separator: " ").lowercased()
         let words: [(String, String)] = [
-            ("humpback_dolphin", "дельфины"), ("humpback", "горбач"), ("blue_whale", "синий кит"), ("fin_whale", "финвал"),
-            ("sperm_whale", "кашалот"), ("whale", "кит"), ("dolphin", "дельфины"), ("bubbles", "пузыри"),
-            ("swimmer", "пловец"), ("reef", "риф"), ("ocean", "океан"), ("comet", "комета"), ("juno", "пролёт «Юноны»"),
-            ("pulsar", "пульсар"), ("chorus", "хор магнитосферы"), ("whistler", "свистящие атмосферики"),
-            ("black_hole", "чёрная дыра"), ("m87", "чёрная дыра"), ("sgra", "чёрная дыра"), ("shimmer", "мерцание"),
-            ("swell", "космическая волна"), ("saturn", "Сатурн"), ("voyager", "межзвёздная плазма"),
-            ("plasma", "плазма"), ("drone", "гул"),
+            ("humpback_dolphin", N_("dolphins")), ("humpback", N_("humpback")), ("blue_whale", N_("blue whale")), ("fin_whale", N_("fin whale")),
+            ("sperm_whale", N_("sperm whale")), ("whale", N_("whale")), ("dolphin", N_("dolphins")), ("bubbles", N_("bubbles")),
+            ("swimmer", N_("swimmer")), ("reef", N_("reef")), ("ocean", N_("ocean")), ("comet", N_("comet")), ("juno", N_("Juno flyby")),
+            ("pulsar", N_("pulsar")), ("chorus", N_("magnetosphere chorus")), ("whistler", N_("whistlers")),
+            ("black_hole", N_("black hole")), ("m87", N_("black hole")), ("sgra", N_("black hole")), ("shimmer", N_("shimmer")),
+            ("swell", N_("cosmic swell")), ("saturn", N_("Saturn")), ("voyager", N_("interstellar plasma")),
+            ("plasma", N_("plasma")), ("drone", N_("drone")),
         ]
         if let hit = words.first(where: { text.contains($0.0) }) { return hit.1 }
         switch cls {
-        case .bed: return "фон"
-        case .texture: return "текстура"
-        case .creature: return "существо"
-        case .event: return "событие"
+        case .bed: return N_("background")
+        case .texture: return N_("texture")
+        case .creature: return N_("creature")
+        case .event: return N_("event")
         }
     }
 }
