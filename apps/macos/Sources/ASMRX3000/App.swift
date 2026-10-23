@@ -2,11 +2,44 @@ import AppKit
 import Combine
 import SwiftUI
 
+// The menu bar item and its panel are AppKit (MenuBarController): SwiftUI's MenuBarExtra
+// window does not show Metal views on macOS 27. The app has no SwiftUI scenes at all: an
+// empty `Settings` scene, the old placeholder, opened as a blank window at every launch.
 @main
-struct ASMRX3000App: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+enum ASMRX3000App {
+    @MainActor
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.mainMenu = editMenu()
+        handleArguments()
+        app.run()
+    }
 
-    init() {
+    /// Without a main menu text fields lose ⌘C / ⌘V / ⌘Z (keys, the prompt): keep an Edit menu.
+    @MainActor
+    private static func editMenu() -> NSMenu {
+        let main = NSMenu()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let item = NSMenuItem()
+        item.submenu = edit
+        main.addItem(NSMenuItem())
+        main.addItem(item)
+        return main
+    }
+
+    @MainActor
+    private static func handleArguments() {
         Fonts.register()
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             Snapshot.run(path: CommandLine.arguments[i + 1])
@@ -27,12 +60,6 @@ struct ASMRX3000App: App {
         if CommandLine.arguments.contains("--bench") {
             Bench.start()
         }
-    }
-
-    // The menu bar item and its panel are AppKit (MenuBarController): SwiftUI's MenuBarExtra
-    // window does not show Metal views on macOS 27. An app needs a scene; this one never opens.
-    var body: some Scene {
-        Settings { EmptyView() }
     }
 }
 
