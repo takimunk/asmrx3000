@@ -66,6 +66,9 @@ pub struct Segment {
     /// Seconds: time constant towards this segment's targets (a gust front arrives in ~15 s);
     /// omitted = each quantity's own pace.
     pub ease: Option<f32>,
+    /// Scene levers (by key) this segment heads for; the ones left out go back to their default.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub levers: std::collections::BTreeMap<String, Span>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -130,11 +133,14 @@ pub struct DirectionDesc {
     pub change: f32,
     pub clock: f32,
     pub hold_min: f32,
+    /// It drives time and weather (env.*, wind, rain, birds, water). Off for scenes whose
+    /// world is not weather (underwater, space): then only the scene levers move.
+    pub climate: bool,
 }
 
 impl Default for DirectionDesc {
     fn default() -> Self {
-        Self { episodes: Vec::new(), only: false, start: None, script: Vec::new(), repeat: false, weather: 0.0, energy: 0.0, change: 0.35, clock: 1.0, hold_min: 20.0 }
+        Self { episodes: Vec::new(), only: false, start: None, script: Vec::new(), repeat: false, weather: 0.0, energy: 0.0, change: 0.35, clock: 1.0, hold_min: 20.0, climate: true }
     }
 }
 
@@ -220,6 +226,9 @@ impl DirectionDesc {
                 }
                 if s.ease.is_some_and(|v| !(v.is_finite() && v > 0.0)) {
                     return bad("ease", "> 0 s");
+                }
+                if s.levers.values().any(|r| !r.ok(-1e6, 1e6)) {
+                    return bad("levers", "finite numbers");
                 }
             }
         }

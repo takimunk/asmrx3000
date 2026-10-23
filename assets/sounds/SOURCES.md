@@ -46,3 +46,57 @@ All NASA entries: NASA-media (generally not subject to copyright; credit NASA). 
 - Not found / excluded: a clean ship-free open-ocean ambience bed with a confirmed license (the Samoa reef clip is the only bed); NPS sound-library pages returned 404; University of Iowa space-audio.org clips (Voyager/Jupiter) are marked "All rights reserved", so they are not used; Parker Solar Probe clips (JHU/APL) have no stated license, not used; Freesound CC0 shrimp not found. Commons files that are CC BY-SA (e.g. Peru scuba, PASSENGER ambience) excluded.
 - The 10x blue/fin whale files are sped up 10x to be audible; the engine may pitch them down.
 - Trimmed-out sources with source clipping: Risso's dolphin clicks and Garland S3 humpback were dropped.
+
+## Generated (assets/sounds/generated/)
+
+AI-generated through fal.ai (`tools/fal/gen.py`). Prompts are in `tools/fal/prompts_v2.json` (file name = `<prompt name>_<model>_<n>.wav`). Models: `el2` = ElevenLabs Sound Effects v2 (fal-ai/elevenlabs/sound-effects/v2), `sa25` = Stable Audio 2.5. Spend is logged in `tools/fal/spend.log`. Post-processing: 25 Hz high-pass (DC and subsonic rumble), a low-pass for sounds that come through the hull (ticks 6 kHz, RCS puffs 4 kHz, arm servo 5 kHz, airlock 10 kHz, the rest of the space set 12 kHz, which removes a 15.6 kHz whine the model leaves in), trimming of leading and trailing silence (event files only), peak-normalised to -3 dBFS with at most 8x gain, 48 kHz mono 16-bit. The loops `hull_hum_sa25_1` (cut to 60 s) and `rain_on_surface_sa25_1` were crossfaded so they loop cleanly.
+
+Generated 2026-10-23:
+
+| Files | Model | Prompt name | Used in |
+|---|---|---|---|
+| space/hull_hum_el2_1..2, space/hull_hum_sa25_1 | el2, sa25 | hull_hum | space_still `station` bed |
+| space/life_support_fans_el2_1..2 | el2 | life_support_fans | `station` |
+| space/distant_pump_el2_1..2 | el2 | distant_pump | `station` |
+| space/hull_creak_el2_1..3, space/hull_ticks_el2_1..3 | el2 | hull_creak, hull_ticks | `station` |
+| space/freighter_pass_el2_1..3, medium_ship_pass_el2_1..3, convoy_distant_el2_1..2 | el2 | same | `ships` |
+| space/shuttle_turbine_el2_1..2, shuttle_pass_el2_1, shuttle_pass_el2_3 | el2 | shuttle_turbine, shuttle_pass | `ships` |
+| space/rcs_puff_el2_1..3, clamp_engage_el2_1..3, airlock_cycle_el2_1..2, robot_arm_servo_el2_1..3 | el2 | same | `docking` |
+| space/radio_hiss_el2_1..2 | el2 | radio_hiss | `radio` |
+| space/console_beep_synth_1..3 | synthesised (sine at 1150/940 Hz with a weak 3rd harmonic, 4 ms ramps, one 31 ms reflection) | - | `radio` |
+| underwater/reef_crackle_el2_1..2, fish_grunts_el2_1..3, reef_chorus_el2_1..2 | el2 | same | underwater_drift `reef` |
+| underwater/rain_on_surface_el2_1..2 | el2 | rain_on_surface | `rain_above` |
+
+Rejected (generated, not used in a scene): space/radio_static_el2_1..2 and telemetry_beeps_el2_1 (nearly silent with a 200 Hz buzz), telemetry_beeps_el2_2..3 (shrill 6-7 kHz tones, not console beeps), shuttle_whine_el2_1..3 and shuttle_pass_el2_2 (low rumble only, no drive whine), underwater/rain_on_surface_sa25_1 (uneven, with bursts of up to 35 dB, not a steady bed).
+Earlier generations (space whooshes, orbit hum, shimmer, energy beams; the underwater whales, dolphins and bubbles) came from `tools/fal/prompts.json` and `tools/fal/whale_prompts.json`.
+
+## Body scan and Tea house (assets/sounds/generated/body_scan/, assets/sounds/generated/tea_house/)
+
+Generated with fal.ai (ElevenLabs Sound Effects v2 `el2`; Stable Audio 2.5 `sa25` for `body_scan/room_tone_sa25_1.wav`) from the prompts in `tools/fal/prompts_scenes_a.json`, by `tools/fal/gen.py` (48 kHz mono 16-bit). No recordings by third parties. Status: **not generated yet** (the generation run still needs the user's approval); the scenes `core/scenes/body_scan.json` and `core/scenes/tea_house.json` reference these names:
+- body_scan: guide_brush_el2_1..2, guide_air_el2_1..2, guide_grain_el2_1..2 (take 1 = left leg/arms, take 2 = the right-leg twin), guide_warm_el2_1..2, bowl_strike_el2_1..3, tingsha_el2_1..2, room_tone_sa25_1.
+- tea_house: kettle_simmer_el2_1..2, fukusa_el2_1..3, ladle_pour_el2_1..3, whisk_el2_1..3, tatami_shift_el2_1..3, bowl_slide_el2_1..3, suikinkutsu_el2_1..3, shishi_odoshi_el2_1..2, furin_el2_1..2, temple_bell_el2_1.
+
+## Lantern room, Night train, Singing ice (assets/sounds/generated/{lighthouse_gale,night_train,singing_ice}/)
+
+Weather in the lantern room (wind, gale, railing, vent, rain on the dome, sea, thunder) is procedural (physical models inside clips); only the interior and a few accents are files.
+
+**Generated** (fal.ai; prompts in `tools/fal/prompts_scenes_b.json`; ElevenLabs SFX v2 `el2`, Stable Audio 2.5 `sa25`). Converted to 48 kHz mono 16-bit, leading/trailing silence trimmed (events), peak-normalised to -3 dBFS; loops kept whole unless noted.
+
+| Folder | Files | Notes |
+|---|---|---|
+| lighthouse_gale | optic_whir_el2_2, clockwork_el2_2, rain_on_glass_el2_1..2, surf_crash_el2_1..4, bell_buoy_el2_1..2, foghorn_el2_1..2, pane_rattle_el2_1..2, stair_ping_el2_1..3 | Rejected: clockwork_el2_1 and optic_whir_el2_1 (near-silent takes, -59 / -72 dBFS RMS), pane_rattle_el2_3 (bright crash, reads as breaking glass), optic_rollers_el2_1..2 (60 Hz rumble with 10-25 dB bumps: pumped the calm mix, not trackable on the orbit). |
+| night_train | car_interior_sa25_1 (cut to 10-92 s), rolling_noise_el2_1..2 (cut to the stationary loud stretch across the loop seam), bogie_joints_el2_1..2 (cut to the rhythmic stretch, 1.1 s / 0.72 s joint period), crossing_bell_el2_1..2 (low-passed at 2.5 kHz, 4 poles zero-phase: heard through the car body), passing_train, bridge_rumble, tunnel_roar (take 1 cut from 2 s: a sharp transient at 0.7 s), rain_window, tea_glass, panel_creak, vent_hum, loco_horn, station_pass | The loops as delivered surged by 25-35 dB inside 22 s; they were cut, not regenerated. |
+| singing_ice | none kept | Rejected: ice_sing_el2_1..3 (steady 1.7 kHz whistles, or a rise after the fall: not a dispersive chirp). |
+
+**Real recordings** (Freesound HQ previews, 128 kbps mp3, since the originals need a login; cut into single events, otherwise unprocessed except trim, end fades of 8-400 ms and peak normalisation).
+
+| Files | Original | Author | License | Notes |
+|---|---|---|---|---|
+| ice_sing_vrymaa_1..7, ice_crack_vrymaa_1..4, ice_run_vrymaa_1..2, ice_boom_vrymaa_1 | https://freesound.org/people/Vrymaa/sounds/737896/ "Ice - Lake fractures" | Vrymaa | CC0 1.0 | 15 cm lake ice fracturing, close range. The sing cuts are descending chirps (~1.9 kHz to 100 Hz in ~0.15 s). |
+| ice_crack_toban_1..3, ice_run_toban_1 | https://freesound.org/people/toban/sounds/613572/ "Shoreline ice" | toban | CC0 1.0 | Cracking and squeaking near a frozen shore. |
+| ice_boom_aerror_1..4 | https://freesound.org/people/aerror/sounds/847807/ "rumbling_ice" | aerror | CC0 1.0 | Low thumps of lake ice. |
+| skater_darkshroom_1..2 | https://freesound.org/people/DarkShroom/sounds/724415/ "skating_on_thin_ice" | DarkShroom | CC0 1.0 | Blade strokes on thin ice with its ringing (~750 Hz). |
+| owl_marcuspepsi_1 | https://freesound.org/people/Marcuspepsi/sounds/450214/ "Tawny Owl in Molkom, Sweden." | Marcuspepsi | CC0 1.0 | Two hoots, iPhone. |
+| owl_elanor1995_1..2 | https://freesound.org/people/Elanor1995/sounds/688869/ "Tawny owl.wav" | Elanor1995 | CC0 1.0 | Two cuts. |
+
+Not used: toban 613571 (birds and a dog in it), Commons/Xeno-canto tawny owls (CC BY-SA), sound368 864872 (noise-gated to digital silence).

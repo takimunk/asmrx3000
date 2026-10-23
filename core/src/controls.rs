@@ -294,7 +294,7 @@ static DEFS: [Def; N] = [
     def(DIRECTION_CHANGE, g::DIRECTION, DIRECTION_AMOUNT, 0, 0.0, 1.0, "direction.change", "", Store::Local),
     def(DIRECTION_CLOCK, g::DIRECTION, DIRECTION_AMOUNT, L, 0.0, 120.0, "direction.clock", "x", Store::Local),
     def(DIRECTION_HOLD, g::DIRECTION, DIRECTION_AMOUNT, L, 0.5, 240.0, "direction.hold", "min", Store::Local),
-    def(DIRECTION_CUE, g::DIRECTION, DIRECTION_AMOUNT, D, 0.0, (CUES.len() - 1) as f32, "direction.cue", "", Store::Local),
+    def(DIRECTION_CUE, g::DIRECTION, DIRECTION_AMOUNT, D, 0.0, 33.0, "direction.cue", "", Store::Local),
 ];
 
 /// Options of `direction.cue`: nothing, wrap up and move on, or a built-in spell.
@@ -342,6 +342,8 @@ pub struct Bases {
     pub drying: f32,
     /// The scene's direction and its starting steer (None: the scene stands still).
     pub direction: Option<crate::direction::Steer>,
+    /// Its episodes: `direction.cue` offers none, next and these.
+    pub cues: usize,
 }
 
 impl Bases {
@@ -371,7 +373,8 @@ impl Bases {
             Season::Winter => 3,
         };
         let direction = desc.direction.as_ref().map(crate::direction::Steer::from_desc);
-        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0), direction }
+        let cues = desc.direction.as_ref().and_then(|d| d.catalogue().ok()).map_or(CUES.len() - 2, |e| e.len());
+        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0), direction, cues }
     }
 
     fn regime(&self, idx: f32) -> WaterConfig {
@@ -654,7 +657,7 @@ impl ControlBank {
                 parent: d.parent,
                 flags: d.flags | over,
                 min: d.min,
-                max: d.max,
+                max: if d.id == DIRECTION_CUE { (self.bases.cues + 1) as f32 } else { d.max },
                 value: st.v[i],
                 default_value: self.default_of(d.id),
                 key,

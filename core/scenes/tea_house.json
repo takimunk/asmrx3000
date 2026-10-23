@@ -1,0 +1,743 @@
+{
+ "name": "Tea house",
+ "seed": 6400,
+ "environment": {
+  "time_of_day": 15.0,
+  "rain_mm_h": 4.0,
+  "wind_ms": 0.5,
+  "storm": 0.0,
+  "temperature_c": 17.0,
+  "humidity": 0.95,
+  "wetness": 1.0,
+  "ground_z": -0.85
+ },
+ "controls": [
+  {
+   "group": "kettle",
+   "title": "Kettle",
+   "icon": "fire",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "rain",
+   "title": "Rain",
+   "icon": "rain",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "eaves",
+   "title": "Eaves",
+   "icon": "water",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "garden",
+   "title": "Garden",
+   "icon": "water",
+   "params": [
+    "level",
+    "events"
+   ]
+  },
+  {
+   "group": "temple",
+   "title": "Temple bell",
+   "icon": "tone",
+   "params": [
+    "level",
+    "events"
+   ]
+  }
+ ],
+ "levers": [
+  {
+   "key": "rite",
+   "title": "Ceremony",
+   "icon": "tea",
+   "min": 0,
+   "max": 4,
+   "default": 0,
+   "lively": 0,
+   "drives": [
+    {
+     "group": "cloth",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.35, 0],
+      [0.65, 1],
+      [1.35, 1],
+      [1.65, 0],
+      [2.35, 0],
+      [2.65, 0],
+      [3.35, 0],
+      [3.65, 1],
+      [4, 1]
+     ]
+    },
+    {
+     "group": "ladle",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.35, 0],
+      [0.65, 0.8],
+      [1.35, 0.8],
+      [1.65, 0.8],
+      [2.35, 0.8],
+      [2.65, 0],
+      [3.35, 0],
+      [3.65, 1],
+      [4, 1]
+     ]
+    },
+    {
+     "group": "whisk",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.35, 0],
+      [0.65, 0],
+      [1.35, 0],
+      [1.65, 1.2],
+      [2.35, 1.2],
+      [2.65, 0],
+      [3.35, 0],
+      [3.65, 0],
+      [4, 0]
+     ]
+    },
+    {
+     "group": "serve",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.35, 0],
+      [0.65, 0],
+      [1.35, 0],
+      [1.65, 0],
+      [2.35, 0],
+      [2.65, 1],
+      [3.35, 1],
+      [3.65, 0],
+      [4, 0]
+     ]
+    },
+    {
+     "group": "host",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.35, 0],
+      [0.65, 1],
+      [1.35, 1],
+      [1.65, 1],
+      [2.35, 1],
+      [2.65, 1],
+      [3.35, 1],
+      [3.65, 1],
+      [4, 1]
+     ]
+    },
+    {
+     "group": "kettle",
+     "param": "level",
+     "at": [
+      [0, -8],
+      [0.35, -8],
+      [0.65, 0],
+      [1.35, 0],
+      [1.65, 0],
+      [2.35, 0],
+      [2.65, -2.5],
+      [3.35, -2.5],
+      [3.65, -5],
+      [4, -5]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "rain",
+   "title": "Rain",
+   "icon": "rain",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "lively": 0,
+   "drives": [
+    {
+     "group": "rain",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.5, -2],
+      [1, 5]
+     ]
+    },
+    {
+     "group": "eaves",
+     "param": "level",
+     "at": [
+      [0, -6],
+      [0.5, 0],
+      [1, 3]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "garden",
+   "title": "Garden",
+   "icon": "water",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0.3,
+   "drives": [
+    {
+     "group": "garden",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.5, 1],
+      [1, 2]
+     ]
+    },
+    {
+     "group": "temple",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.5, 1],
+      [1, 1.6]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "kettle",
+   "title": "Kettle",
+   "icon": "fire",
+   "min": -12,
+   "max": 6,
+   "default": 0,
+   "lively": 0,
+   "drives": [
+    {
+     "group": "kettle",
+     "param": "level",
+     "at": [
+      [-12, -12],
+      [6, 6]
+     ]
+    }
+   ]
+  }
+ ],
+ "direction": {
+  "climate": false,
+  "only": true,
+  "start": "arrival",
+  "repeat": true,
+  "energy": 0,
+  "change": 0.1,
+  "script": [
+   {
+    "episode": "arrival"
+   },
+   {
+    "episode": "preparation"
+   },
+   {
+    "episode": "whisking"
+   },
+   {
+    "episode": "serving"
+   },
+   {
+    "episode": "contemplation"
+   },
+   {
+    "episode": "clearing"
+   },
+   {
+    "episode": "after_rain"
+   }
+  ],
+  "episodes": [
+   {
+    "name": "arrival",
+    "weight": 0,
+    "drama": 0.4,
+    "wet": 0.1,
+    "energy": -0.2,
+    "segments": [
+     {
+      "label": "rain in the garden",
+      "minutes": 3,
+      "ease": 20,
+      "levers": {
+       "rite": 0,
+       "rain": 0.6,
+       "garden": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "name": "preparation",
+    "weight": 0,
+    "drama": 0.4,
+    "energy": 0.2,
+    "segments": [
+     {
+      "label": "purifying the utensils",
+      "minutes": 3,
+      "ease": 3,
+      "levers": {
+       "rite": 1
+      }
+     }
+    ]
+   },
+   {
+    "name": "whisking",
+    "weight": 0,
+    "drama": 0.4,
+    "energy": 0.4,
+    "segments": [
+     {
+      "label": "whisking the tea",
+      "minutes": 2,
+      "ease": 3,
+      "levers": {
+       "rite": 2
+      }
+     }
+    ]
+   },
+   {
+    "name": "serving",
+    "weight": 0,
+    "drama": 0.4,
+    "energy": 0.1,
+    "segments": [
+     {
+      "label": "the bowl is set before you",
+      "minutes": 1.5,
+      "ease": 3,
+      "levers": {
+       "rite": 3
+      }
+     }
+    ]
+   },
+   {
+    "name": "contemplation",
+    "weight": 1,
+    "drama": 0.4,
+    "wet": 0.4,
+    "energy": -0.4,
+    "segments": [
+     {
+      "label": "rain and the water jar",
+      "minutes": 4,
+      "ease": 3,
+      "levers": {
+       "rite": 0,
+       "garden": 0.8,
+       "rain": 0.7
+      }
+     }
+    ]
+   },
+   {
+    "name": "clearing",
+    "weight": 0,
+    "drama": 0.4,
+    "energy": 0.1,
+    "segments": [
+     {
+      "label": "clearing the utensils",
+      "minutes": 2,
+      "ease": 3,
+      "levers": {
+       "rite": 4
+      }
+     }
+    ]
+   },
+   {
+    "name": "after_rain",
+    "weight": 1,
+    "drama": 0.4,
+    "wet": -0.5,
+    "energy": -0.6,
+    "segments": [
+     {
+      "label": "the rain stops",
+      "minutes": 1,
+      "ease": 3,
+      "levers": {
+       "rite": 0,
+       "rain": 0.3,
+       "garden": 0.6
+      }
+     },
+     {
+      "label": "the eaves drip",
+      "minutes": 3,
+      "ease": 25,
+      "levers": {
+       "rite": 0,
+       "rain": 0.12,
+       "garden": 0.6
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 10,
+   "group": "kettle",
+   "class": "texture",
+   "level_db": 38,
+   "playback": "loop",
+   "fade": 4,
+   "first": 0,
+   "files": [
+    "generated/tea_house/kettle_simmer_el2_1.wav",
+    "generated/tea_house/kettle_simmer_el2_2.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [1.0, 0.65, -0.75]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 11,
+   "group": "kettle",
+   "class": "texture",
+   "fade": 6,
+   "first": 0,
+   "sound": {
+    "model": "fire",
+    "preset": "embers",
+    "params": {
+     "heat_kw": 1,
+     "gain": 0.2
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [1.0, 0.65, -0.85]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "cloth",
+   "class": "event",
+   "level_db": 42,
+   "first": 3,
+   "exact": true,
+   "interval": [10, 20],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/fukusa_el2_1.wav",
+    "generated/tea_house/fukusa_el2_2.wav",
+    "generated/tea_house/fukusa_el2_3.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [0.95, 0.25, -0.55]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 21,
+   "group": "ladle",
+   "class": "event",
+   "level_db": 44,
+   "first": 8,
+   "exact": true,
+   "interval": [14, 28],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/ladle_pour_el2_1.wav",
+    "generated/tea_house/ladle_pour_el2_2.wav",
+    "generated/tea_house/ladle_pour_el2_3.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [1.1, 0.0, -0.6]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 22,
+   "group": "whisk",
+   "class": "event",
+   "level_db": 44,
+   "first": 6,
+   "exact": true,
+   "interval": [25, 40],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/whisk_el2_1.wav",
+    "generated/tea_house/whisk_el2_2.wav",
+    "generated/tea_house/whisk_el2_3.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [0.85, 0.2, -0.7]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 23,
+   "group": "host",
+   "class": "event",
+   "level_db": 40,
+   "first": 12,
+   "exact": true,
+   "interval": [30, 60],
+   "fade": 0.8,
+   "files": [
+    "generated/tea_house/tatami_shift_el2_1.wav",
+    "generated/tea_house/tatami_shift_el2_2.wav",
+    "generated/tea_house/tatami_shift_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [1.3, 0.5, -0.75],
+    "to": [0.95, 0.05, -0.75],
+    "duration": 6,
+    "jitter": 0.1
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 24,
+   "group": "serve",
+   "class": "event",
+   "level_db": 42,
+   "first": 5,
+   "exact": true,
+   "interval": [86, 86],
+   "fade": 0.3,
+   "files": [
+    "generated/tea_house/bowl_slide_el2_1.wav",
+    "generated/tea_house/bowl_slide_el2_2.wav",
+    "generated/tea_house/bowl_slide_el2_3.wav"
+   ],
+   "motion": {
+    "type": "pass",
+    "from": [0.85, 0.15, -0.8],
+    "to": [0.45, 0.0, -0.82],
+    "duration": 4
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "rain",
+   "class": "bed",
+   "emitters": 4,
+   "spread": 3,
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "rain",
+    "preset": "on_leaves"
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [1.5, -4.0, -0.3]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 31,
+   "group": "rain",
+   "class": "bed",
+   "emitters": 2,
+   "spread": 2,
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "rain",
+    "preset": "on_soil"
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [-1.0, -3.0, -0.85]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 32,
+   "group": "rain",
+   "class": "bed",
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "rain",
+    "preset": "on_rock"
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [0.6, -1.8, -0.85]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 33,
+   "group": "rain",
+   "class": "bed",
+   "emitters": 4,
+   "spread": 1.4,
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "rain",
+    "preset": "wood_deck"
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [0.3, 0.0, 1.4]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "eaves",
+   "class": "texture",
+   "emitters": 3,
+   "spread": 1.5,
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "water",
+    "preset": "drips",
+    "params": {
+     "gain": 0.35
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [0.5, -1.5, -0.6]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 41,
+   "group": "eaves",
+   "class": "texture",
+   "fade": 8,
+   "first": 0,
+   "sound": {
+    "model": "water",
+    "preset": "trickle",
+    "params": {
+     "gain": 0.35
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [-1.2, -1.6, -0.4]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "garden",
+   "class": "event",
+   "level_db": 44,
+   "first": 4,
+   "interval": [5, 14],
+   "rate": [0.94, 1.06],
+   "fade": 0.05,
+   "echo": {
+    "delay": 0.12,
+    "feedback": 0.4,
+    "mix": 0.5,
+    "damp_hz": 3000
+   },
+   "files": [
+    "generated/tea_house/suikinkutsu_el2_1.wav",
+    "generated/tea_house/suikinkutsu_el2_2.wav",
+    "generated/tea_house/suikinkutsu_el2_3.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [-1.8, -3.2, -1.5]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 51,
+   "group": "garden",
+   "class": "event",
+   "level_db": 58,
+   "first": 40,
+   "interval": [45, 100],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/shishi_odoshi_el2_1.wav",
+    "generated/tea_house/shishi_odoshi_el2_2.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [4.0, -9.0, -0.7]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 52,
+   "group": "garden",
+   "class": "event",
+   "level_db": 40,
+   "first": 25,
+   "interval": [20, 60],
+   "rate": [0.97, 1.03],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/furin_el2_1.wav",
+    "generated/tea_house/furin_el2_2.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [0.3, -1.5, 0.9]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 60,
+   "group": "temple",
+   "class": "event",
+   "level_db": 110,
+   "first": 240,
+   "interval": [480, 900],
+   "fade": 0.05,
+   "files": [
+    "generated/tea_house/temple_bell_el2_1.wav"
+   ],
+   "motion": {
+    "type": "fixed",
+    "position": [-350, -420, 25]
+   }
+  }
+ ]
+}

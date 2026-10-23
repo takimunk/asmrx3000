@@ -594,12 +594,36 @@ typedef struct AsmrDirectionInfo {
     float liveliness;        /* encounters, x (1 = as the scene directs them) */
     float weather, energy, change; /* effective steer: the controls plus remembered corrections */
     uint32_t held;           /* bit ASMR_DIRECTION_* set = that quantity is left to the user now */
+    uint32_t climate;        /* 1 = it drives time and weather (the forest); 0 = only the scene levers (clip scenes) */
+    uint32_t held_levers;    /* bit i set = scene lever i is left to the user now */
 } AsmrDirectionInfo;
 void asmr_get_direction(const AsmrEngine *engine, AsmrDirectionInfo *out);
 uint32_t asmr_direction_episode_count(const AsmrEngine *engine);
 /* NUL-terminated machine names ("thunderstorm") and labels ("gust front"); return the length, 0 = none. */
 uint32_t asmr_direction_episode_name(const AsmrEngine *engine, uint32_t episode, char *out, uint32_t max);
 uint32_t asmr_direction_segment_label(const AsmrEngine *engine, uint32_t episode, uint32_t segment, char *out, uint32_t max);
+/* direction.cue options are per scene: asmr_get_control_option(engine, ASMR_CONTROL_DIRECTION_CUE, i) gives
+   "none", "next", then the scene's episodes in order (AsmrControlInfo.max = their count + 1). */
+
+/* Scene levers (a scene's "levers" block, mostly clip scenes): sliders with a meaning ("Ships",
+   "Current", "Whales") that each move several clip-group parameters along curves, on top of the
+   per-group values (asmr_set_clip_group_param). The direction moves them too; a lever the user sets
+   is held like any control (direction.hold), NAN hands it back (and resets it if there is no
+   direction). Lock-free, any thread. Indices 0..count-1, at most 16. */
+typedef struct AsmrSceneLeverInfo {
+    float min, max, def;
+    uint32_t log;           /* 1 = logarithmic slider */
+    uint32_t group;         /* clip group its first drive moves (its waveform), UINT32_MAX = none */
+} AsmrSceneLeverInfo;
+uint32_t asmr_scene_lever_count(const AsmrEngine *engine);
+/* NUL-terminated; return the length (0 = none). key: machine name ("traffic"); title: the panel name
+   as authored (English, translated by the app); icon: icon key. */
+uint32_t asmr_scene_lever_key(const AsmrEngine *engine, uint32_t lever, char *out, uint32_t max);
+uint32_t asmr_scene_lever_title(const AsmrEngine *engine, uint32_t lever, char *out, uint32_t max);
+uint32_t asmr_scene_lever_icon(const AsmrEngine *engine, uint32_t lever, char *out, uint32_t max);
+void asmr_scene_lever_info(const AsmrEngine *engine, uint32_t lever, AsmrSceneLeverInfo *out);
+float asmr_get_scene_lever(const AsmrEngine *engine, uint32_t lever);
+void asmr_set_scene_lever(const AsmrEngine *engine, uint32_t lever, float value);
 
 #ifdef __cplusplus
 }

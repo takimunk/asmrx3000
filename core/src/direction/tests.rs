@@ -350,9 +350,10 @@ fn a_script_plays_then_runs_free() {
     });
     let names: Vec<&str> = log.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(&names[..4], ["mist", "breeze", "shower", "after_rain"], "{log:?}");
-    // The first spell starts part-way through its ten minutes; the breeze lasts five.
+    // `minutes` scales the episode's mean length (breeze: 20..50 min, mean 35) to five: the
+    // draw stays within 5 × 20/35 .. 5 × 50/35 min. A script starts at its beginning.
     let breeze = log[2].1 - log[1].1;
-    assert!(log[1].1 <= 600.0 + 1.0 && (breeze - 300.0).abs() < 90.0, "{log:?}");
+    assert!(log[0].1 < 1.0 && (170.0..430.0).contains(&breeze), "{log:?}");
     assert!(names.len() > 4);
 }
 
@@ -420,4 +421,111 @@ fn engine_runs_the_course_and_respects_the_hand() {
     render(2.0);
     assert_eq!(value(ENV_TIME), h2);
     assert_eq!(e.direction_info().active, 0);
+}
+
+/// A clip scene of procedural water only (no files): two groups, two levers, its own episodes.
+const CLIP_SCENE: &str = r#"{
+  "name": "test reef", "seed": 5,
+  "environment": { "medium": "water", "ground_z": -20 },
+  "entities": [
+    { "kind": "clip", "id": 1, "group": "current", "sound": { "model": "water", "preset": "big_river" }, "motion": { "type": "fixed", "position": [0, 0, -1] } },
+    { "kind": "clip", "id": 2, "group": "drops", "sound": { "model": "water", "preset": "brook_pebbles" },
+      "motion": { "type": "path", "points": [[0, 1, 0, 0], [10, 0, 1, 0, 0.5], [20, -1, 0, 0], [30, 0, -1, 0]] } }
+  ],
+  "levers": [
+    { "key": "flow", "title": "Current", "icon": "current", "min": 0, "max": 2, "default": 1, "lively": 0.3,
+      "drives": [ { "group": "current", "param": "level", "at": [[0, -20], [1, 0], [2, 6]] },
+                  { "group": "current", "param": "a", "at": [[0, 0.3], [1, 1], [2, 2]] } ] },
+    { "key": "near", "title": "Drops", "min": 0, "max": 1, "default": 0.5,
+      "drives": [ { "group": "drops", "param": "distance", "at": [[0, 2], [1, 0.4]] } ] }
+  ],
+  "direction": { "climate": false, "only": true, "change": 0.3,
+    "episodes": [
+      { "name": "slack", "segments": [ { "label": "slack water", "minutes": [3, 4], "levers": { "flow": 0.3 } } ] },
+      { "name": "surge", "segments": [ { "label": "rising", "minutes": 2, "levers": { "flow": 1.5 } },
+                                       { "label": "full", "minutes": 3, "levers": { "flow": 1.9, "near": 0.9 } } ] }
+    ] }
+}"#;
+
+#[test]
+fn levers_are_checked_against_the_groups() {
+    let mut d = SceneDesc::from_json(CLIP_SCENE).unwrap();
+    crate::clips::validate_levers(&d).unwrap();
+    d.levers[0].drives[0].group = "kelp".into();
+    assert!(crate::clips::validate_levers(&d).unwrap_err().contains("kelp"));
+    let mut d = SceneDesc::from_json(CLIP_SCENE).unwrap();
+    d.direction.as_mut().unwrap().episodes[0].segments[0].levers.insert("tide".into(), Span([1.0, 1.0]));
+    assert!(Direction::new(&d).err().unwrap().contains("tide"));
+}
+
+/// In a clip scene the direction leaves time and weather alone and plays the levers: its own
+/// episodes, the lever targets per segment, the user's hand on a lever held, cues by the
+/// scene's own names.
+#[test]
+fn a_clip_scene_is_directed_through_its_levers() {
+    use crate::controls::id::*;
+    let e = crate::Engine::from_json(48_000.0, CLIP_SCENE).unwrap();
+    assert_eq!(e.scene_lever_count(), 2);
+    assert_eq!(e.control_option(DIRECTION_CUE, 2), Some("slack"));
+    assert_eq!(e.control_option(DIRECTION_CUE, 3), Some("surge"));
+    let render = |s: f32| {
+        let (mut l, mut r) = (vec![0.0; 512], vec![0.0; 512]);
+        for _ in 0..(s * 48_000.0 / 512.0) as usize {
+            e.render(&mut l, &mut r);
+        }
+    };
+    let control = |id: u32| {
+        let mut c = vec![crate::ControlInfo::default(); crate::controls::COUNT];
+        let n = e.controls(&mut c);
+        c[..n].iter().find(|c| c.id == id).copied().unwrap()
+    };
+    assert_eq!(control(DIRECTION_CUE).max, 3.0);
+    e.set_param(crate::param::PLAYING, 1.0);
+    let hour = control(ENV_TIME).value;
+    // Call up the surge by name through a prompt patch.
+    let r = e.apply_patch_json(r#"{"changes": [{"key": "direction.cue", "value": "surge"}]}"#);
+    assert!(r.contains("\"ok\":true"), "{r}");
+    render(200.0);
+    let info = e.direction_info();
+    assert_eq!(info.climate, 0);
+    assert_eq!(e.direction_episode_name(info.episode as usize), Some("surge"), "{info:?}");
+    assert!(e.scene_lever_value(0) > 1.3, "{}", e.scene_lever_value(0));
+    // Time and weather untouched.
+    assert_eq!(control(ENV_TIME).value, hour);
+    // The user's hand on a lever stays.
+    e.set_scene_lever(0, 0.1);
+    render(20.0);
+    assert!((e.scene_lever_value(0) - 0.1).abs() < 1e-4);
+    assert!(e.direction_info().held_levers & 1 != 0);
+    // Reset: back to the direction, gliding up.
+    e.set_scene_lever(0, f32::NAN);
+    render(60.0);
+    assert!(e.scene_lever_value(0) > 0.2, "{}", e.scene_lever_value(0));
+}
+
+/// A path is smooth, passes through its keyframes, and carries its gain.
+#[test]
+fn a_path_motion_passes_its_keyframes() {
+    let desc = SceneDesc::from_json(CLIP_SCENE).unwrap();
+    let e = crate::Engine::with_scene(48_000.0, &desc).unwrap();
+    e.set_param(crate::param::PLAYING, 1.0);
+    let pos = |id: u32| {
+        let mut o = vec![crate::ObjectInfo::default(); crate::MAX_OBJECTS];
+        let n = e.objects(&mut o);
+        let o = o[..n].iter().find(|o| o.id == id).copied().unwrap();
+        (o.x, o.y, o.z)
+    };
+    let (mut l, mut r) = (vec![0.0; 480], vec![0.0; 480]);
+    let at = |t: f32, l: &mut Vec<f32>, r: &mut Vec<f32>| {
+        for _ in 0..(t * 100.0) as usize {
+            e.render(l, r);
+        }
+    };
+    at(10.0, &mut l, &mut r);
+    let p = pos(2);
+    // Near (0, 1, 0) at 10 s (the `near` lever scales distance a little).
+    assert!(p.0.abs() < 0.15 && p.1 > 0.5, "{p:?}");
+    at(10.0, &mut l, &mut r);
+    let p = pos(2);
+    assert!(p.1.abs() < 0.15 && p.0 < -0.5, "{p:?}");
 }

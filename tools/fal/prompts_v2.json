@@ -1,0 +1,231 @@
+[
+ {
+  "scene": "space",
+  "name": "hull_hum",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "Inside a space station module: a steady low 60 Hz electrical mains hum with soft broadband air from the life-support ventilation, constant and unchanging, room tone of a metal cabin. Only this hum and air, no music, no voices, no beeps, no melody, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "hull_hum",
+  "model": "sa25",
+  "duration": 90,
+  "variations": 1,
+  "prompt": "Field recording, interior room tone of a spacecraft cabin: steady low electrical hum, quiet ventilation fans and air handling, constant machine drone, mechanical, realistic, no music, no melody, no chords, no voices, no beeps."
+ },
+ {
+  "scene": "space",
+  "name": "life_support_fans",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "Life-support ventilation fans running steadily behind a metal panel on a spacecraft, smooth airflow whoosh of small fans with a faint motor whir, constant. Only the fans, no music, no voices, no beeps, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "distant_pump",
+  "model": "el2",
+  "duration": 20,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "A distant coolant pump and machinery working slowly behind thick metal walls, muffled low mechanical thumping and a soft motor drone that cycles on and off, heard through the structure. Only the machinery, no music, no voices, no beeps, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "hull_creak",
+  "model": "el2",
+  "duration": 6,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "One slow, low metallic creak of a large metal hull flexing from thermal stress, a deep groan of steel plates, heard from inside, silence before and after. Single sound, no music, no voices, no whoosh, dry."
+ },
+ {
+  "scene": "space",
+  "name": "hull_ticks",
+  "model": "el2",
+  "duration": 8,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A few sparse soft metallic ticks and pings of a metal structure cooling down, like a car engine ticking after a drive, irregular, with silence between them. Only the ticks, no music, no voices, no beeps, dry."
+ },
+ {
+  "scene": "space",
+  "name": "freighter_pass",
+  "model": "el2",
+  "duration": 22,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "prompt": "A huge slow cargo freighter's engines passing close by, felt through the hull of a space station: a deep low rumble and heavy drive hum that slowly swells, peaks and fades away, the pitch sliding down slightly as it passes, vibration of the walls. Low frequencies only, no whoosh, no wind, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "medium_ship_pass",
+  "model": "el2",
+  "duration": 14,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "prompt": "A medium-sized spaceship passing by, heard as a muffled engine rumble and steady turbine drive hum through the metal hull of a station, rising and fading with a gentle downward pitch slide. No whoosh, no wind, no lasers, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "shuttle_pass",
+  "model": "el2",
+  "duration": 9,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "prompt": "A small shuttle craft passing nearby, its drive heard through the hull as a muffled higher turbine whine over a low rumble, rising then fading with a downward pitch slide. No whoosh, no wind, no lasers, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "space",
+  "name": "shuttle_whine",
+  "model": "el2",
+  "duration": 9,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A small shuttle passing close to a space station, heard through the metal hull: a clear mid-pitched electric turbine whine that rises in pitch as it approaches and slides down as it leaves, over a soft low rumble, about eight seconds. Single craft, no whoosh, no wind, no lasers, no music, no voices, dry."
+ },
+ {
+  "scene": "space",
+  "name": "convoy_distant",
+  "model": "el2",
+  "duration": 22,
+  "prompt_influence": 0.55,
+  "variations": 2,
+  "prompt": "A convoy of several large ships far away, heard faintly through a station hull as a very low, slow, overlapping engine rumble that swells and recedes, deep and soft. Low frequencies only, no whoosh, no music, no voices, dry."
+ },
+ {
+  "scene": "space",
+  "name": "rcs_puff",
+  "model": "el2",
+  "duration": 3,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "One short burst of a spacecraft reaction control thruster: a sharp pneumatic gas puff, a brief hiss with a dull thump, heard through metal, silence after. Single sound, no music, no voices, no laser, dry."
+ },
+ {
+  "scene": "space",
+  "name": "clamp_engage",
+  "model": "el2",
+  "duration": 4,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "Heavy docking clamps engaging on a spacecraft hull: a deep metallic clunk and latch, a solid steel lock with a short low resonance, heard from inside. Single sound, no music, no voices, dry."
+ },
+ {
+  "scene": "space",
+  "name": "airlock_cycle",
+  "model": "el2",
+  "duration": 15,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "An airlock cycling on a space station: a heavy hatch seal thunks shut, then a long pressurising air hiss, then a mechanical latch clank. Only the airlock, no alarm, no beeps, no music, no voices, dry."
+ },
+ {
+  "scene": "space",
+  "name": "robot_arm_servo",
+  "model": "el2",
+  "duration": 6,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A large robotic arm moving outside a spacecraft, heard through the hull: a smooth electric servo motor whirr with gear whine that rises, holds and stops with a soft clunk. Single source, no music, no voices, no beeps, dry."
+ },
+ {
+  "scene": "space",
+  "name": "telemetry_beeps",
+  "model": "el2",
+  "duration": 10,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "prompt": "A spacecraft console far across a room giving a few faint, short, identical electronic telemetry beeps at irregular intervals, soft and quiet with silence between them. Only the beeps, no melody, no music, no voices, no alarm, dry."
+ },
+ {
+  "scene": "space",
+  "name": "radio_static",
+  "model": "el2",
+  "duration": 20,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "Soft quiet radio static and faint crackle from a communications console speaker, gentle hiss with occasional small crackles, no transmission. No speech, no voices, no music, no tones, dry, single source."
+ },
+ {
+  "scene": "underwater",
+  "name": "reef_crackle",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "Hydrophone recording on a coral reef: the dense crackling and popping of snapping shrimp, like frying bacon, constant, with soft water background. Only the shrimp crackle, no music, no voices, no bubbles, no whales, dry."
+ },
+ {
+  "scene": "underwater",
+  "name": "fish_grunts",
+  "model": "el2",
+  "duration": 10,
+  "prompt_influence": 0.6,
+  "variations": 3,
+  "prompt": "Hydrophone recording near a reef: a few low fish grunts, knocks and croaks from groupers and damselfish, short and sparse with water silence between them. Only the fish sounds, no music, no voices, no bubbles, dry."
+ },
+ {
+  "scene": "underwater",
+  "name": "reef_chorus",
+  "model": "el2",
+  "duration": 20,
+  "prompt_influence": 0.55,
+  "variations": 2,
+  "prompt": "Hydrophone recording of a reef at dusk: a soft chorus of many distant fish grunts and pops over a faint snapping-shrimp crackle, natural and irregular. No music, no voices, no whales, no bubbles, dry."
+ },
+ {
+  "scene": "underwater",
+  "name": "rain_on_surface",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "Rain falling on the sea surface heard from a few metres underwater with a hydrophone: a soft muffled hiss and gentle patter from above, steady, dull and low-passed. Only the rain hiss, no thunder, no music, no voices, no bubbles close by, dry."
+ },
+ {
+  "scene": "underwater",
+  "name": "rain_on_surface",
+  "model": "sa25",
+  "duration": 90,
+  "variations": 1,
+  "prompt": "Hydrophone field recording a few metres under the sea during rain: steady soft muffled hiss and patter of raindrops hitting the water surface above, dull, low-passed, constant, realistic, no music, no melody, no voices, no thunder."
+ },
+ {
+  "scene": "space",
+  "name": "shuttle_turbine",
+  "model": "el2",
+  "duration": 9,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "A small spacecraft's electric turbine drive passing by: a steady mid-pitched turbine whine with a soft low rumble underneath, pitch gliding down as it moves away, smooth, about eight seconds. Single engine, no air whoosh, no wind, no jet roar, no lasers, no music, no voices."
+ },
+ {
+  "scene": "space",
+  "name": "console_beeps",
+  "model": "el2",
+  "duration": 10,
+  "prompt_influence": 0.7,
+  "variations": 3,
+  "prompt": "A computer console in a quiet control room giving three or four short soft electronic beeps of the same mid pitch, around one kilohertz, spaced irregularly a few seconds apart, quiet room in between. Only the beeps, no melody, no music, no voices, no alarm, dry."
+ },
+ {
+  "scene": "space",
+  "name": "radio_hiss",
+  "model": "el2",
+  "duration": 20,
+  "loop": true,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "Continuous soft radio receiver static from a speaker: steady gentle white-noise hiss with faint irregular crackles, constant from start to end, no gaps. No speech, no voices, no music, no tones, single source."
+ }
+]
