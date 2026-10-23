@@ -35,6 +35,8 @@ pub mod group {
     pub const FLIGHT: u32 = 9;
     /// Mix intent (the sound director, docs/sound-director.md).
     pub const MIX: u32 = 10;
+    /// The world's own course (direction/, docs/direction.md): how far it goes and which way.
+    pub const DIRECTION: u32 = 11;
 }
 
 /// Mirrors `ASMR_CONTROL_FLAG_*`.
@@ -155,6 +157,20 @@ pub mod id {
     /// Stationary refocus: when the listener stops, a few constant sounds come forward and
     /// the rest steps back (0 = off).
     pub const MIX_REFOCUS: u32 = 1114;
+    /// Direction (docs/direction.md): 0 = the scene stands still, 1 = it runs its full course.
+    pub const DIRECTION_AMOUNT: u32 = 1200;
+    /// −1 fair .. +1 wet and stormy.
+    pub const DIRECTION_WEATHER: u32 = 1201;
+    /// −1 still .. +1 lively (wind, birds, encounters).
+    pub const DIRECTION_ENERGY: u32 = 1202;
+    /// 0 steady .. 1 eventful (spells, their contrast and texture).
+    pub const DIRECTION_CHANGE: u32 = 1203;
+    /// Scene hours per real hour (0 = the clock stands, 1 = real time).
+    pub const DIRECTION_CLOCK: u32 = 1204;
+    /// Minutes a value set by hand is left to the user before the direction takes it back.
+    pub const DIRECTION_HOLD: u32 = 1205;
+    /// Ask for a spell (an impulse: the engine sets it back to "none" once taken).
+    pub const DIRECTION_CUE: u32 = 1206;
     /// Per-group loudness trims, dB (flags::LEVEL), `<group>.level`: id = group base + 50.
     pub const WATER_LEVEL: u32 = 150;
     pub const WIND_LEVEL: u32 = 250;
@@ -199,7 +215,7 @@ use flags::{DISCRETE as D, LEVEL as LV, LOG as L, MACRO as M};
 use group as g;
 use id::*;
 
-const N: usize = 70;
+const N: usize = 77;
 #[rustfmt::skip]
 static DEFS: [Def; N] = [
     def(WATER_FLOW, g::WATER, NO_PARENT, M, 0.0, 1.0, "water.flow", "", Store::Param(param::WATER, Conv::Same)),
@@ -272,7 +288,20 @@ static DEFS: [Def; N] = [
     def(BIRDS_LEVEL, g::BIRDS, BIRDS_ACTIVITY, LV, -40.0, 12.0, "birds.level", "dB", Store::Local),
     def(INSECTS_LEVEL, g::INSECTS, INSECTS_ACTIVITY, LV, -40.0, 12.0, "insects.level", "dB", Store::Local),
     def(FIRE_LEVEL, g::FIRE, FIRE_HEAT, LV, -40.0, 12.0, "fire.level", "dB", Store::Local),
+    def(DIRECTION_AMOUNT, g::DIRECTION, NO_PARENT, M, 0.0, 1.0, "direction.amount", "", Store::Local),
+    def(DIRECTION_WEATHER, g::DIRECTION, DIRECTION_AMOUNT, 0, -1.0, 1.0, "direction.weather", "", Store::Local),
+    def(DIRECTION_ENERGY, g::DIRECTION, DIRECTION_AMOUNT, 0, -1.0, 1.0, "direction.energy", "", Store::Local),
+    def(DIRECTION_CHANGE, g::DIRECTION, DIRECTION_AMOUNT, 0, 0.0, 1.0, "direction.change", "", Store::Local),
+    def(DIRECTION_CLOCK, g::DIRECTION, DIRECTION_AMOUNT, L, 0.0, 120.0, "direction.clock", "x", Store::Local),
+    def(DIRECTION_HOLD, g::DIRECTION, DIRECTION_AMOUNT, L, 0.5, 240.0, "direction.hold", "min", Store::Local),
+    def(DIRECTION_CUE, g::DIRECTION, DIRECTION_AMOUNT, D, 0.0, (CUES.len() - 1) as f32, "direction.cue", "", Store::Local),
 ];
+
+/// Options of `direction.cue`: nothing, wrap up and move on, or a built-in spell.
+pub const CUES: [&str; 13] = {
+    let b = crate::direction::BUILTIN_NAMES;
+    ["none", "next", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10]]
+};
 
 const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
 
@@ -290,6 +319,7 @@ pub fn option_name(id: u32, i: u32) -> Option<&'static str> {
         ENV_SEASON => return SEASONS.get(i).copied(),
         FLIGHT_BIOME => return crate::flight::land::BIOMES.get(i).map(|b| b.name),
         FLIGHT_STEER => return ["off", "yaw", "yaw_pitch"].get(i).copied(),
+        DIRECTION_CUE => return CUES.get(i).copied(),
         _ => return None,
     };
     if i == 0 {
@@ -310,6 +340,8 @@ pub struct Bases {
     pub hour: f32,
     pub season: u32,
     pub drying: f32,
+    /// The scene's direction and its starting steer (None: the scene stands still).
+    pub direction: Option<crate::direction::Steer>,
 }
 
 impl Bases {
@@ -338,7 +370,8 @@ impl Bases {
             Season::Autumn => 2,
             Season::Winter => 3,
         };
-        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0) }
+        let direction = desc.direction.as_ref().map(crate::direction::Steer::from_desc);
+        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0), direction }
     }
 
     fn regime(&self, idx: f32) -> WaterConfig {
@@ -473,6 +506,12 @@ impl ControlBank {
             MIX_DISTANCE => 0.6,
             MIX_TEXTURE_BUDGET => 0.35,
             MIX_REFOCUS => 0.5,
+            DIRECTION_AMOUNT => b.direction.map_or(0.0, |d| d.amount),
+            DIRECTION_WEATHER => b.direction.map_or(0.0, |d| d.weather),
+            DIRECTION_ENERGY => b.direction.map_or(0.0, |d| d.energy),
+            DIRECTION_CHANGE => b.direction.map_or(0.35, |d| d.change),
+            DIRECTION_CLOCK => b.direction.map_or(1.0, |d| d.clock),
+            DIRECTION_HOLD => b.direction.map_or(20.0, |d| d.hold_s / 60.0),
             // Level trims (flags::LEVEL) start at 0 dB.
             _ => 0.0,
         }
@@ -685,7 +724,7 @@ pub fn options(id: u32) -> Vec<&'static str> {
 }
 
 pub fn group_name(g: u32) -> &'static str {
-    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight", "mix"].get(g as usize).copied().unwrap_or("other")
+    ["water", "wind", "foliage", "rain", "birds", "master", "environment", "insects", "fire", "flight", "mix", "direction"].get(g as usize).copied().unwrap_or("other")
 }
 
 /// Number of controls.

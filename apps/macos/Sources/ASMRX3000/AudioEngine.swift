@@ -332,6 +332,8 @@ final class AudioEngine: ObservableObject {
         scene = info
         controlNames.removeAll()
         optionNames.removeAll()
+        directionNames.removeAll()
+        directionLabels.removeAll()
         applyParams()
         set(ASMR_PARAM_VOLUME, volumeNow)
         coreLock.unlock()
@@ -578,7 +580,9 @@ final class AudioEngine: ObservableObject {
             asmr_get_controls(core, $0.baseAddress, UInt32($0.count))
         }
         out.removeAll(keepingCapacity: true)
+        let hasDirection = asmr_direction_episode_count(core) > 0
         for var raw in rawControls.prefix(Int(n)) {
+            if !hasDirection, Int(raw.group) == ASMR_GROUP_DIRECTION { continue }   // a clip scene has no course of its own
             let names: (String, String)
             if let cached = controlNames[raw.id] {
                 names = cached
@@ -608,10 +612,43 @@ final class AudioEngine: ObservableObject {
         var buf = [CChar](repeating: 0, count: 64)
         for i in 0...max(Int(c.max), 0) {
             let n = buf.withUnsafeMutableBufferPointer { asmr_get_control_option(core, c.id, UInt32(i), $0.baseAddress, 64) }
-            names.append(n > 0 ? String(cString: buf) : "")
+            let name = n > 0 ? String(cString: buf) : ""
+            // "steady_rain" is also a rain surface: the cue's spells are told apart by a prefix.
+            names.append(c.key == "direction.cue" && !name.isEmpty ? "cue." + name : name)
         }
         optionNames[c.id] = names
         return names
+    }
+
+    /// Where the world's course stands (asmr_get_direction); `available` = 0 in a scene without one.
+    func directionInfo() -> AsmrDirectionInfo {
+        var info = AsmrDirectionInfo()
+        asmr_get_direction(core, &info)
+        return info
+    }
+
+    private var directionNames: [UInt32: String] = [:]
+    private var directionLabels: [UInt32: String] = [:]
+
+    /// Machine name of a spell ("thunderstorm"); cached.
+    func directionEpisodeName(_ episode: UInt32) -> String {
+        if let cached = directionNames[episode] { return cached }
+        var buf = [CChar](repeating: 0, count: 64)
+        let n = buf.withUnsafeMutableBufferPointer { asmr_direction_episode_name(core, episode, $0.baseAddress, 64) }
+        let name = n > 0 ? String(cString: buf) : ""
+        directionNames[episode] = name
+        return name
+    }
+
+    /// Label of one stretch of a spell ("gust front"); cached.
+    func directionSegmentLabel(episode: UInt32, segment: UInt32) -> String {
+        let key = episode << 16 | segment
+        if let cached = directionLabels[key] { return cached }
+        var buf = [CChar](repeating: 0, count: 64)
+        let n = buf.withUnsafeMutableBufferPointer { asmr_direction_segment_label(core, episode, segment, $0.baseAddress, 64) }
+        let label = n > 0 ? String(cString: buf) : ""
+        directionLabels[key] = label
+        return label
     }
 
     func setControl(_ id: UInt32, _ value: Float) {

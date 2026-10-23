@@ -36,7 +36,8 @@ struct LeverPanel: View {
     @AppStorage("levers.showAll") private var showAllStored = false
     @ObservedObject private var lang = Language.shared
 
-    static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT]
+    static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT,
+                         ASMR_GROUP_DIRECTION]
     /// Lives in the transport row (master) or in the sound section (mix) instead.
     static let elsewhere = [ASMR_GROUP_MASTER, ASMR_GROUP_MIX]
     /// Order of the groups in the sound section.
@@ -109,6 +110,7 @@ struct LeverPanel: View {
         let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         if let id = drawer, let macro = controls.controls.first(where: { $0.id == id }) {
             Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: stills == nil,
+                   status: Int(macro.group) == ASMR_GROUP_DIRECTION ? { Self.directionStatus(audio) } : nil,
                    set: set, close: { controls.expanded = nil })
         } else if audio.scene.isClip {
             VStack(alignment: .leading, spacing: 0) {
@@ -131,6 +133,18 @@ struct LeverPanel: View {
         return all.filter { c in
             !c.isLevel && !(hasLevel && c.key.hasSuffix(".gain"))
         }
+    }
+
+    /// The direction's status line: "thunderstorm · gust front — then: after the rain, ~6 min".
+    static func directionStatus(_ audio: AudioEngine) -> String? {
+        let d = audio.directionInfo()
+        guard d.available != 0, d.active != 0 else { return nil }
+        var now = ControlText.option("cue." + audio.directionEpisodeName(d.episode))
+        let segment = audio.directionSegmentLabel(episode: d.episode, segment: d.segment)
+        if !segment.isEmpty { now += " · " + ControlText.segment(segment) }
+        let next = ControlText.option("cue." + audio.directionEpisodeName(d.next))
+        let minutes = Swift.max(1, Int((d.episode_left_s / 60).rounded()))
+        return now + " — " + tr("then: %@, ~%d min", next, minutes)
     }
 
     // MARK: Sound
@@ -297,6 +311,7 @@ enum ControlText {
         case ASMR_GROUP_FIRE: return tr("Campfire")
         case ASMR_GROUP_FLIGHT: return tr("Flight")
         case ASMR_GROUP_MIX: return tr("Mix")
+        case ASMR_GROUP_DIRECTION: return tr("Direction")
         default:
             let head = c.key.split(separator: ".").first.map(String.init) ?? c.key
             return groupNames[head].map(tr) ?? sentence(head.replacingOccurrences(of: "_", with: " "))
@@ -337,6 +352,10 @@ enum ControlText {
         // Mix.
         "mix.density": N_("Birds at once"), "mix.soloists": N_("Soloists"), "mix.loudness": N_("Target loudness"),
         "mix.dynamics": N_("Leveling"),
+        // Direction.
+        "direction.amount": N_("Direction"), "direction.weather": N_("Fair ↔ wet"), "direction.energy": N_("Still ↔ lively"),
+        "direction.change": N_("Steady ↔ eventful"), "direction.clock": N_("Time speed"), "direction.hold": N_("Hold my changes"),
+        "direction.cue": N_("Call up"),
     ]
 
     private static let options = [
@@ -362,14 +381,32 @@ enum ControlText {
         "journey": N_("journey"),
         // flight.steer_by_head
         "off": N_("no"), "yaw": N_("by turning"), "yaw_pitch": N_("by turning and tilting"),
+        // direction.cue and the spells (AudioEngine prefixes them "cue." so "steady_rain" keeps both names).
+        "cue.none": N_("—"), "cue.next": N_("next"), "cue.clear": N_("clear"), "cue.calm": N_("calm"),
+        "cue.breeze": N_("breeze"), "cue.windy": N_("windy"), "cue.overcast": N_("overcast"), "cue.drizzle": N_("drizzle"),
+        "cue.shower": N_("shower"), "cue.steady_rain": N_("long rain"), "cue.thunderstorm": N_("thunderstorm"),
+        "cue.after_rain": N_("after the rain"), "cue.mist": N_("mist"),
     ]
+
+    /// Stretches of a spell (direction/episodes.json labels).
+    private static let segments = [
+        "clear": N_("clear"), "still air": N_("still air"), "breeze": N_("breeze"), "wind rising": N_("wind rising"),
+        "windy": N_("windy"), "wind easing": N_("wind easing"), "clouding over": N_("clouding over"), "drizzle": N_("drizzle"),
+        "darkening": N_("darkening"), "gust front": N_("gust front"), "downpour": N_("downpour"), "tapering off": N_("tapering off"),
+        "rain setting in": N_("rain setting in"), "steady rain": N_("steady rain"), "rain easing": N_("rain easing"),
+        "distant thunder": N_("distant thunder"), "calm before the storm": N_("calm before the storm"),
+        "the cell overhead": N_("the cell overhead"), "trailing rain": N_("trailing rain"),
+        "storm moving away": N_("storm moving away"), "after the rain": N_("after the rain"), "mist": N_("mist"),
+    ]
+
+    static func segment(_ raw: String) -> String { segments[raw].map(tr) ?? raw }
 
     static func option(_ raw: String) -> String {
         options[raw].map(tr) ?? raw.replacingOccurrences(of: "_", with: " ")
     }
 
     private static let units = [
-        "m/s": N_("m/s"), "m": N_("m"), "mm/h": N_("mm/h"), "kW": N_("kW"), "°C": N_("°C"), "°/s": N_("°/s"), "x": N_("x"),
+        "m/s": N_("m/s"), "m": N_("m"), "mm/h": N_("mm/h"), "kW": N_("kW"), "°C": N_("°C"), "°/s": N_("°/s"), "x": N_("x"), "min": N_("min"),
         "dB": N_("dB"), "LUFS": N_("LUFS"), "Hz": N_("Hz"),
     ]
 
@@ -773,6 +810,7 @@ private struct Drawer: View {
     let children: [Control]
     var hour: Float?
     let scrolls: Bool
+    var status: (() -> String?)?
     let set: (UInt32, Float) -> Void
     let close: () -> Void
     @State private var hoveringBack = false
@@ -814,6 +852,18 @@ private struct Drawer: View {
                     .fixedSize()
             }
             .frame(height: Popover.headerHeight)
+
+            if let status {
+                // Polled once a second, like the flight note: the spell moves on by itself.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(status() ?? "")
+                        .font(Ink.text(Ink.Size.caption))
+                        .foregroundStyle(Ink.ash)
+                        .lineLimit(1)
+                        .padding(.leading, Popover.iconColumn)
+                        .frame(maxWidth: .infinity, minHeight: Popover.childHeight / 2, alignment: .leading)
+                }
+            }
 
             let rows = VStack(spacing: 0) {
                 ForEach(children, id: \.id) { c in

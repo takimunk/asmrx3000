@@ -5,6 +5,7 @@
                    "storm": 0.0, "ground_z": -1.7 },
   "director": { "flock_interval": [60, 150],
                 "encounters": { "gap": [70, 230], "first": [40, 90], "lull_every": [180, 360], "lull": [20, 60], "songs": 1.0, "gusts": 1.0 } },
+  "direction": { "weather": 0.0, "energy": 0.0, "change": 0.35, "clock": 1.0, "hold_min": 20 },
   "entities": [
     { "kind": "river", "id": 50, "flow": 1.0, "segments": 8, "riffles": 0.35,
       "path": [[7.5, -14.0, -1.2], [8.0, -7.0, -1.2], [7.1, 0.0, -1.2], [7.9, 7.0, -1.2], [7.6, 14.0, -1.2]],

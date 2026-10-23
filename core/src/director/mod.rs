@@ -179,6 +179,14 @@ impl Director {
         self.encounters.as_ref()
     }
 
+    /// How lively encounters are, from the direction (1 = as the scene directs them; fewer
+    /// fly-bys in a downpour, more after it). No effect on undirected scenes.
+    pub fn set_liveliness(&mut self, l: f32) {
+        if let Some(e) = self.encounters.as_mut() {
+            e.set_liveliness(l);
+        }
+    }
+
     /// A gust to sweep the crowns, asked for by the encounter director (taken once).
     pub fn take_gust(&mut self) -> Option<f32> {
         self.gust.take()

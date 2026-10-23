@@ -122,6 +122,8 @@ pub struct Encounters {
     since: [f32; KINDS],
     last: Option<usize>,
     pending: Option<(Cue, usize)>,
+    /// From the direction: the wait for the next encounter runs this much faster.
+    liveliness: f32,
     /// Encounters cued so far, per kind; phrases let through.
     pub counts: [u32; KINDS],
     pub songs: u32,
@@ -146,6 +148,7 @@ impl Encounters {
             since: [f32::INFINITY; KINDS],
             last: None,
             pending: None,
+            liveliness: 1.0,
             counts: [0; KINDS],
             songs: 0,
         };
@@ -174,6 +177,11 @@ impl Encounters {
             return 0.0;
         }
         songs_per_min(env.hour) * self.desc.songs * (env.birds / 0.6).clamp(0.0, 1.67) * self.pulse
+    }
+
+    /// The direction's liveliness (1 = as directed; 0.2 in a downpour .. ~1.5 after rain).
+    pub fn set_liveliness(&mut self, l: f32) {
+        self.liveliness = if l.is_finite() { l.clamp(0.1, 4.0) } else { 1.0 };
     }
 
     /// May a resident start a phrase now?
@@ -222,7 +230,7 @@ impl Encounters {
         let rate = self.song_rate(env) / 60.0;
         self.tokens = (self.tokens + rate * dt).min(BUCKET);
 
-        self.next -= dt;
+        self.next -= dt * self.liveliness;
         if self.next > 0.0 || self.in_lull() {
             return None;
         }

@@ -46,6 +46,10 @@ pub struct SceneDesc {
     pub environment: EnvironmentDesc,
     #[serde(default)]
     pub director: DirectorDesc,
+    /// The world's own course: clock, weather spells, the brook after rain; steered by the
+    /// `direction.*` controls (direction/, docs/direction.md). Omitted = the scene stands still.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<crate::direction::DirectionDesc>,
     pub entities: Vec<EntityDesc>,
     /// Folder that relative clip file paths resolve against (clips.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
