@@ -9,7 +9,9 @@
 //! * **alarms**: a dragged tree, an owl flying past by day, a pigeon's clattering take-off
 //!   ([`Director::disturb`] for anything else) make birds scold or flee to cover;
 //! * **flocks**: several residents of one tree leave together along one shared path, in
-//!   formation.
+//!   formation;
+//! * **direction** (optional, encounters.rs): a song budget by hour, a slow pulse with lulls,
+//!   and the scene's encounters (fly-bys, circling, visitors, flocks, gusts) cued one at a time.
 //!
 //! Every control block the engine calls [`Director::step`], which moves bird entities in the
 //! [`World`] and writes their emitters' behavioural [`Controls`](crate::sources::Controls).
@@ -17,6 +19,7 @@
 
 mod agent;
 pub mod bridge;
+pub mod encounters;
 mod species;
 pub mod weather;
 mod voices;
@@ -28,6 +31,7 @@ pub use species::{
     bird_density_for_biome, day_phase, daylight, flight_motion, pick_species_for_biome, species_weights_for_biome, DayPhase, FlightStyle,
     Species, SpeciesDef, BIOMES,
 };
+pub use encounters::{Encounters, EncountersDesc};
 pub use weather::Weather;
 
 use crate::math::Vec3;
@@ -90,7 +94,18 @@ pub struct Director {
     /// Per tree: position last block; (metres dragged recently, seconds since the last drag).
     tree_pos: Vec<Vec3>,
     dragged: Vec<(f32, f32)>,
+    encounters: Option<Encounters>,
+    /// Song budget: seconds each agent has not sung.
+    quiet: Vec<f32>,
+    /// A gust the encounter director asked for (strength), for the engine's wind field.
+    gust: Option<f32>,
 }
+
+/// A directed scene keeps feeding birds (and their calls) this far from the listener, m.
+const PERSONAL_SPACE: f32 = 6.0;
+
+/// Residents that may take an allowed phrase: the ones quiet longest.
+const TURNS: usize = 3;
 
 /// Trees dragged further than this within a couple of seconds make their birds flee.
 const DRAG_FLEE_M: f32 = 4.0;
@@ -114,10 +129,21 @@ impl Director {
             }
         }
         let policy = desc.director.clone();
-        let flock_left = policy.first_flock.unwrap_or_else(|| {
-            let [a, b] = policy.flock_interval;
-            rng.range(a, b.max(a))
-        });
+        let encounters = policy.encounters.as_ref().map(|d| Encounters::new(d, desc.seed));
+        if encounters.is_some() {
+            for a in agents.iter_mut() {
+                a.set_directed();
+                a.set_personal_space(PERSONAL_SPACE);
+            }
+        }
+        let flock_left = if encounters.is_some() {
+            f32::INFINITY
+        } else {
+            policy.first_flock.unwrap_or_else(|| {
+                let [a, b] = policy.flock_interval;
+                rng.range(a, b.max(a))
+            })
+        };
         let thunder = world
             .entities
             .iter()
@@ -142,7 +168,20 @@ impl Director {
             was_singing: vec![false; n],
             tree_pos,
             dragged,
+            encounters,
+            quiet: vec![0.0; n],
+            gust: None,
         }
+    }
+
+    /// The encounter director, if the scene is directed.
+    pub fn encounters(&self) -> Option<&Encounters> {
+        self.encounters.as_ref()
+    }
+
+    /// A gust to sweep the crowns, asked for by the encounter director (taken once).
+    pub fn take_gust(&mut self) -> Option<f32> {
+        self.gust.take()
     }
 
     /// Something alarming happened at `at` (a predator, a loud event, the listener rushing
@@ -162,10 +201,45 @@ impl Director {
             let busy = world.emitters.get(a.emitter).is_some_and(|e| e.generator.busy());
             self.singing[i] = busy && a.on_song_post();
         }
+        // Song budget: count the phrases residents start; while the bucket is empty, every
+        // resident that is not singing waits (as for a singing neighbour). When a phrase is
+        // allowed, only the few birds that have been quiet longest may take it, so the budget
+        // is shared instead of going to whichever voice is quickest to start again.
+        let mut gate = true;
+        let mut turn = f32::NEG_INFINITY;
+        if let Some(enc) = self.encounters.as_mut() {
+            for i in 0..n {
+                self.quiet[i] = if self.singing[i] { 0.0 } else { self.quiet[i] + dt };
+                if self.singing[i] && !self.was_singing[i] && self.agents[i].is_resident() {
+                    enc.song_started();
+                }
+            }
+            gate = enc.gate_open();
+            if gate {
+                let mut top = [f32::NEG_INFINITY; TURNS];
+                for i in 0..n {
+                    let a = &self.agents[i];
+                    if !self.singing[i] && a.is_resident() && a.on_song_post() && a.last().activity > 0.05 {
+                        let q = self.quiet[i];
+                        if let Some(k) = top.iter().position(|t| q > *t) {
+                            top.copy_within(k..TURNS - 1, k + 1);
+                            top[k] = q;
+                        }
+                    }
+                }
+                turn = top.iter().copied().filter(|t| t.is_finite()).fold(f32::INFINITY, f32::min);
+                for i in 0..n {
+                    if !self.singing[i] && self.agents[i].is_resident() && self.quiet[i] >= turn {
+                        self.agents[i].give_turn();
+                    }
+                }
+            }
+        }
         for i in 0..n {
             let (sp, p) = (self.agents[i].species, self.agents[i].position());
             let range = sp.def().hearing;
-            let mut hold = false;
+            let resident = self.agents[i].is_resident();
+            let mut hold = self.encounters.is_some() && resident && (!gate || self.quiet[i] < turn);
             for j in 0..n {
                 if j != i && self.singing[j] && self.agents[j].species == sp && (self.agents[j].position() - p).length() < range {
                     hold = true;
@@ -330,6 +404,29 @@ impl Director {
             }
         }
         let env = &Environment { rain: env.rain.max(self.weather.rain_unit()), ..*env };
+        if let Some(enc) = self.encounters.as_mut() {
+            let agents = &self.agents;
+            let candidates = agents.iter().enumerate().filter(|(_, a)| a.waiting() && a.can_perform(env)).filter_map(|(i, a)| {
+                a.performance().map(|k| (i, [encounters::FLYBY, encounters::CIRCLE, encounters::VISITOR][k as usize]))
+            });
+            let ambient = self.weather.ambient(env);
+            let gusts_ok = env.wind > 0.15 && env.storm < 0.3 && ambient.rain_mm_h < 2.0;
+            if let Some(cue) = enc.step(dt, env, candidates, gusts_ok) {
+                let ok = match cue {
+                    encounters::Cue::Performer(i) => self.agents[i].cue(),
+                    encounters::Cue::Flock => self.flock_event(env, world),
+                    encounters::Cue::Gust(r) => {
+                        // 1.5–3 mean gusts at once: a wave of wind that is heard coming
+                        // through the crowns from upwind, passes and dies away downwind.
+                        self.gust = Some(1.5 + 1.5 * (r as f32 / u32::MAX as f32));
+                        true
+                    }
+                };
+                if let Some(enc) = self.encounters.as_mut() {
+                    enc.done(ok);
+                }
+            }
+        }
         self.flock_left -= dt;
         if self.flock_left <= 0.0 {
             let fired = self.flock_event(env, world);

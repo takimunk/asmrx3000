@@ -50,8 +50,14 @@ fn calibrated_source_levels_match_the_table() {
         let target = entry(SoundClass::Bird(Species::Chaffinch)).target_db;
         assert!((finch.2 - target).abs() < 2.5, "chaffinch (neural {neural}): LAFmax {:.1} vs {target}", finch.2);
     }
-    // A brook segment: LAeq at 1 m.
-    let e = Engine::new(SR);
+    // A brook segment: LAeq at 1 m (the classic pebble brook with natural riffles; the default
+    // scene's own river is placed and levelled for focus, docs/scenes/forest.md).
+    let e = Engine::from_json(
+        SR,
+        r#"{"name":"brook","seed":3000,"environment":{"time_of_day":9.0},"entities":[{"kind":"river","id":50,
+            "path":[[4.0,-10.0,-1.2],[4.5,-5.0,-1.2],[3.6,0.0,-1.2],[4.4,5.0,-1.2],[4.1,10.0,-1.2]]}]}"#,
+    )
+    .unwrap();
     e.set_param(param::PLAYING, 1.0);
     e.set_param(param::BIRDS, 0.0);
     e.set_control(id::MIX_CLARITY, 0.0);

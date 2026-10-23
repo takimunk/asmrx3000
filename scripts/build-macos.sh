@@ -41,7 +41,7 @@ mkdir -p "$APP/Contents/Resources/scenes" "$APP/Contents/Resources/sounds"
 # The scenes the picker offers (Scenes.swift; the *_real variants on field recordings are
 # kept in the repo for comparison but not shipped), and only the sound files they use.
 # The .wav files are not in git: fetch them first (assets/sounds/SOURCES.md, tools/).
-SCENES=(forest_river forest_waterfall underwater_drift space_still demo_flyby open_country)
+SCENES=(forest_river underwater_drift space_still demo_flyby open_country)
 for s in "${SCENES[@]}"; do cp "$ROOT/core/scenes/$s.json" "$APP/Contents/Resources/scenes/"; done
 missing=$(cd "$APP/Contents/Resources/scenes" && grep -ho '"[^"]*\.wav"' *.json | tr -d '"' | sort -u | while read -r f; do
   if [[ -f "$ROOT/assets/sounds/$f" ]]; then

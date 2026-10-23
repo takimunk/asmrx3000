@@ -328,8 +328,9 @@ fn engine_run(e: &crate::Engine, secs: f32, mut f: impl FnMut(f32, &[BirdInfo], 
 #[test]
 fn neighbours_take_turns_and_answer() {
     // Robins and blackbirds at dawn: same-species neighbours take turns (wait while the
-    // other sings, answer when it stops), so they overlap far less than chance.
-    let e = crate::Engine::new(48_000.0);
+    // other sings, answer when it stops), so they overlap far less than chance. (The forest
+    // without its song budget, so each bird sings often enough to measure.)
+    let e = crate::Engine::with_scene(48_000.0, &undirected_forest()).unwrap();
     e.set_param(crate::param::PLAYING, 1.0);
     e.set_param(crate::param::TIME_OF_DAY, 5.2);
     let song = |b: &BirdInfo| b.flags & bird_flags::VOCAL != 0 && b.flags & bird_flags::CALLING == 0;
@@ -412,7 +413,7 @@ fn bird_telemetry_through_the_c_abi() {
     let mut info = [BirdInfo::default(); 64];
     // SAFETY: live engine, writable buffer of 64.
     let n = unsafe { crate::asmr_get_birds(&e, info.as_mut_ptr(), 64) } as usize;
-    assert_eq!(n, 13);
+    assert_eq!(n, 15);
     let mut objs = [crate::ObjectInfo::default(); 64];
     let no = e.objects(&mut objs);
     for b in &info[..n] {
@@ -434,4 +435,86 @@ fn blackbird_sings_with_its_neural_voice() {
         let expect = matches!(s, Species::Chaffinch | Species::Robin | Species::SongThrush | Species::Nightingale | Species::Blackbird);
         assert_eq!(neural, expect, "{s:?}");
     }
+}
+
+fn undirected_forest() -> SceneDesc {
+    let mut d = SceneDesc::from_json(crate::scene::DEFAULT_SCENE_JSON).unwrap();
+    d.director.encounters = None;
+    d
+}
+
+/// Renders the default (directed) forest at `hour` for `secs`, sampling the encounter
+/// director every second: (pulse, lull, phrases so far).
+fn directed_run(hour: f32, secs: f32) -> Vec<(f32, bool, u32)> {
+    let e = crate::Engine::new(48_000.0);
+    e.set_param(crate::param::PLAYING, 1.0);
+    e.set_param(crate::param::TIME_OF_DAY, hour);
+    let (mut l, mut r) = (vec![0.0f32; 480], vec![0.0f32; 480]);
+    let mut out = Vec::new();
+    for k in 0..(secs * 100.0) as usize {
+        e.render(&mut l, &mut r);
+        if k % 100 == 99 {
+            out.push(e.with_director(|d| {
+                let enc = d.encounters().expect("the default forest is directed");
+                (enc.pulse(), enc.in_lull(), enc.songs)
+            }));
+        }
+    }
+    out
+}
+
+#[test]
+fn directed_forest_keeps_song_density_for_focus() {
+    // docs/scenes/forest.md: 4–10 phrases a minute by day (the undirected forest sang ~40),
+    // more at dawn, fewer at midday; lulls of birdsong every few minutes.
+    let rate = |hour: f32| {
+        let run = directed_run(hour, 300.0);
+        let songs = run.last().unwrap().2 - run[59].2;
+        let lulls = run.windows(2).filter(|w| w[1].1 && !w[0].1).count();
+        (songs as f32 / 4.0, lulls)
+    };
+    let (day, lulls) = rate(9.0);
+    assert!((4.0..=11.0).contains(&day), "09:00: {day:.1} phrases/min");
+    assert!(lulls >= 1, "no lull in 5 min");
+    let (dawn, _) = rate(5.3);
+    let (noon, _) = rate(13.0);
+    assert!(dawn > day && day > noon, "dawn {dawn:.1}, 09:00 {day:.1}, 13:00 {noon:.1}");
+    assert!(noon >= 2.0, "13:00: {noon:.1} phrases/min");
+}
+
+#[test]
+fn encounters_are_spaced_and_varied() {
+    // Over 40 min: a handful of encounters, never closer than ~a minute, never the same kind
+    // twice in a row, and more than two kinds.
+    // (The director alone: cues do not depend on the voices.)
+    let mut sim = Sim::default_scene();
+    let env = Environment { hour: 9.0, ..Default::default() };
+    let mut times = Vec::new();
+    let mut kinds = Vec::new();
+    let mut last = [0u32; encounters::KINDS];
+    let mut director_counts = |t: f32, d: &Director| {
+        let c = d.encounters().unwrap().counts;
+        for k in 0..encounters::KINDS {
+            if c[k] > last[k] {
+                times.push(t);
+                kinds.push(k);
+            }
+        }
+        last = c;
+    };
+    while sim.t < 2400.0 {
+        sim.run(1.0, &env, |_, _| {});
+        director_counts(sim.t, &sim.director);
+    }
+    let n = kinds.len();
+    assert!((8..=30).contains(&n), "{n} encounters in 40 min: {kinds:?}");
+    for w in times.windows(2) {
+        assert!(w[1] - w[0] >= 45.0, "encounters {:.0} s apart", w[1] - w[0]);
+    }
+    for w in kinds.windows(2) {
+        assert_ne!(w[0], w[1], "same kind twice in a row: {kinds:?}");
+    }
+    let mut seen = [false; encounters::KINDS];
+    kinds.iter().for_each(|k| seen[*k] = true);
+    assert!(seen.iter().filter(|s| **s).count() >= 3, "kinds {kinds:?}");
 }
