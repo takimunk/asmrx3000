@@ -345,7 +345,7 @@ enum Shaders {
 
         float day = F.env.x;
         // A dark, misty picture: by day a dusk-grey haze, by night nearly black. Kept low, the
-        // same in every scene (forest, waterfall, underwater, space), so the contours carry it.
+        // same in every scene (forest, underwater, space), so the contours carry it.
         float dim = mix(0.45, 0.80, day);
         float fogC = mix(0.035, 0.17, day);
         float skyTop = mix(0.018, 0.075, day);

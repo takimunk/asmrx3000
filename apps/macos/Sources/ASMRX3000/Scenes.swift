@@ -16,7 +16,6 @@ struct SceneEntry: Identifiable, Equatable {
 
     static let all: [SceneEntry] = [
         SceneEntry(id: "forest", title: "Лес", file: nil),
-        SceneEntry(id: "waterfall", title: "Водопад", file: "forest_waterfall.json"),
         SceneEntry(id: "underwater", title: "Под водой", file: "underwater_drift.json"),
         SceneEntry(id: "space", title: "Космос", file: "space_still.json"),
     ]
