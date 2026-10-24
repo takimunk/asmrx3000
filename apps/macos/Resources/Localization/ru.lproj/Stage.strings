@@ -72,3 +72,11 @@
 "moored boats" = "яхты на стоянке";
 "rigging in the wind" = "такелаж на ветру";
 "gull" = "чайка";
+
+/* Campfire by the sea */
+"flames" = "пламя";
+"log" = "полено";
+"damp driftwood" = "сырой плавник";
+"breakers" = "прибой";
+"wave" = "волна";
+"curlew" = "кроншнеп";

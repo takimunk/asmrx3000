@@ -247,6 +247,17 @@ struct ClipRule {
         ClipRule(files: ["chain"], .prop(.chain)),
         ClipRule(files: ["gull"], .prop(.gull)),
         ClipRule(group: "bay", model: "water", .prop(.sea)),
+        // Campfire by the sea
+        ClipRule(files: ["campfire_crackle_ccby"], .prop(.campfire)),
+        ClipRule(files: ["campfire_crackle"], .prop(.sparks)),
+        ClipRule(files: ["campfire_flare", "campfire_bonfire"], .prop(.flames)),
+        ClipRule(group: "embers", model: "fire", .prop(.embers)),
+        ClipRule(files: ["campfire_log"], .prop(.driftLog)),
+        ClipRule(files: ["campfire_damp"], .prop(.steam)),
+        ClipRule(files: ["shore_breakers"], .prop(.sea)),
+        ClipRule(files: ["shore_wave"], .prop(.surf)),
+        ClipRule(files: ["shore_curlew"], .prop(.curlew)),
+        ClipRule(group: "grass", model: "foliage", .prop(.duneGrass)),
         // Weather from the procedural models, anywhere.
         ClipRule(model: "wind", .prop(.wind)),
         ClipRule(model: "rain", .prop(.rain)),

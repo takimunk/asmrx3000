@@ -614,6 +614,12 @@ enum ControlText {
         "cue.flat_calm": N_("flat calm"),
         "cue.tide_turns": N_("tide turns"),
         "cue.dawn": N_("dawn"),
+        // Campfire by the sea.
+        "cue.kindling": N_("kindling"),
+        "cue.steady_fire": N_("steady fire"),
+        "cue.low_embers": N_("low embers"),
+        "cue.rising_tide": N_("rising tide"),
+        "cue.before_dawn": N_("before dawn"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -727,6 +733,20 @@ enum ControlText {
         "first light": N_("first light"),
         "dawn over the bay": N_("dawn over the bay"),
         "morning settles": N_("morning settles"),
+        // Campfire by the sea.
+        "kindling catches": N_("kindling catches"),
+        "the fire takes": N_("the fire takes"),
+        "a good blaze": N_("a good blaze"),
+        "a steady fire": N_("a steady fire"),
+        "the fire burns down": N_("the fire burns down"),
+        "the tide turns": N_("the tide turns"),
+        "high water": N_("high water"),
+        "the tide eases": N_("the tide eases"),
+        "a breeze off the sea": N_("a breeze off the sea"),
+        "breezy": N_("breezy"),
+        "the breeze drops": N_("the breeze drops"),
+        "the fire dies down": N_("the fire dies down"),
+        "embers before dawn": N_("embers before dawn"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -816,6 +836,10 @@ enum ControlText {
         "Swell": N_("Swell"),
         "Tide": N_("Tide"),
         "Wind": N_("Wind"),
+        // Campfire by the sea.
+        "Fire": N_("Fire"), "Surf": N_("Surf"), "Wind": N_("Wind"), "Night life": N_("Night life"),
+        "Crackle": N_("Crackle"), "Flames": N_("Flames"), "Embers": N_("Embers"), "Driftwood": N_("Driftwood"),
+        "Dune grass": N_("Dune grass"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

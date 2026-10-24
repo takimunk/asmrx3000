@@ -23,7 +23,7 @@ struct PropLook {
     static func ghost(_ p: Prop) -> Float {
         switch p {
         case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches,
-             .stream, .ripples, .splash:
+             .stream, .ripples, .splash, .flames, .sparks, .steam:
             return ClipPiece.faint
         default:
             return 0
@@ -106,6 +106,14 @@ struct PropLook {
         case .stalagmite: return PropLook(size: 0.32, face: .still)
         case .pebbles: return PropLook(size: 0.3, face: .motion)
         case .stream: return PropLook(size: 0.8, face: .across)
+        case .campfire: return PropLook(size: 0.6, face: .still)
+        case .flames: return PropLook(size: 0.5, face: .still)
+        case .sparks: return PropLook(size: 0.45, face: .still)
+        case .embers: return PropLook(size: 0.3, face: .still)
+        case .driftLog: return PropLook(size: 0.3, face: .still)
+        case .steam: return PropLook(size: 0.26, face: .still)
+        case .duneGrass: return PropLook(size: 0.45, face: .still)
+        case .curlew: return PropLook(size: 0.55, face: .listener)
         }
     }
 }
@@ -322,6 +330,26 @@ extension ClipActors {
             // A solid bead in a faint hoop of glow.
             put(PropMeshes.bead, root)
             put(PropMeshes.beadGlow, root * M4.rotZ(t * 0.6 + ph), ghost: ClipPiece.veryFaint)
+
+        case .flames:
+            // Taller as the fire sounds louder, licking upward at the flame's flicker rate.
+            let lick = 0.82 + 0.5 * level + 0.08 * sin(t * 9 + ph) + 0.05 * sin(t * 13.7 + 2 * ph)
+            put(PropMeshes.flames, M4.move(p) * M4.rotZ(0.3 * sin(t * 0.7 + ph)) * M4.scale(SIMD3(s, s, s * lick)))
+
+        case .sparks:
+            let rise = (t * 0.35 + ph).truncatingRemainder(dividingBy: 1) * 0.13
+            put(PropMeshes.sparks, root * M4.move(SIMD3(0, 0, rise)) * M4.rotZ(t * 0.2))
+
+        case .steam:
+            put(PropMeshes.steam, root * M4.rotZ(0.25 * sin(t * 0.6 + ph)) * M4.scale(SIMD3(1, 1, 0.7 + 0.5 * level)))
+
+        case .duneGrass:
+            // A tuft at each emitter, swaying in the breeze off the sea.
+            for (k, e) in emitters().enumerated() {
+                let q = ClipSpace.map(e)
+                let sway = 0.06 + 0.1 * level
+                put(PropMeshes.duneGrass, M4.move(q) * M4.rotZ(Float(k) * 1.9) * M4.rotY(sway * sin(t * 1.4 + Float(k) * 1.3)) * M4.scale(s))
+            }
 
         case .plasma, .marker:
             put(PropMeshes.mesh(prop), root * M4.rotZ(t * (prop == .plasma ? 0.05 : 0.6) + ph))
