@@ -417,6 +417,35 @@
 "whales close" = "киты рядом";
 "whisking the tea" = "взбиваем чай";
 
+/* The yacht at anchor: the scene, its groups and levers, its spells and their stretches. */
+"Yacht at anchor" = "Яхта на якоре";
+"Anchor chain" = "Якорная цепь";
+"Bay" = "Бухта";
+"Creaks" = "Скрипы";
+"Dawn" = "Рассвет";
+"Gulls" = "Чайки";
+"Gusts" = "Порывы";
+"Halyard" = "Фал";
+"Harbour" = "Гавань";
+"Hull" = "Борт";
+"Moored boats" = "Яхты на стоянке";
+"Rigging" = "Такелаж";
+"Slaps" = "Шлепки волн";
+"Swell" = "Зыбь";
+"Tide" = "Течение";
+"flat calm" = "штиль";
+"tide turns" = "смена течения";
+"a still night at anchor" = "тихая ночь на якоре";
+"a breeze picks up" = "поднимается бриз";
+"a fresh night breeze" = "свежий ночной бриз";
+"the breeze dies away" = "бриз стихает";
+"slack water" = "стоячая вода";
+"the boat swings to the tide" = "яхту разворачивает по течению";
+"lying to the new tide" = "стоим по новому течению";
+"first light" = "первый свет";
+"dawn over the bay" = "рассвет над бухтой";
+"morning settles" = "утро";
+
 "levels" = "громкость";
 "levers" = "рычаги";
 "Fold %@" = "Свернуть: %@";

@@ -231,6 +231,16 @@ struct ClipRule {
         ClipRule(group: "guide", .prop(.bead)),
         ClipRule(files: ["bowl_strike"], .prop(.singingBowl)),
         ClipRule(files: ["tingsha"], .prop(.tingsha)),
+        // Yacht at anchor ("bay_halyards" before "halyard": it holds "_halyard").
+        ClipRule(files: ["bay_halyards", "bay_rigging"], .prop(.mooredYacht)),
+        ClipRule(files: ["cabin_lap", "hull_slap"], .prop(.ripples)),
+        ClipRule(files: ["hull_cluck"], .prop(.splash)),
+        ClipRule(files: ["cabin_creak"], .prop(.joinery)),
+        ClipRule(files: ["rope_creak"], .prop(.cleat)),
+        ClipRule(files: ["halyard"], .prop(.halyard)),
+        ClipRule(files: ["chain"], .prop(.chain)),
+        ClipRule(files: ["gull"], .prop(.gull)),
+        ClipRule(group: "bay", model: "water", .prop(.sea)),
         // Weather from the procedural models, anywhere.
         ClipRule(model: "wind", .prop(.wind)),
         ClipRule(model: "rain", .prop(.rain)),

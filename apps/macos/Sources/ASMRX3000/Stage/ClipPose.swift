@@ -22,7 +22,8 @@ struct PropLook {
     /// Effects and phenomena (wind, rain, cracks, a far flash) are see-through; things are solid.
     static func ghost(_ p: Prop) -> Float {
         switch p {
-        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches:
+        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches,
+             .ripples, .splash:
             return ClipPiece.faint
         default:
             return 0
@@ -91,6 +92,14 @@ struct PropLook {
         case .bead: return PropLook(size: 0.17, face: .still)
         case .singingBowl: return PropLook(size: 0.4, face: .still)
         case .tingsha: return PropLook(size: 0.22, face: .listener)
+        case .ripples: return PropLook(size: 0.55, face: .listener)
+        case .splash: return PropLook(size: 0.3, face: .still)
+        case .joinery: return PropLook(size: 0.3, face: .listener)
+        case .cleat: return PropLook(size: 0.3, face: .still)
+        case .halyard: return PropLook(size: 0.45, face: .still)
+        case .chain: return PropLook(size: 0.6, face: .still)
+        case .mooredYacht: return PropLook(size: 1.5, face: .still)
+        case .gull: return PropLook(size: 0.4, face: .motion)
         case .marker: return PropLook(size: 0.13, face: .still)
         }
     }
@@ -244,6 +253,31 @@ extension ClipActors {
 
         case .bogie:
             put(PropMeshes.bogie, M4.move(p) * M4.scale(s))
+
+        case .ripples:
+            // Wavelets at the hull rising and falling with the roll.
+            put(PropMeshes.ripples, root * M4.move(SIMD3(0, 0, 0.1 + 0.08 * sin(t * 1.09 + ph))) * M4.scale(SIMD3(1, 1, 1 + 0.2 * level)))
+
+        case .chain, .cleat:
+            // Along the boat (+x to the bow), as the set's chain runs.
+            put(PropMeshes.mesh(prop), M4.move(p) * M4.scale(s))
+
+        case .halyard:
+            // The stretch of mast stays; the line swings off it with the roll.
+            let up = M4.move(p) * M4.rotZ(.pi / 2) * M4.scale(s)
+            put(PropMeshes.halyardMast, up)
+            put(PropMeshes.halyardLine, up * M4.move(SIMD3(0, 0, 1)) * M4.rotY(0.25 * sin(t * 1.09 + ph)) * M4.move(SIMD3(0, 0, -1)))
+
+        case .mooredYacht:
+            // Head to the wind, rocking at its mooring.
+            put(PropMeshes.mooredYacht, M4.move(p) * M4.rotZ(0.4 + 0.1 * Float(id % 3)) * M4.rotX(0.06 * sin(t * 1.1 + ph)) * M4.scale(s))
+
+        case .gull:
+            // Gliding on long wings, now and then a slow beat.
+            let beat = 0.35 * sin(t * 2.4 + ph) * max(sin(t * 0.3 + ph), 0) + 0.12
+            put(PropMeshes.gullBody, root)
+            put(PropMeshes.gullWing, root * M4.move(SIMD3(0.05, 0.05, 0.03)) * M4.rotX(beat))
+            put(PropMeshes.gullWing, root * M4.move(SIMD3(0.05, -0.05, 0.03)) * M4.scale(SIMD3(1, -1, 1)) * M4.rotX(beat))
 
         case .skater:
             put(PropMeshes.skater, root * M4.rotX(0.18 * sin(t * 1.1 + ph)))

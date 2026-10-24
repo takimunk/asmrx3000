@@ -602,6 +602,10 @@ enum ControlText {
         "cue.station": N_("a stop"),
         "cue.still_night": N_("still night"),
         "cue.whisking": N_("whisking"),
+        // The yacht at anchor ("breeze" and "still night" are above).
+        "cue.flat_calm": N_("flat calm"),
+        "cue.tide_turns": N_("tide turns"),
+        "cue.dawn": N_("dawn"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -694,6 +698,17 @@ enum ControlText {
         "tunnels and bridges": N_("tunnels and bridges"),
         "whales close": N_("whales close"),
         "whisking the tea": N_("whisking the tea"),
+        // The yacht at anchor.
+        "a still night at anchor": N_("a still night at anchor"),
+        "a breeze picks up": N_("a breeze picks up"),
+        "a fresh night breeze": N_("a fresh night breeze"),
+        "the breeze dies away": N_("the breeze dies away"),
+        "slack water": N_("slack water"),
+        "the boat swings to the tide": N_("the boat swings to the tide"),
+        "lying to the new tide": N_("lying to the new tide"),
+        "first light": N_("first light"),
+        "dawn over the bay": N_("dawn over the bay"),
+        "morning settles": N_("morning settles"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -758,6 +773,22 @@ enum ControlText {
         "Tower": N_("Tower"),
         "Tunnels": N_("Tunnels"),
         "Vastness": N_("Vastness"),
+        // The yacht at anchor.
+        "Anchor chain": N_("Anchor chain"),
+        "Bay": N_("Bay"),
+        "Creaks": N_("Creaks"),
+        "Dawn": N_("Dawn"),
+        "Gulls": N_("Gulls"),
+        "Gusts": N_("Gusts"),
+        "Halyard": N_("Halyard"),
+        "Harbour": N_("Harbour"),
+        "Hull": N_("Hull"),
+        "Moored boats": N_("Moored boats"),
+        "Rigging": N_("Rigging"),
+        "Slaps": N_("Slaps"),
+        "Swell": N_("Swell"),
+        "Tide": N_("Tide"),
+        "Wind": N_("Wind"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

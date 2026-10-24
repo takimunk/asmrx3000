@@ -85,6 +85,8 @@ enum Icon: Hashable {
     case course
     // The newer scenes: lighthouse, night train, singing ice, tea house.
     case light, lamp, tower, bell, fog, horn, rumble, rail, train, bridge, tunnel, cup, tea, ice, crack, owl, distance
+    // The yacht at anchor.
+    case boat, mast, anchor, gull
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -181,6 +183,10 @@ enum Icon: Hashable {
         case "crack": return .crack
         case "owl": return .owl
         case "distance": return .distance
+        case "boat": return .boat
+        case "mast": return .mast
+        case "anchor": return .anchor
+        case "gull": return .gull
         case "fire": return .flame
         case "thunder", "storm": return .bolt
         case "temperature": return .thermometer
@@ -581,6 +587,35 @@ enum Icon: Hashable {
                 Stroke(d: "M12 20 V18.5 M12 16.5 V14.5", opacity: 0.7),
                 Stroke(d: "M12 6 V9 M10.5 7.5 H13.5", opacity: 0.45),
             ]
+        case .boat:
+            // A small sailing yacht's hull from the side, its cabin top and the mast's foot.
+            return [
+                Stroke(d: "M2.5 13 H21.5 L19.5 17.5 C16 18.6 8 18.6 4.5 17.5 Z"),
+                Stroke(d: "M8 13 V11 H15.5 L17 13", opacity: 0.8),
+                Stroke(d: "M12 11 V4", opacity: 0.55),
+                Stroke(d: "M3 21 C5 20 7 22 9 21 C11 20 13 22 15 21 C17 20 19 22 21 21", opacity: 0.45),
+            ]
+        case .mast:
+            // A mast with its spreaders and shrouds, a halyard down its side.
+            return [
+                Stroke(d: "M12 2.5 V21.5"),
+                Stroke(d: "M8.5 9 H15.5", opacity: 0.85),
+                Stroke(d: "M12 2.5 L8.5 9 L5.5 21.5 M12 2.5 L15.5 9 L18.5 21.5", opacity: 0.55),
+                Stroke(d: "M12.8 3.5 C13.6 9 13.1 14 13.7 18.5", opacity: 0.7),
+            ]
+        case .anchor:
+            return [
+                Stroke(d: Icon.circle(12, 4.6, 1.6)),
+                Stroke(d: "M12 6.2 V20.5 M8.5 9.5 H15.5"),
+                Stroke(d: "M4.5 14.5 C5 18.5 8.5 20.5 12 20.5 C15.5 20.5 19 18.5 19.5 14.5", opacity: 0.85),
+                Stroke(d: "M3.5 16 L4.5 14.5 L6.2 15.4 M20.5 16 L19.5 14.5 L17.8 15.4", opacity: 0.7),
+            ]
+        case .gull:
+            return [
+                Stroke(d: "M2.5 11 C5.5 8 8.5 8.5 12 12.5 C15.5 8.5 18.5 8 21.5 11"),
+                Stroke(d: "M11 12.8 L12 14 L13 12.8", opacity: 0.7),
+                Stroke(d: "M4 19 C7 18 9 20 12 19 C15 18 17 20 20 19", opacity: 0.45),
+            ]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -615,7 +650,7 @@ extension Icon {
              .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma,
              .ship, .station, .docking, .radio, .reef, .course,
              .light, .lamp, .tower, .bell, .fog, .horn, .rumble, .rail, .train, .bridge, .tunnel, .cup, .tea, .ice, .crack, .owl,
-             .distance: return nil
+             .distance, .boat, .mast, .anchor, .gull: return nil
         }
     }
 }

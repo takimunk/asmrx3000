@@ -21,6 +21,8 @@ enum Prop: CaseIterable {
     case kettle, brazier, cloth, ladle, whisk, host, teaBowl, eaves, basin, shishi, chime, templeBell
     // Body scan
     case bead, singingBowl, tingsha
+    // Yacht at anchor
+    case ripples, splash, joinery, cleat, halyard, chain, mooredYacht, gull
     /// A bed that is no object (a hum, a room tone): a small gimbal of two hoops.
     case marker
 }
@@ -106,6 +108,14 @@ enum PropMeshes {
         case .bead: return bead
         case .singingBowl: return singingBowl
         case .tingsha: return tingsha
+        case .ripples: return ripples
+        case .splash: return splash
+        case .joinery: return joinery
+        case .cleat: return cleat
+        case .halyard: return halyardLine
+        case .chain: return chain
+        case .mooredYacht: return mooredYacht
+        case .gull: return gullBody
         case .marker: return marker
         }
     }
@@ -904,6 +914,94 @@ enum PropMeshes {
                    at: M4.move(v(0, 0.3 * s, 0)) * M4.rotX(-s * .pi / 2 * 0.85))
         }
         b.path([v(0, 0.4, 0), v(0, 0.35, 0.35), v(0, 0, 0.5), v(0, -0.35, 0.35), v(0, -0.4, 0)], 0.015, segs: 4, part: MID)
+    }
+
+    // MARK: Yacht at anchor
+
+    /// Water lapping at the hull, facing +x (towards the listener): three low arcs of wavelet
+    /// on the surface, nearest the brightest.
+    static let ripples = make { b in
+        for (k, r) in [Float(0.35), 0.62, 0.9].enumerated() {
+            b.hoop(r, 0.035 - 0.008 * Float(k), segs: 14, from: -1.0, to: 1.0, part: Part.water)
+        }
+        b.hoop(0.18, 0.03, segs: 10, from: -1.2, to: 1.2, part: LIGHT)
+    }
+
+    /// A cluck under the hull: a ring on the water and a few drops thrown up.
+    static let splash = make { b in
+        b.hoop(0.55, 0.03, segs: 18, part: Part.water)
+        var rng = SeededGenerator(41)
+        for _ in 0..<6 {
+            let a = rng.next() * 6.28, r = 0.1 + 0.25 * rng.next(), z = 0.15 + 0.45 * rng.next()
+            b.ball(v(r * cos(a), r * sin(a), z), 0.05, part: LIGHT, squash: v(0.8, 0.8, 1.4))
+        }
+    }
+
+    /// A wooden knee of the cabin's joinery: a frame post, a beam and the bracket between them.
+    static let joinery = make { b in
+        b.box(v(0, 0, 0), v(0.12, 0.12, 1.5), part: MID)
+        b.box(v(0, 0.55, 0.69), v(0.12, 1.1, 0.12), part: MID)
+        b.box(v(0, 0.28, 0.42), v(0.08, 0.6, 0.08), part: LIGHT, rot: M4.rotX(-0.78))
+        for z: Float in [-0.4, 0.1] { b.ball(v(0.07, 0, z), 0.035, part: DARK) }
+    }
+
+    /// A horn cleat on the foredeck with the snubber line made fast round it, leading forward (+x).
+    static let cleat = make { b in
+        b.box(v(0, 0, -0.08), v(0.24, 0.16, 0.16), part: MID)
+        b.rod(v(-0.5, 0, 0.06), v(0.5, 0, 0.06), 0.06, 0.04, segs: 8, part: LIGHT)
+        b.path([v(0.5, 0.0, 0.05), v(0.25, 0.14, 0.12), v(-0.25, -0.14, 0.12), v(-0.4, 0.1, 0.06), v(0.2, 0.15, 0.04),
+                v(0.7, 0.05, -0.05), v(1.0, 0, -0.25)], 0.035, segs: 5, part: LIGHT)
+    }
+
+    /// A halyard against the mast: the stretch of mast (along z), the line hanging beside it with
+    /// its shackle; the line swings (posed in ClipPose).
+    static let halyardMast = make { b in
+        b.rod(v(0, 0, -1), v(0, 0, 1), 0.09, segs: 10, part: MID)
+        b.box(v(-0.08, 0, 0), v(0.04, 0.06, 2.0), part: DARK)
+    }
+
+    static let halyardLine = make { b in
+        b.path([v(0.12, 0, 1), v(0.16, 0, 0.3), v(0.2, 0, -0.4)], 0.018, segs: 4, part: LIGHT)
+        b.hoop(0.06, 0.018, segs: 10, part: LIGHT, at: M4.move(v(0.2, 0, -0.47)) * M4.rotX(.pi / 2))
+    }
+
+    /// The anchor chain over the bow roller and down to the sand, along +x and down: links
+    /// turned alternately.
+    static let chain = make { b in
+        b.rod(v(-0.15, 0, 0.0), v(0.15, 0, 0.0), 0.08, segs: 10, part: MID)
+        var p = v(0.0, 0, 0.1)
+        for i in 0..<14 {
+            let u = Float(i) / 13
+            let q = v(0.12 + 1.6 * u, 0, 0.1 - 1.1 * (1 - (1 - u) * (1 - u)))
+            let d = simd_normalize(q - p)
+            let m = M4.move((p + q) / 2) * M4.facing(d) * (i % 2 == 0 ? matrix_identity_float4x4 : M4.rotX(.pi / 2))
+            b.hoop(0.07, 0.016, segs: 10, part: LIGHT, at: m * M4.scale(v(1.4, 1, 1)) * M4.rotX(.pi / 2))
+            p = q
+        }
+    }
+
+    /// Another yacht moored in the bay: hull, cabin top, mast and forestay, along x.
+    static let mooredYacht = make { b in
+        b.lathe([(0.75, 0.01, 0.02, 0.0), (0.55, 0.13, 0.08, 0.0), (0.0, 0.2, 0.1, 0.0), (-0.55, 0.18, 0.09, 0.01), (-0.72, 0.15, 0.08, 0.02)],
+                segs: 8, part: MID)
+        b.box(v(-0.05, 0, 0.12), v(0.5, 0.22, 0.08), part: LIGHT)
+        b.rod(v(0.1, 0, 0.1), v(0.1, 0, 1.25), 0.016, segs: 5, part: LIGHT)
+        b.rod(v(0.1, 0, 1.2), v(0.72, 0, 0.06), 0.006, segs: 4, part: LIGHT)
+        b.rod(v(0.1, 0, 1.25), v(-0.7, 0, 0.1), 0.006, segs: 4, part: LIGHT)
+        b.rod(v(0.1, 0, 0.35), v(-0.5, 0, 0.38), 0.014, segs: 4, part: LIGHT)
+    }
+
+    /// A gull: the body along x (head forward), the wings separate (they beat).
+    static let gullBody = make { b in
+        b.lathe([(0.45, 0.01, 0.01, 0.02), (0.36, 0.05, 0.05, 0.02), (0.2, 0.08, 0.08, 0.0), (-0.15, 0.08, 0.07, 0.0),
+                 (-0.42, 0.03, 0.02, 0.02)], segs: 8, part: LIGHT)
+        b.rod(v(0.45, 0, 0.02), v(0.55, 0, 0.0), 0.012, 0.004, segs: 4, part: DARK)
+    }
+
+    /// The left wing (+y) from the shoulder; mirrored for the right.
+    static let gullWing = make { b in
+        b.sheet([v2(0.1, 0.0), v2(0.12, 0.35), v2(0.0, 0.75), v2(-0.18, 0.9), v2(-0.12, 0.45), v2(-0.12, 0.0)], 0.02,
+                at: .zero, u: X, v: Y, part: LIGHT)
     }
 
     /// Two hoops at right angles about a pip.

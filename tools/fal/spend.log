@@ -240,3 +240,17 @@
 2026-10-23 16:54:47	el2	guide_air_el2_2.wav	22s	$0.0440
 2026-10-23 16:54:57	el2	kettle_simmer_el2_1.wav	22s	$0.0440
 2026-10-23 16:56:11	el2	guide_warm_el2_2.wav	22s	$0.0440
+2026-10-24 10:40:24	el2	yacht_halyard_tick_el2_1.wav	10s	$0.0200
+2026-10-24 10:40:33	el2	yacht_halyard_tick_el2_2.wav	10s	$0.0200
+2026-10-24 10:40:50	el2	yacht_halyard_tick_el2_3.wav	10s	$0.0200
+2026-10-24 10:40:58	el2	yacht_halyard_rattle_el2_1.wav	8s	$0.0160
+2026-10-24 10:41:04	el2	yacht_halyard_rattle_el2_2.wav	8s	$0.0160
+2026-10-24 10:41:10	el2	yacht_chain_grumble_el2_1.wav	8s	$0.0160
+2026-10-24 10:41:15	el2	yacht_chain_grumble_el2_2.wav	8s	$0.0160
+2026-10-24 10:41:24	el2	yacht_chain_grumble_el2_3.wav	8s	$0.0160
+2026-10-24 10:41:29	el2	yacht_cabin_creak_el2_1.wav	5s	$0.0100
+2026-10-24 10:41:38	el2	yacht_cabin_creak_el2_2.wav	5s	$0.0100
+2026-10-24 10:41:44	el2	yacht_cabin_creak_el2_3.wav	5s	$0.0100
+2026-10-24 10:41:49	el2	yacht_hull_cluck_el2_1.wav	4s	$0.0080
+2026-10-24 10:41:55	el2	yacht_hull_cluck_el2_2.wav	4s	$0.0080
+2026-10-24 10:42:01	el2	yacht_hull_cluck_el2_3.wav	4s	$0.0080
