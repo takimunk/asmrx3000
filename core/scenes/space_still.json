@@ -1,450 +1,1101 @@
 {
- "name": "Deep space",
- "seed": 5200,
- "environment": {
-  "time_of_day": 0.0,
-  "rain_mm_h": 0.0,
-  "wind_ms": 0.0,
-  "storm": 0.0,
-  "temperature_c": 15.0,
-  "humidity": 0.5,
-  "ground_z": -40.0
- },
- "entities": [
-  {
-   "kind": "clip",
-   "id": 10,
-   "group": "plasma",
-   "emitters": 4,
-   "spread": 14,
-   "fade": 8,
-   "first": 0,
-   "sound": {
-    "model": "plasma",
-    "preset": "plasmasphere_hiss",
-    "params": {
-     "gain": 1.0
+  "name": "Deep space",
+  "seed": 5200,
+  "environment": {
+    "time_of_day": 0.0,
+    "rain_mm_h": 0.0,
+    "wind_ms": 0.0,
+    "storm": 0.0,
+    "temperature_c": 15.0,
+    "humidity": 0.5,
+    "ground_z": -40.0
+  },
+  "entities": [
+    {
+      "kind": "clip",
+      "id": 10,
+      "group": "plasma",
+      "emitters": 4,
+      "spread": 14,
+      "fade": 8,
+      "first": 0,
+      "sound": {
+        "model": "plasma",
+        "preset": "plasmasphere_hiss",
+        "params": {
+          "gain": 0.22
+        }
+      },
+      "motion": {
+        "type": "fixed",
+        "position": [
+          0,
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 20,
+      "group": "plasma",
+      "emitters": 5,
+      "fade": 9,
+      "first": 90,
+      "interval": [
+        140,
+        300
+      ],
+      "sound": {
+        "model": "plasma",
+        "preset": "plasmasphere_hiss",
+        "params": {
+          "gain": 0.2,
+          "hiss_hz": 380
+        }
+      },
+      "motion": {
+        "type": "sweep",
+        "from_x": -45,
+        "to_x": 60,
+        "duration": 30,
+        "width": 18,
+        "height": 1
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 100,
+      "group": "station",
+      "class": "bed",
+      "level_db": 51,
+      "playback": "loop",
+      "emitters": 3,
+      "spread": 3,
+      "fade": 10,
+      "first": 0,
+      "files": [
+        "generated/space/hull_hum_sa25_1.wav",
+        "generated/space/hull_hum_el2_1.wav",
+        "generated/space/hull_hum_el2_2.wav"
+      ],
+      "motion": {
+        "type": "fixed",
+        "position": [
+          0,
+          0,
+          -1
+        ]
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 101,
+      "group": "station",
+      "class": "texture",
+      "level_db": 45,
+      "playback": "loop",
+      "fade": 8,
+      "first": 2,
+      "files": [
+        "generated/space/life_support_fans_el2_1.wav",
+        "generated/space/life_support_fans_el2_2.wav"
+      ],
+      "motion": {
+        "type": "fixed",
+        "position": [
+          1.5,
+          2.5,
+          1.8
+        ]
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 102,
+      "group": "station",
+      "class": "texture",
+      "level_db": 66,
+      "first": 50,
+      "interval": [
+        100,
+        220
+      ],
+      "fade": 4,
+      "rate": [
+        0.9,
+        1.0
+      ],
+      "files": [
+        "generated/space/distant_pump_el2_1.wav",
+        "generated/space/distant_pump_el2_2.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          -7,
+          -5,
+          -1.5
+        ],
+        "to": [
+          -6,
+          -6,
+          -1.5
+        ],
+        "jitter": 3
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 103,
+      "group": "station",
+      "class": "event",
+      "level_db": 60,
+      "first": 30,
+      "interval": [
+        70,
+        170
+      ],
+      "fade": 0.5,
+      "rate": [
+        0.8,
+        1.0
+      ],
+      "files": [
+        "generated/space/hull_creak_el2_1.wav",
+        "generated/space/hull_creak_el2_2.wav",
+        "generated/space/hull_creak_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          -5,
+          7,
+          3
+        ],
+        "to": [
+          -4,
+          7,
+          3
+        ],
+        "jitter": 3
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 104,
+      "group": "station",
+      "class": "event",
+      "level_db": 48,
+      "first": 75,
+      "interval": [
+        60,
+        150
+      ],
+      "fade": 0.3,
+      "rate": [
+        0.9,
+        1.1
+      ],
+      "files": [
+        "generated/space/hull_ticks_el2_1.wav",
+        "generated/space/hull_ticks_el2_2.wav",
+        "generated/space/hull_ticks_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          4,
+          -6,
+          2.5
+        ],
+        "to": [
+          4,
+          -6,
+          2.5
+        ],
+        "jitter": 3
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 200,
+      "group": "ships",
+      "class": "event",
+      "level_db": 95,
+      "first": 40,
+      "interval": [
+        200,
+        400
+      ],
+      "fade": 6,
+      "rate": [
+        0.8,
+        0.92
+      ],
+      "files": [
+        "generated/space/freighter_pass_el2_1.wav",
+        "generated/space/freighter_pass_el2_2.wav",
+        "generated/space/freighter_pass_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          -60,
+          35,
+          8
+        ],
+        "to": [
+          70,
+          28,
+          4
+        ],
+        "jitter": 10,
+        "duration": 26
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 201,
+      "group": "ships",
+      "class": "event",
+      "level_db": 88,
+      "first": 130,
+      "interval": [
+        160,
+        320
+      ],
+      "fade": 4,
+      "rate": [
+        0.88,
+        1.05
+      ],
+      "files": [
+        "generated/space/medium_ship_pass_el2_1.wav",
+        "generated/space/medium_ship_pass_el2_2.wav",
+        "generated/space/medium_ship_pass_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          55,
+          -30,
+          6
+        ],
+        "to": [
+          -50,
+          -24,
+          3
+        ],
+        "jitter": 8,
+        "duration": 16
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 202,
+      "group": "ships",
+      "class": "event",
+      "level_db": 84,
+      "first": 220,
+      "interval": [
+        180,
+        360
+      ],
+      "fade": 2,
+      "rate": [
+        0.95,
+        1.1
+      ],
+      "files": [
+        "generated/space/shuttle_turbine_el2_1.wav",
+        "generated/space/shuttle_turbine_el2_2.wav",
+        "generated/space/shuttle_pass_el2_1.wav",
+        "generated/space/shuttle_pass_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          -36,
+          18,
+          6
+        ],
+        "to": [
+          40,
+          13,
+          5
+        ],
+        "jitter": 4,
+        "duration": 10
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 203,
+      "group": "ships",
+      "class": "event",
+      "level_db": 104,
+      "first": 330,
+      "interval": [
+        300,
+        600
+      ],
+      "fade": 8,
+      "rate": [
+        0.75,
+        0.88
+      ],
+      "files": [
+        "generated/space/convoy_distant_el2_1.wav",
+        "generated/space/convoy_distant_el2_2.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          130,
+          -90,
+          30
+        ],
+        "to": [
+          -130,
+          -80,
+          24
+        ],
+        "jitter": 20,
+        "duration": 30
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 300,
+      "group": "docking",
+      "class": "event",
+      "level_db": 70,
+      "first": 60,
+      "interval": [
+        90,
+        200
+      ],
+      "fade": 0.1,
+      "rate": [
+        0.9,
+        1.1
+      ],
+      "files": [
+        "generated/space/rcs_puff_el2_1.wav",
+        "generated/space/rcs_puff_el2_2.wav",
+        "generated/space/rcs_puff_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          4,
+          -6,
+          3
+        ],
+        "to": [
+          4,
+          -6,
+          3
+        ],
+        "jitter": 4
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 301,
+      "group": "docking",
+      "class": "event",
+      "level_db": 74,
+      "first": 170,
+      "interval": [
+        240,
+        480
+      ],
+      "fade": 0.1,
+      "rate": [
+        0.9,
+        1.05
+      ],
+      "files": [
+        "generated/space/clamp_engage_el2_1.wav",
+        "generated/space/clamp_engage_el2_2.wav",
+        "generated/space/clamp_engage_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          -3,
+          5,
+          -1
+        ],
+        "to": [
+          -3,
+          5,
+          -1
+        ],
+        "jitter": 2
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 302,
+      "group": "docking",
+      "class": "event",
+      "level_db": 70,
+      "first": 280,
+      "interval": [
+        300,
+        600
+      ],
+      "fade": 0.5,
+      "files": [
+        "generated/space/airlock_cycle_el2_1.wav",
+        "generated/space/airlock_cycle_el2_2.wav"
+      ],
+      "motion": {
+        "type": "fixed",
+        "position": [
+          -4,
+          -3,
+          0
+        ]
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 303,
+      "group": "docking",
+      "class": "event",
+      "level_db": 66,
+      "first": 110,
+      "interval": [
+        180,
+        360
+      ],
+      "fade": 0.4,
+      "rate": [
+        0.9,
+        1.1
+      ],
+      "files": [
+        "generated/space/robot_arm_servo_el2_1.wav",
+        "generated/space/robot_arm_servo_el2_2.wav",
+        "generated/space/robot_arm_servo_el2_3.wav"
+      ],
+      "motion": {
+        "type": "pass",
+        "from": [
+          3,
+          6,
+          4
+        ],
+        "to": [
+          5,
+          -4,
+          4
+        ],
+        "jitter": 2
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 400,
+      "group": "radio",
+      "class": "texture",
+      "level_db": 44,
+      "playback": "loop",
+      "fade": 8,
+      "first": 5,
+      "files": [
+        "generated/space/radio_hiss_el2_1.wav",
+        "generated/space/radio_hiss_el2_2.wav"
+      ],
+      "motion": {
+        "type": "fixed",
+        "position": [
+          3,
+          -2,
+          0.5
+        ]
+      }
+    },
+    {
+      "kind": "clip",
+      "id": 401,
+      "group": "radio",
+      "class": "event",
+      "level_db": 52,
+      "first": 20,
+      "interval": [
+        45,
+        120
+      ],
+      "fade": 0.1,
+      "files": [
+        "generated/space/console_beep_synth_1.wav",
+        "generated/space/console_beep_synth_2.wav",
+        "generated/space/console_beep_synth_3.wav"
+      ],
+      "motion": {
+        "type": "fixed",
+        "position": [
+          3.4,
+          -2.4,
+          0.8
+        ]
+      }
     }
-   },
-   "motion": {
-    "type": "fixed",
-    "position": [
-     0,
-     0,
-     1
+  ],
+  "controls": [
+    {
+      "group": "station",
+      "title": "Station",
+      "icon": "station"
+    },
+    {
+      "group": "ships",
+      "title": "Ships",
+      "icon": "ship"
+    },
+    {
+      "group": "docking",
+      "title": "Docking",
+      "icon": "docking"
+    },
+    {
+      "group": "radio",
+      "title": "Radio",
+      "icon": "radio"
+    },
+    {
+      "group": "plasma",
+      "title": "Space weather",
+      "icon": "plasma"
+    }
+  ],
+  "levers": [
+    {
+      "key": "traffic",
+      "title": "Ships",
+      "icon": "ship",
+      "min": 0,
+      "max": 2,
+      "default": 1,
+      "lively": 0.4,
+      "drives": [
+        {
+          "group": "ships",
+          "param": "events",
+          "at": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              2.5
+            ]
+          ]
+        },
+        {
+          "group": "ships",
+          "param": "distance",
+          "at": [
+            [
+              0,
+              1.5
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              0.7
+            ]
+          ]
+        },
+        {
+          "group": "ships",
+          "param": "level",
+          "at": [
+            [
+              0,
+              -6
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              2,
+              2
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "key": "station",
+      "title": "Station",
+      "icon": "station",
+      "min": 0,
+      "max": 2,
+      "default": 1,
+      "drives": [
+        {
+          "group": "station",
+          "param": "level",
+          "at": [
+            [
+              0,
+              -30
+            ],
+            [
+              0.3,
+              -9
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        {
+          "group": "station",
+          "param": "events",
+          "at": [
+            [
+              0,
+              0.3
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              1.8
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "key": "docking",
+      "title": "Docking",
+      "icon": "docking",
+      "min": 0,
+      "max": 2,
+      "default": 0.6,
+      "lively": 0.3,
+      "drives": [
+        {
+          "group": "docking",
+          "param": "events",
+          "at": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        },
+        {
+          "group": "docking",
+          "param": "distance",
+          "at": [
+            [
+              0,
+              1.4
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              0.75
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "key": "radio",
+      "title": "Radio",
+      "icon": "radio",
+      "min": 0,
+      "max": 1,
+      "default": 0.5,
+      "drives": [
+        {
+          "group": "radio",
+          "param": "level",
+          "at": [
+            [
+              0,
+              -30
+            ],
+            [
+              0.5,
+              0
+            ],
+            [
+              1,
+              5
+            ]
+          ]
+        },
+        {
+          "group": "radio",
+          "param": "events",
+          "at": [
+            [
+              0,
+              0
+            ],
+            [
+              0.5,
+              1
+            ],
+            [
+              1,
+              2.5
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "key": "solar_wind",
+      "title": "Solar wind",
+      "icon": "plasma",
+      "min": 0,
+      "max": 2,
+      "default": 0.6,
+      "lively": 0.2,
+      "drives": [
+        {
+          "group": "plasma",
+          "param": "level",
+          "at": [
+            [
+              0,
+              -24
+            ],
+            [
+              0.6,
+              0
+            ],
+            [
+              2,
+              8
+            ]
+          ]
+        },
+        {
+          "group": "plasma",
+          "param": "b",
+          "at": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              20
+            ]
+          ]
+        },
+        {
+          "group": "plasma",
+          "param": "events",
+          "at": [
+            [
+              0,
+              0.3
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              2.5
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "direction": {
+    "climate": false,
+    "only": true,
+    "change": 0.35,
+    "start": "quiet_shift",
+    "episodes": [
+      {
+        "name": "quiet_shift",
+        "weight": 1.0,
+        "energy": -0.6,
+        "drama": 0.0,
+        "segments": [
+          {
+            "label": "quiet shift",
+            "minutes": [
+              15,
+              35
+            ],
+            "levers": {
+              "traffic": [
+                0.3,
+                0.6
+              ],
+              "docking": [
+                0.1,
+                0.3
+              ],
+              "radio": [
+                0.3,
+                0.5
+              ],
+              "station": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "name": "night_side",
+        "weight": 0.7,
+        "energy": -0.8,
+        "drama": 0.1,
+        "segments": [
+          {
+            "label": "entering the shadow",
+            "minutes": [
+              2,
+              4
+            ],
+            "levers": {
+              "station": [
+                1.2,
+                1.4
+              ],
+              "traffic": 0.3
+            },
+            "ease": 60
+          },
+          {
+            "label": "night side",
+            "minutes": [
+              15,
+              30
+            ],
+            "levers": {
+              "station": [
+                1.2,
+                1.5
+              ],
+              "traffic": [
+                0.1,
+                0.3
+              ],
+              "docking": 0.05,
+              "radio": 0.25,
+              "solar_wind": 0.3
+            }
+          }
+        ]
+      },
+      {
+        "name": "convoy",
+        "weight": 0.5,
+        "energy": 0.6,
+        "drama": 0.6,
+        "after": [
+          "quiet_shift",
+          "night_side",
+          "docking"
+        ],
+        "segments": [
+          {
+            "label": "ships on approach",
+            "minutes": [
+              3,
+              5
+            ],
+            "levers": {
+              "traffic": [
+                1.3,
+                1.6
+              ],
+              "radio": [
+                0.6,
+                0.8
+              ]
+            }
+          },
+          {
+            "label": "the convoy passes",
+            "minutes": [
+              5,
+              9
+            ],
+            "levers": {
+              "traffic": [
+                1.8,
+                2.0
+              ],
+              "radio": 0.8
+            }
+          },
+          {
+            "label": "convoy moving off",
+            "minutes": [
+              3,
+              5
+            ],
+            "levers": {
+              "traffic": [
+                0.8,
+                1.1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "docking",
+        "weight": 0.5,
+        "energy": 0.4,
+        "drama": 0.5,
+        "segments": [
+          {
+            "label": "approach",
+            "minutes": [
+              2,
+              4
+            ],
+            "levers": {
+              "docking": [
+                0.8,
+                1.1
+              ],
+              "radio": [
+                0.7,
+                0.9
+              ],
+              "traffic": [
+                0.6,
+                0.9
+              ]
+            }
+          },
+          {
+            "label": "hard dock",
+            "minutes": [
+              3,
+              6
+            ],
+            "levers": {
+              "docking": [
+                1.7,
+                2.0
+              ],
+              "radio": 0.8,
+              "station": 1.2
+            }
+          },
+          {
+            "label": "systems settle",
+            "minutes": [
+              3,
+              5
+            ],
+            "levers": {
+              "docking": [
+                0.4,
+                0.6
+              ],
+              "station": 1.1
+            }
+          }
+        ]
+      },
+      {
+        "name": "solar_storm",
+        "weight": 0.25,
+        "energy": 0.5,
+        "drama": 0.9,
+        "segments": [
+          {
+            "label": "particle counts rising",
+            "minutes": [
+              3,
+              6
+            ],
+            "levers": {
+              "solar_wind": [
+                1.1,
+                1.3
+              ],
+              "radio": 0.7
+            }
+          },
+          {
+            "label": "solar storm",
+            "minutes": [
+              5,
+              10
+            ],
+            "levers": {
+              "solar_wind": [
+                1.7,
+                2.0
+              ],
+              "traffic": [
+                0.1,
+                0.3
+              ],
+              "radio": 0.9
+            }
+          },
+          {
+            "label": "storm subsiding",
+            "minutes": [
+              4,
+              8
+            ],
+            "levers": {
+              "solar_wind": [
+                0.8,
+                1.0
+              ]
+            }
+          }
+        ]
+      }
     ]
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 20,
-   "group": "plasma",
-   "emitters": 5,
-   "fade": 9,
-   "first": 25,
-   "interval": [
-    70,
-    160
-   ],
-   "sound": {
-    "model": "plasma",
-    "preset": "plasmasphere_hiss",
-    "params": {
-     "gain": 1.3,
-     "hiss_hz": 380
-    }
-   },
-   "motion": {
-    "type": "sweep",
-    "from_x": -45,
-    "to_x": 60,
-    "duration": 30,
-    "width": 18,
-    "height": 1
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 30,
-   "group": "flybys",
-   "class": "event",
-   "level_db": 90,
-   "first": 45,
-   "interval": [
-    70,
-    140
-   ],
-   "fade": 4,
-   "rate": [
-    0.85,
-    1.0
-   ],
-   "files": [
-    "generated/space/comet_pass_el2_1.wav",
-    "generated/space/comet_pass_el2_2.wav",
-    "generated/space/comet_pass_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     -60,
-     45,
-     18
-    ],
-    "to": [
-     80,
-     -55,
-     6
-    ],
-    "duration": 18,
-    "jitter": 8
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 50,
-   "group": "orbits",
-   "class": "texture",
-   "playback": "loop",
-   "level_db": 66,
-   "first": 60,
-   "interval": [
-    90,
-    180
-   ],
-   "fade": 4,
-   "files": [
-    "generated/space/shimmer_high_sa25_1.wav",
-    "generated/space/shimmer_high_sa25_2.wav"
-   ],
-   "motion": {
-    "type": "portal",
-    "from": [
-     -6,
-     8,
-     4
-    ],
-    "duration": 14,
-    "curve": 0.4
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 31,
-   "group": "flybys",
-   "class": "event",
-   "level_db": 94,
-   "first": 35,
-   "interval": [
-    80,
-    150
-   ],
-   "fade": 5,
-   "files": [
-    "generated/space/asteroid_whoosh_el2_1.wav",
-    "generated/space/asteroid_whoosh_el2_2.wav",
-    "generated/space/asteroid_whoosh_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     -35,
-     22,
-     8
-    ],
-    "to": [
-     40,
-     -18,
-     16
-    ],
-    "duration": 22,
-    "jitter": 18
-   },
-   "rate": [
-    0.8,
-    1.0
-   ]
-  },
-  {
-   "kind": "clip",
-   "id": 32,
-   "group": "flybys",
-   "class": "event",
-   "level_db": 70,
-   "first": 100,
-   "interval": [
-    110,
-    200
-   ],
-   "fade": 4,
-   "files": [
-    "generated/space/asteroid_whoosh_el2_2.wav",
-    "generated/space/asteroid_whoosh_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     -14,
-     -4,
-     5
-    ],
-    "to": [
-     26,
-     3,
-     6
-    ],
-    "duration": 14,
-    "jitter": 3
-   },
-   "rate": [
-    0.9,
-    1.15
-   ]
-  },
-  {
-   "kind": "clip",
-   "id": 33,
-   "group": "flybys",
-   "class": "event",
-   "level_db": 88,
-   "first": 60,
-   "interval": [
-    90,
-    170
-   ],
-   "fade": 6,
-   "files": [
-    "generated/space/satellite_flyby_el2_2.wav",
-    "generated/space/satellite_flyby_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     45,
-     -70,
-     32
-    ],
-    "to": [
-     40,
-     70,
-     28
-    ],
-    "duration": 40,
-    "jitter": 10
-   },
-   "rate": [
-    0.9,
-    1.1
-   ]
-  },
-  {
-   "kind": "clip",
-   "id": 34,
-   "group": "beams",
-   "class": "event",
-   "level_db": 72,
-   "first": 20,
-   "interval": [
-    60,
-    120
-   ],
-   "fade": 2,
-   "files": [
-    "generated/space/energy_beam_el2_1.wav",
-    "generated/space/energy_beam_el2_2.wav",
-    "generated/space/energy_beam_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     3,
-     14,
-     3
-    ],
-    "to": [
-     3,
-     -14,
-     4
-    ],
-    "duration": 7,
-    "jitter": 6
-   },
-   "rate": [
-    0.8,
-    1.1
-   ]
-  },
-  {
-   "kind": "clip",
-   "id": 35,
-   "group": "beams",
-   "class": "event",
-   "level_db": 66,
-   "first": 50,
-   "interval": [
-    90,
-    170
-   ],
-   "fade": 2,
-   "files": [
-    "generated/space/energy_beam_el2_1.wav",
-    "generated/space/energy_beam_el2_3.wav"
-   ],
-   "motion": {
-    "type": "portal",
-    "from": [
-     -6,
-     -9,
-     2
-    ],
-    "duration": 8,
-    "curve": 0.5
-   },
-   "rate": [
-    0.7,
-    0.95
-   ]
-  },
-  {
-   "kind": "clip",
-   "id": 36,
-   "group": "flybys",
-   "class": "event",
-   "level_db": 82,
-   "first": 75,
-   "interval": [
-    100,
-    180
-   ],
-   "fade": 4,
-   "files": [
-    "generated/space/ray_glide_el2_1.wav",
-    "generated/space/ray_glide_el2_3.wav"
-   ],
-   "motion": {
-    "type": "pass",
-    "from": [
-     30,
-     -45,
-     26
-    ],
-    "to": [
-     34,
-     45,
-     30
-    ],
-    "duration": 16,
-    "jitter": 8
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 40,
-   "group": "orbits",
-   "class": "texture",
-   "playback": "loop",
-   "level_db": 67,
-   "first": 8,
-   "fade": 12,
-   "rate": [
-    1.3,
-    1.3
-   ],
-   "files": [
-    "generated/space/orbit_hum_el2_1.wav",
-    "generated/space/orbit_hum_el2_2.wav"
-   ],
-   "motion": {
-    "type": "orbit",
-    "center": [
-     0,
-     0,
-     0
-    ],
-    "radius": 5,
-    "height": 0.5,
-    "period": 55
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 41,
-   "group": "orbits",
-   "class": "texture",
-   "playback": "loop",
-   "level_db": 80,
-   "first": 18,
-   "fade": 12,
-   "rate": [
-    1.0,
-    1.0
-   ],
-   "files": [
-    "generated/space/orbit_hum_el2_1.wav",
-    "generated/space/orbit_hum_el2_2.wav"
-   ],
-   "motion": {
-    "type": "orbit",
-    "center": [
-     0,
-     0,
-     0
-    ],
-    "radius": 15,
-    "height": 6,
-    "period": -140
-   }
-  },
-  {
-   "kind": "clip",
-   "id": 42,
-   "group": "orbits",
-   "class": "texture",
-   "playback": "loop",
-   "level_db": 80,
-   "first": 30,
-   "fade": 12,
-   "rate": [
-    0.7,
-    0.7
-   ],
-   "files": [
-    "generated/space/orbit_hum_el2_1.wav",
-    "generated/space/orbit_hum_el2_2.wav"
-   ],
-   "motion": {
-    "type": "orbit",
-    "center": [
-     0,
-     0,
-     0
-    ],
-    "radius": 26,
-    "height": 10,
-    "period": 320
-   }
   }
- ],
- "controls": [
-  {
-   "group": "plasma",
-   "title": "Plasma",
-   "icon": "plasma"
-  },
-  {
-   "group": "flybys",
-   "title": "Flybys",
-   "icon": "flyby"
-  },
-  {
-   "group": "beams",
-   "title": "Beams",
-   "icon": "beam"
-  },
-  {
-   "group": "orbits",
-   "title": "Orbits",
-   "icon": "orbit"
-  }
- ]
 }

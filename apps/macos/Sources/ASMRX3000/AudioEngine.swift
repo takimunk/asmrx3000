@@ -153,6 +153,66 @@ final class AudioEngine: ObservableObject {
         }
     }
 
+    // MARK: Scene levers
+
+    /// One scene lever ("Ships", "Whales"): a slider with a meaning that moves several clip-group
+    /// parameters (asmr_scene_lever_*). The static part is cached per core; the value is read
+    /// every frame, because the direction moves it. Not persisted: the direction owns it.
+    struct SceneLever {
+        var key: String
+        var title: String
+        var icon: String
+        var min: Float
+        var max: Float
+        var def: Float
+        var log: Bool
+        /// Index of the clip group its first drive moves (its waveform), nil = none.
+        var group: Int?
+    }
+    private var sceneLeverList: [SceneLever] = []
+    /// Stands in for control ids in the panel: base + lever index.
+    static let leverControlBase: UInt32 = 0xF300
+    /// Control group of the scene levers (not an ASMR_GROUP_*).
+    static let leverGroup: UInt32 = 500
+
+    private func refreshSceneLevers() {
+        var list: [SceneLever] = []
+        for i in 0..<Int(asmr_scene_lever_count(core)) {
+            let idx = UInt32(i)
+            func text(_ call: (UnsafeMutablePointer<CChar>?, UInt32) -> UInt32) -> String {
+                var buf = [CChar](repeating: 0, count: 128)
+                _ = buf.withUnsafeMutableBufferPointer { call($0.baseAddress, 128) }
+                return String(cString: buf)
+            }
+            var info = AsmrSceneLeverInfo()
+            asmr_scene_lever_info(core, idx, &info)
+            list.append(SceneLever(key: text { asmr_scene_lever_key(core, idx, $0, $1) },
+                                   title: text { asmr_scene_lever_title(core, idx, $0, $1) },
+                                   icon: text { asmr_scene_lever_icon(core, idx, $0, $1) },
+                                   min: info.min, max: info.max, def: info.def, log: info.log != 0,
+                                   group: info.group == UInt32.max ? nil : Int(info.group)))
+        }
+        sceneLeverList = list
+        ClipGroupLabels.leverTitles = Dictionary(list.map { ($0.key, $0.title) }, uniquingKeysWith: { a, _ in a })
+        ClipGroupLabels.leverIcons = Dictionary(list.map { ($0.key, $0.icon) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The scene levers as controls, read live; a lever the user holds is flagged OVERRIDDEN.
+    private func sceneLeverControls() -> [Control] {
+        guard !sceneLeverList.isEmpty else { return [] }
+        let held = directionInfo().held_levers
+        return sceneLeverList.enumerated().map { i, l in
+            var flags = UInt32(ASMR_CONTROL_FLAG_MACRO)
+            if l.log { flags |= UInt32(ASMR_CONTROL_FLAG_LOG) }
+            if held & (1 << UInt32(i)) != 0 { flags |= UInt32(ASMR_CONTROL_FLAG_OVERRIDDEN) }
+            // Its waveform is the group its first drive moves.
+            let driven = l.group.flatMap { g in clipGroups.first { $0.index == g } }
+            return Control(id: Self.leverControlBase + UInt32(i), group: driven.map(Self.clipGroupNumber) ?? Self.leverGroup, parent: nil, flags: flags,
+                           min: l.min, max: l.max, value: asmr_get_scene_lever(core, UInt32(i)), defaultValue: l.def,
+                           key: "lever." + l.key, unit: "")
+        }
+    }
+
     // MARK: Clip groups
 
     /// One group of a clip scene's clips ("whales", "current"...): its own level, events, motion,
@@ -180,6 +240,7 @@ final class AudioEngine: ObservableObject {
 
     /// Reads the groups of the current core and pushes the remembered values into it.
     private func refreshClipGroups() {
+        refreshSceneLevers()
         guard scene.isClip else {
             clipGroups = []
             clipValues = []
@@ -251,7 +312,7 @@ final class AudioEngine: ObservableObject {
                 let r = g.ranges[p]
                 let v = clipValues[g.index][p]
                 let macro = p == 0
-                var flags: UInt32 = macro ? UInt32(ASMR_CONTROL_FLAG_MACRO) : 0
+                var flags: UInt32 = macro ? UInt32(ASMR_CONTROL_FLAG_MACRO | ASMR_CONTROL_FLAG_LEVEL) : 0
                 if !macro, abs(v - r.def) > 1e-4 { flags |= UInt32(ASMR_CONTROL_FLAG_OVERRIDDEN) }
                 out.append(Control(id: base + UInt32(p), group: group, parent: macro ? nil : base, flags: flags,
                                    min: r.min, max: r.max, value: v, defaultValue: r.def,
@@ -275,8 +336,14 @@ final class AudioEngine: ObservableObject {
 
     /// Builds the chosen scene off the main thread (clip files are decoded and resampled), then
     /// swaps cores; playback, volume, head pose and screen carry over. Remembered across launches.
-    func switchScene(to entry: SceneEntry) {
-        guard entry != scene.entry || sceneError != nil, loadingScene != entry else { return }
+    /// Starts the current scene over from its beginning (a timed session such as the body scan):
+    /// a fresh core, so its path, script and accents start together.
+    func restartScene() {
+        switchScene(to: scene.entry, force: true)
+    }
+
+    func switchScene(to entry: SceneEntry, force: Bool = false) {
+        guard entry != scene.entry || sceneError != nil || force, loadingScene != entry else { return }
         SceneEntry.saved = entry
         guard let info = SceneInfo.load(entry) else {
             sceneError = tr("No scene file")
@@ -602,6 +669,7 @@ final class AudioEngine: ObservableObject {
             out.append(contentsOf: clipControls)
             out.append(contentsOf: sceneControls)
         }
+        out.append(contentsOf: sceneLeverControls())
     }
 
     private var optionNames: [UInt32: [String]] = [:]
@@ -652,6 +720,12 @@ final class AudioEngine: ObservableObject {
     }
 
     func setControl(_ id: UInt32, _ value: Float) {
+        if id >= Self.leverControlBase {
+            // NaN (double-click) hands the lever back to the direction.
+            let i = Int(id - Self.leverControlBase)
+            if i < sceneLeverList.count { asmr_set_scene_lever(core, UInt32(i), value) }
+            return
+        }
         if id >= Self.clipControlBase {
             setClipGroup(id, value)
             return

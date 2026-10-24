@@ -24,9 +24,13 @@ pub struct DirectionInfo {
     pub energy: f32,
     pub change: f32,
     pub held: u32,
+    pub climate: u32,
+    pub held_levers: u32,
+    pub elapsed_s: f32,
+    pub script_s: f32,
 }
 
-const FIELDS: usize = 15;
+const FIELDS: usize = 19;
 
 /// Latest [`DirectionInfo`], written by the audio thread a few times a second.
 pub struct DirectionBridge {
@@ -58,6 +62,10 @@ impl DirectionBridge {
             f(i.energy),
             f(i.change),
             i.held,
+            i.climate as u32,
+            i.held_levers,
+            f(i.elapsed_s),
+            f(i.script_s),
         ];
         for (a, v) in self.v.iter().zip(vals) {
             a.store(v, Ordering::Relaxed);
@@ -83,6 +91,10 @@ impl DirectionBridge {
             energy: f(12),
             change: f(13),
             held: u(14),
+            climate: u(15),
+            held_levers: u(16),
+            elapsed_s: f(17),
+            script_s: f(18),
         }
     }
 }
@@ -93,6 +105,8 @@ impl DirectionBridge {
 pub struct Touches {
     touch: [AtomicU32; CHANNELS],
     release: [AtomicU32; CHANNELS],
+    lever_touch: [AtomicU32; super::MAX_LEVERS],
+    lever_release: [AtomicU32; super::MAX_LEVERS],
 }
 
 /// What the audio thread saw last.
@@ -100,6 +114,8 @@ pub struct Touches {
 pub struct Seen {
     touch: [u32; CHANNELS],
     release: [u32; CHANNELS],
+    lever_touch: [u32; super::MAX_LEVERS],
+    lever_release: [u32; super::MAX_LEVERS],
 }
 
 impl Touches {
@@ -114,6 +130,32 @@ impl Touches {
             let a = if release { &self.release[c] } else { &self.touch[c] };
             a.fetch_add(1, Ordering::Release);
         }
+    }
+
+    /// The user set scene lever `i` (`release` = handed it back).
+    pub fn mark_lever(&self, i: usize, release: bool) {
+        let a = if release { self.lever_release.get(i) } else { self.lever_touch.get(i) };
+        if let Some(a) = a {
+            a.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    /// Audio thread: bit masks of the levers touched / released since `seen`, updating it.
+    pub fn take_levers(&self, seen: &mut Seen) -> (u32, u32) {
+        let (mut t, mut r) = (0, 0);
+        for i in 0..super::MAX_LEVERS {
+            let a = self.lever_touch[i].load(Ordering::Acquire);
+            let b = self.lever_release[i].load(Ordering::Acquire);
+            if a != seen.lever_touch[i] {
+                t |= 1 << i;
+            }
+            if b != seen.lever_release[i] {
+                r |= 1 << i;
+            }
+            seen.lever_touch[i] = a;
+            seen.lever_release[i] = b;
+        }
+        (t, r)
     }
 
     /// Audio thread: which channels were touched / released since `seen`, updating it.

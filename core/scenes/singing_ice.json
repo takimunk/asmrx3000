@@ -1,0 +1,1053 @@
+{
+ "name": "Singing ice",
+ "seed": 5500,
+ "environment": {
+  "time_of_day": 23.0,
+  "season": "winter",
+  "temperature_c": -14.0,
+  "humidity": 0.7,
+  "wind_ms": 2.5,
+  "rain_mm_h": 0.0,
+  "storm": 0.0,
+  "ground_z": -0.8
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 10,
+   "group": "shore",
+   "emitters": 4,
+   "spread": 200,
+   "first": 0,
+   "fade": 8,
+   "sound": {
+    "model": "wind",
+    "preset": "forest_roar",
+    "params": {
+     "distance_m": 320,
+     "exposure": 2.5,
+     "gain": 8
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -90.0,
+     300.0,
+     8.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 11,
+   "group": "air",
+   "emitters": 3,
+   "spread": 4,
+   "first": 0,
+   "fade": 8,
+   "sound": {
+    "model": "wind",
+    "preset": "breeze",
+    "params": {
+     "exposure": 0.4,
+     "gain": 0.4
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.0,
+     0.0,
+     -0.5
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 12,
+   "group": "air",
+   "emitters": 4,
+   "spread": 5,
+   "first": 0,
+   "fade": 8,
+   "sound": {
+    "model": "wind",
+    "preset": "blowing_snow",
+    "params": {
+     "exposure": 2.2
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.0,
+     0.0,
+     -0.75
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 8,
+   "interval": [
+    50,
+    160
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     84.6,
+     30.8,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 21,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 22,
+   "interval": [
+    60,
+    170
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     56.9,
+     212.5,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 22,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 36,
+   "interval": [
+    45,
+    150
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -46.0,
+     38.6,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 23,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 50,
+   "interval": [
+    70,
+    190
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -281.9,
+     -102.6,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 24,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 64,
+   "interval": [
+    55,
+    160
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -24.3,
+     -137.9,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 25,
+   "group": "singing",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_sing_vrymaa_1.wav",
+    "generated/singing_ice/ice_sing_vrymaa_2.wav",
+    "generated/singing_ice/ice_sing_vrymaa_3.wav",
+    "generated/singing_ice/ice_sing_vrymaa_4.wav",
+    "generated/singing_ice/ice_sing_vrymaa_5.wav",
+    "generated/singing_ice/ice_sing_vrymaa_6.wav",
+    "generated/singing_ice/ice_sing_vrymaa_7.wav"
+   ],
+   "level_db": 75,
+   "first": 78,
+   "interval": [
+    60,
+    170
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     137.9,
+     -115.7,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "cracks",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_crack_vrymaa_1.wav",
+    "generated/singing_ice/ice_crack_vrymaa_2.wav",
+    "generated/singing_ice/ice_crack_vrymaa_3.wav",
+    "generated/singing_ice/ice_crack_vrymaa_4.wav",
+    "generated/singing_ice/ice_crack_toban_1.wav",
+    "generated/singing_ice/ice_crack_toban_2.wav",
+    "generated/singing_ice/ice_crack_toban_3.wav"
+   ],
+   "level_db": 64,
+   "first": 70,
+   "interval": [
+    120,
+    400
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.01,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     12.0,
+     -6.0,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 31,
+   "group": "cracks",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_crack_vrymaa_1.wav",
+    "generated/singing_ice/ice_crack_vrymaa_2.wav",
+    "generated/singing_ice/ice_crack_vrymaa_3.wav",
+    "generated/singing_ice/ice_crack_vrymaa_4.wav",
+    "generated/singing_ice/ice_crack_toban_1.wav",
+    "generated/singing_ice/ice_crack_toban_2.wav",
+    "generated/singing_ice/ice_crack_toban_3.wav"
+   ],
+   "level_db": 64,
+   "first": 150,
+   "interval": [
+    140,
+    420
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.01,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -9.0,
+     14.0,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 32,
+   "group": "cracks",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_crack_vrymaa_1.wav",
+    "generated/singing_ice/ice_crack_vrymaa_2.wav",
+    "generated/singing_ice/ice_crack_vrymaa_3.wav",
+    "generated/singing_ice/ice_crack_vrymaa_4.wav",
+    "generated/singing_ice/ice_crack_toban_1.wav",
+    "generated/singing_ice/ice_crack_toban_2.wav",
+    "generated/singing_ice/ice_crack_toban_3.wav"
+   ],
+   "level_db": 64,
+   "first": 230,
+   "interval": [
+    160,
+    450
+   ],
+   "rate": [
+    0.85,
+    1.15
+   ],
+   "fade": 0.01,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     5.0,
+     18.0,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "runs",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_run_vrymaa_1.wav",
+    "generated/singing_ice/ice_run_vrymaa_2.wav",
+    "generated/singing_ice/ice_run_toban_1.wav"
+   ],
+   "level_db": 72,
+   "first": 240,
+   "interval": [
+    300,
+    700
+   ],
+   "rate": [
+    0.9,
+    1.1
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "pass",
+    "from": [
+     35.0,
+     70.0,
+     -0.8
+    ],
+    "to": [
+     30.0,
+     -70.0,
+     -0.8
+    ],
+    "duration": 3.5
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 41,
+   "group": "runs",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_run_vrymaa_1.wav",
+    "generated/singing_ice/ice_run_vrymaa_2.wav",
+    "generated/singing_ice/ice_run_toban_1.wav"
+   ],
+   "level_db": 72,
+   "first": 420,
+   "interval": [
+    400,
+    900
+   ],
+   "rate": [
+    0.9,
+    1.1
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "pass",
+    "from": [
+     -60.0,
+     -50.0,
+     -0.8
+    ],
+    "to": [
+     -40.0,
+     60.0,
+     -0.8
+    ],
+    "duration": 4
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "depth",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_run_vrymaa_1.wav",
+    "generated/singing_ice/ice_run_vrymaa_2.wav"
+   ],
+   "level_db": 48,
+   "first": 400,
+   "interval": [
+    600,
+    1200
+   ],
+   "rate": [
+    0.8,
+    0.9
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "pass",
+    "from": [
+     -40.0,
+     30.0,
+     -0.85
+    ],
+    "to": [
+     40.0,
+     -30.0,
+     -0.85
+    ],
+    "duration": 3
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 51,
+   "group": "depth",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_boom_aerror_1.wav",
+    "generated/singing_ice/ice_boom_aerror_2.wav",
+    "generated/singing_ice/ice_boom_aerror_3.wav",
+    "generated/singing_ice/ice_boom_aerror_4.wav",
+    "generated/singing_ice/ice_boom_vrymaa_1.wav"
+   ],
+   "level_db": 104,
+   "first": 120,
+   "interval": [
+    200,
+    600
+   ],
+   "rate": [
+    0.8,
+    1.0
+   ],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -400.0,
+     250.0,
+     -1.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 52,
+   "group": "depth",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/ice_boom_aerror_1.wav",
+    "generated/singing_ice/ice_boom_aerror_2.wav",
+    "generated/singing_ice/ice_boom_aerror_3.wav",
+    "generated/singing_ice/ice_boom_aerror_4.wav",
+    "generated/singing_ice/ice_boom_vrymaa_1.wav"
+   ],
+   "level_db": 104,
+   "first": 300,
+   "interval": [
+    200,
+    600
+   ],
+   "rate": [
+    0.8,
+    1.0
+   ],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     350.0,
+     -300.0,
+     -1.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 60,
+   "group": "life",
+   "class": "creature",
+   "files": [
+    "generated/singing_ice/owl_marcuspepsi_1.wav",
+    "generated/singing_ice/owl_elanor1995_1.wav",
+    "generated/singing_ice/owl_elanor1995_2.wav"
+   ],
+   "level_db": 112,
+   "first": 150,
+   "interval": [
+    90,
+    240
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -180.0,
+     420.0,
+     14.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 61,
+   "group": "life",
+   "class": "event",
+   "files": [
+    "generated/singing_ice/skater_darkshroom_1.wav",
+    "generated/singing_ice/skater_darkshroom_2.wav"
+   ],
+   "level_db": 67,
+   "first": 600,
+   "interval": [
+    240,
+    600
+   ],
+   "fade": 3,
+   "motion": {
+    "type": "pass",
+    "from": [
+     28.0,
+     45.0,
+     -0.8
+    ],
+    "to": [
+     18.0,
+     -45.0,
+     -0.8
+    ],
+    "duration": 22
+   }
+  }
+ ],
+ "controls": [
+  {
+   "group": "singing",
+   "title": "Singing ice",
+   "icon": "ice"
+  },
+  {
+   "group": "cracks",
+   "title": "Near cracks",
+   "icon": "crack"
+  },
+  {
+   "group": "runs",
+   "title": "Running cracks",
+   "icon": "crack"
+  },
+  {
+   "group": "depth",
+   "title": "Deep ice",
+   "icon": "depth"
+  },
+  {
+   "group": "air",
+   "title": "Snow drift",
+   "icon": "wind"
+  },
+  {
+   "group": "shore",
+   "title": "Shore forest",
+   "icon": "wind"
+  },
+  {
+   "group": "life",
+   "title": "Shore life",
+   "icon": "owl"
+  }
+ ],
+ "levers": [
+  {
+   "key": "frost",
+   "title": "Frost",
+   "icon": "temperature",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0.4,
+   "drives": [
+    {
+     "group": "singing",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0.2
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       2.2
+      ]
+     ]
+    },
+    {
+     "group": "cracks",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0.1
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    {
+     "group": "runs",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "depth",
+   "title": "Deep ice",
+   "icon": "depth",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "depth",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.3,
+       1
+      ],
+      [
+       1,
+       2.5
+      ]
+     ]
+    },
+    {
+     "group": "depth",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -10
+      ],
+      [
+       1,
+       -2
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "drift",
+   "title": "Snow drift",
+   "icon": "wind",
+   "min": 0,
+   "max": 1,
+   "default": 0.2,
+   "lively": 0.3,
+   "drives": [
+    {
+     "group": "air",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -20
+      ],
+      [
+       0.2,
+       -6
+      ],
+      [
+       1,
+       6
+      ]
+     ]
+    },
+    {
+     "group": "shore",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -10
+      ],
+      [
+       1,
+       4
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "life",
+   "title": "Shore life",
+   "icon": "owl",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "lively": 0.3,
+   "drives": [
+    {
+     "group": "life",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "vast",
+   "title": "Vastness",
+   "icon": "distance",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0,
+   "drives": [
+    {
+     "group": "singing",
+     "param": "distance",
+     "at": [
+      [
+       0,
+       0.5
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    {
+     "group": "runs",
+     "param": "distance",
+     "at": [
+      [
+       0,
+       0.6
+      ],
+      [
+       1,
+       1.6
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "direction": {
+  "climate": false,
+  "only": true,
+  "start": "dusk_cooling",
+  "change": 0.35,
+  "episodes": [
+   {
+    "name": "dusk_cooling",
+    "weight": 0,
+    "wet": -0.3,
+    "energy": 0.4,
+    "drama": 0.5,
+    "segments": [
+     {
+      "label": "the ice tightens",
+      "minutes": [
+       8,
+       14
+      ],
+      "levers": {
+       "frost": 0.85,
+       "depth": 0.4,
+       "drift": 0.15
+      }
+     }
+    ]
+   },
+   {
+    "name": "still_night",
+    "wet": -0.5,
+    "energy": -0.8,
+    "drama": 0,
+    "segments": [
+     {
+      "label": "deep still night",
+      "minutes": [
+       15,
+       30
+      ],
+      "levers": {
+       "frost": 0.35,
+       "depth": 0.2,
+       "drift": 0.05,
+       "life": 0.15
+      }
+     }
+    ]
+   },
+   {
+    "name": "booming",
+    "wet": 0,
+    "energy": 0.3,
+    "drama": 0.7,
+    "after": [
+     "still_night",
+     "dusk_cooling"
+    ],
+    "segments": [
+     {
+      "label": "the lake booms",
+      "minutes": [
+       4,
+       7
+      ],
+      "levers": {
+       "depth": 1,
+       "frost": 0.6
+      }
+     },
+     {
+      "label": "settling",
+      "minutes": 4,
+      "levers": {
+       "depth": 0.3
+      }
+     }
+    ]
+   },
+   {
+    "name": "snow_drift",
+    "wet": 0.7,
+    "energy": 0.2,
+    "drama": 0.3,
+    "after": [
+     "still_night",
+     "skater"
+    ],
+    "segments": [
+     {
+      "label": "snow begins to drift",
+      "minutes": 4,
+      "levers": {
+       "drift": 0.6
+      }
+     },
+     {
+      "label": "drifting snow",
+      "minutes": [
+       6,
+       12
+      ],
+      "levers": {
+       "drift": 0.85,
+       "frost": 0.3
+      }
+     },
+     {
+      "label": "calm again",
+      "minutes": 4,
+      "levers": {
+       "drift": 0.15
+      }
+     }
+    ]
+   },
+   {
+    "name": "skater",
+    "wet": -0.2,
+    "energy": 0.3,
+    "drama": 0.4,
+    "after": [
+     "still_night"
+    ],
+    "segments": [
+     {
+      "label": "a late skater",
+      "minutes": 5,
+      "levers": {
+       "life": 1
+      }
+     },
+     {
+      "label": "alone again",
+      "minutes": 3,
+      "levers": {
+       "life": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "name": "coldest_hour",
+    "wet": -0.6,
+    "energy": 0,
+    "drama": 0.6,
+    "after": [
+     "still_night",
+     "booming"
+    ],
+    "segments": [
+     {
+      "label": "the coldest hour",
+      "minutes": [
+       8,
+       12
+      ],
+      "levers": {
+       "frost": 1,
+       "depth": 0.5,
+       "drift": 0
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

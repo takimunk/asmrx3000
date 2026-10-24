@@ -60,6 +60,10 @@ pub struct SceneDesc {
     /// Panel rows of the clip groups (names, icons, parameters shown); see clips.rs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<crate::clips::GroupUi>,
+    /// Scene levers: sliders with a meaning that move several clip-group parameters at once
+    /// (clips.rs `LeverDesc`); the direction moves them too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levers: Vec<crate::clips::LeverDesc>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,6 +100,9 @@ pub struct EnvironmentDesc {
     pub medium: Medium,
     /// Muffling cutoff for `water`, Hz (two-pole low-pass); omitted = 900.
     pub muffle_hz: Option<f32>,
+    /// The mix's loudness target for this scene, LUFS (mix.loudness, -36..-10); omitted = -22.
+    /// A meditation sits far below a forest.
+    pub loudness_lufs: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +132,7 @@ impl Default for EnvironmentDesc {
             ground_z: -1.7,
             medium: Medium::Air,
             muffle_hz: None,
+            loudness_lufs: None,
         }
     }
 }

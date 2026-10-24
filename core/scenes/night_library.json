@@ -1,0 +1,917 @@
+{
+ "name": "Night library",
+ "seed": 7300,
+ "environment": {
+  "time_of_day": 23.5,
+  "rain_mm_h": 5.0,
+  "wind_ms": 7.0,
+  "storm": 0.0,
+  "temperature_c": 9.0,
+  "humidity": 0.9,
+  "wetness": 1.0,
+  "ground_z": -1.15,
+  "medium": "water",
+  "muffle_hz": 2200
+ },
+ "controls": [
+  {
+   "group": "fire",
+   "title": "Fire",
+   "icon": "fire",
+   "params": [
+    "level",
+    "events"
+   ]
+  },
+  {
+   "group": "rain",
+   "title": "Rain",
+   "icon": "rain",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "storm",
+   "title": "Storm",
+   "icon": "storm",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "pages",
+   "title": "Pages",
+   "icon": "book",
+   "params": [
+    "level",
+    "events"
+   ]
+  },
+  {
+   "group": "pen",
+   "title": "Pen",
+   "icon": "pen",
+   "params": [
+    "level",
+    "events"
+   ]
+  },
+  {
+   "group": "clock",
+   "title": "Clock",
+   "icon": "clock",
+   "params": [
+    "level"
+   ]
+  },
+  {
+   "group": "house",
+   "title": "House",
+   "icon": "house",
+   "params": [
+    "level",
+    "events"
+   ]
+  }
+ ],
+ "levers": [
+  {
+   "key": "fire",
+   "title": "Fire",
+   "icon": "fire",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "lively": 0.3,
+   "drives": [
+    {
+     "group": "fire",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.15, -18],
+      [0.4, -6],
+      [0.6, 0],
+      [1, 3]
+     ]
+    },
+    {
+     "group": "fire",
+     "param": "events",
+     "at": [
+      [0, 0.2],
+      [0.3, 0.6],
+      [0.6, 1],
+      [1, 1.6]
+     ]
+    },
+    {
+     "group": "embers",
+     "param": "level",
+     "at": [
+      [0, -2],
+      [0.3, 0],
+      [0.6, -5],
+      [1, -12]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "rain",
+   "title": "Rain",
+   "icon": "rain",
+   "min": 0,
+   "max": 1,
+   "default": 0.3,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "rain",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.1, -16],
+      [0.3, -4],
+      [0.6, 0],
+      [1, 4]
+     ]
+    },
+    {
+     "group": "outside",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.2, -16],
+      [0.5, -5],
+      [1, 1]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "storm",
+   "title": "Storm",
+   "icon": "storm",
+   "min": 0,
+   "max": 1,
+   "default": 0,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "storm",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.25, -14],
+      [0.6, -5],
+      [1, 0]
+     ]
+    },
+    {
+     "group": "thunder",
+     "param": "level",
+     "at": [
+      [0, -40],
+      [0.4, -30],
+      [0.6, -12],
+      [1, 0]
+     ]
+    },
+    {
+     "group": "thunder",
+     "param": "distance",
+     "at": [
+      [0, 2],
+      [1, 1]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "reading",
+   "title": "Reading",
+   "icon": "book",
+   "min": 0,
+   "max": 1,
+   "default": 0.6,
+   "lively": 0.3,
+   "drives": [
+    {
+     "group": "pages",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.3, 0.5],
+      [0.6, 1],
+      [1, 1.8]
+     ]
+    },
+    {
+     "group": "pen",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.3, 0],
+      [0.5, 0.6],
+      [1, 1.6]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "clock",
+   "title": "Clock",
+   "icon": "clock",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0,
+   "drives": [
+    {
+     "group": "clock",
+     "param": "level",
+     "at": [
+      [0, -30],
+      [0.1, -18],
+      [0.5, 0],
+      [1, 5]
+     ]
+    },
+    {
+     "group": "chime",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.2, 1],
+      [1, 1]
+     ]
+    },
+    {
+     "group": "chime",
+     "param": "level",
+     "at": [
+      [0, -10],
+      [0.5, 0],
+      [1, 3]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "house",
+   "title": "House",
+   "icon": "house",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "house",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.5, 1],
+      [1, 2]
+     ]
+    },
+    {
+     "group": "corridor",
+     "param": "events",
+     "at": [
+      [0, 0],
+      [0.5, 1],
+      [1, 1.8]
+     ]
+    }
+   ]
+  }
+ ],
+ "direction": {
+  "climate": false,
+  "only": true,
+  "start": "quiet_reading",
+  "change": 0.3,
+  "episodes": [
+   {
+    "name": "quiet_reading",
+    "wet": -0.3,
+    "energy": -0.2,
+    "drama": 0,
+    "segments": [
+     {
+      "label": "reading by the fire",
+      "minutes": [12, 25],
+      "levers": {
+       "rain": 0.25,
+       "reading": 0.65
+      }
+     }
+    ]
+   },
+   {
+    "name": "rain_sets_in",
+    "wet": 0.5,
+    "energy": 0.1,
+    "drama": 0.3,
+    "after": [
+     "quiet_reading",
+     "late_stillness",
+     "fire_burns_low"
+    ],
+    "segments": [
+     {
+      "label": "rain setting in",
+      "minutes": 5,
+      "levers": {
+       "rain": 0.45
+      }
+     },
+     {
+      "label": "steady rain",
+      "minutes": [8, 16],
+      "levers": {
+       "rain": 0.7,
+       "reading": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "name": "fire_burns_low",
+    "wet": 0,
+    "energy": -0.5,
+    "drama": 0.2,
+    "after": [
+     "quiet_reading",
+     "rain_sets_in",
+     "late_stillness"
+    ],
+    "segments": [
+     {
+      "label": "the fire burns low",
+      "minutes": 8,
+      "levers": {
+       "fire": 0.3,
+       "rain": 0.3,
+       "reading": 0.5
+      }
+     },
+     {
+      "label": "glowing embers",
+      "minutes": [6, 12],
+      "levers": {
+       "fire": 0.1,
+       "rain": 0.3,
+       "reading": 0.35,
+       "clock": 0.6
+      }
+     },
+     {
+      "label": "a fresh log",
+      "minutes": 4,
+      "ease": 25,
+      "levers": {
+       "fire": 0.75,
+       "rain": 0.3
+      }
+     }
+    ]
+   },
+   {
+    "name": "storm_outside",
+    "wet": 1,
+    "energy": 0.8,
+    "drama": 1,
+    "after": [
+     "rain_sets_in"
+    ],
+    "then": "late_stillness",
+    "segments": [
+     {
+      "label": "the wind rises",
+      "minutes": 4,
+      "levers": {
+       "rain": 0.75,
+       "storm": 0.35,
+       "reading": 0.4
+      }
+     },
+     {
+      "label": "storm over the roofs",
+      "minutes": [6, 10],
+      "levers": {
+       "rain": 1,
+       "storm": 0.9,
+       "reading": 0.2,
+       "fire": 0.7
+      }
+     },
+     {
+      "label": "storm moving away",
+      "minutes": 6,
+      "levers": {
+       "rain": 0.6,
+       "storm": 0.3,
+       "reading": 0.4
+      }
+     }
+    ]
+   },
+   {
+    "name": "late_stillness",
+    "wet": -0.5,
+    "energy": -0.8,
+    "drama": 0.1,
+    "after": [
+     "quiet_reading",
+     "fire_burns_low",
+     "storm_outside",
+     "rain_sets_in"
+    ],
+    "segments": [
+     {
+      "label": "late-night stillness",
+      "minutes": [12, 25],
+      "levers": {
+       "rain": 0.12,
+       "fire": 0.35,
+       "reading": 0.15,
+       "house": 0.3,
+       "clock": 0.65
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 10,
+   "group": "fire",
+   "class": "bed",
+   "files": [
+    "generated/night_library/hearth_crackle_el2_1.wav",
+    "generated/night_library/hearth_crackle_el2_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 54,
+   "emitters": 2,
+   "spread": 0.25,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [1.0, 2.6, -0.8]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 11,
+   "group": "fire",
+   "class": "event",
+   "files": [
+    "generated/night_library/log_settle_el2_1.wav",
+    "generated/night_library/log_settle_el2_2.wav",
+    "generated/night_library/log_settle_el2_3.wav"
+   ],
+   "level_db": 53,
+   "first": 95,
+   "interval": [70, 180],
+   "rate": [0.94, 1.04],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [1.05, 2.56, -0.85]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 12,
+   "group": "embers",
+   "class": "texture",
+   "files": [
+    "generated/night_library/hearth_embers_el2_1.wav",
+    "generated/night_library/hearth_embers_el2_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 44,
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [1.0, 2.52, -0.95]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/night_library/tallwindow_rain_el2_1.wav",
+    "generated/night_library/tallwindow_rain_el2_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 50,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.75, 1.2, 0.6]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 23,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/night_library/tallwindow_rain_el2_2.wav",
+    "generated/night_library/tallwindow_rain_el2_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 50,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.75, -1.2, 0.6]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 21,
+   "group": "outside",
+   "class": "bed",
+   "sound": {
+    "model": "rain",
+    "preset": "steady_rain"
+   },
+   "emitters": 4,
+   "spread": 5.0,
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [-6.0, 0.0, -0.6]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 22,
+   "group": "outside",
+   "class": "bed",
+   "sound": {
+    "model": "rain",
+    "preset": "puddles",
+    "params": {
+     "gain": 0.5
+    }
+   },
+   "emitters": 2,
+   "spread": 1.5,
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [-2.6, 1.2, -1.2]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "storm",
+   "class": "bed",
+   "files": [
+    "generated/night_library/tallwindow_squall_pd_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 52,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.75, 1.2, 0.9]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 34,
+   "group": "storm",
+   "class": "bed",
+   "files": [
+    "generated/night_library/tallwindow_squall_pd_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 52,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.75, -1.2, 0.9]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 31,
+   "group": "storm",
+   "class": "bed",
+   "sound": {
+    "model": "wind",
+    "preset": "storm",
+    "params": {
+     "exposure": 1.2,
+     "gain": 0.13
+    }
+   },
+   "emitters": 3,
+   "spread": 7.0,
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [-9.0, 0.0, 2.0]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 32,
+   "group": "storm",
+   "class": "texture",
+   "sound": {
+    "model": "wind",
+    "preset": "gap_howl",
+    "params": {
+     "exposure": 0.9,
+     "gain": 0.18
+    }
+   },
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.75, -1.25, 1.05]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 33,
+   "group": "storm",
+   "class": "bed",
+   "sound": {
+    "model": "rain",
+    "preset": "downpour",
+    "params": {
+     "gain": 0.45
+    }
+   },
+   "emitters": 4,
+   "spread": 6.0,
+   "first": 0,
+   "fade": 8,
+   "motion": {
+    "type": "fixed",
+    "position": [-7.0, 0.0, -0.3]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "thunder",
+   "class": "event",
+   "sound": {
+    "model": "thunder",
+    "preset": "distant_rumble",
+    "params": {
+     "interval_s": 70,
+     "gain": 1.8
+    }
+   },
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-38.0, 24.0, 12.0]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 41,
+   "group": "thunder",
+   "class": "event",
+   "sound": {
+    "model": "thunder",
+    "preset": "rolling",
+    "params": {
+     "interval_s": 55,
+     "gain": 0.8
+    }
+   },
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [-45.0, -22.0, 14.0]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "pages",
+   "class": "event",
+   "files": [
+    "generated/night_library/page_turn_pd_1.wav",
+    "generated/night_library/page_turn_pd_2.wav",
+    "generated/night_library/page_turn_pd_3.wav",
+    "generated/night_library/page_turn_pd_4.wav",
+    "generated/night_library/page_turn_pd_5.wav",
+    "generated/night_library/page_turn_pd_6.wav"
+   ],
+   "level_db": 45,
+   "first": 14,
+   "interval": [40, 90],
+   "rate": [0.96, 1.03],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [0.42, 0.02, -0.42]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 51,
+   "group": "pen",
+   "class": "event",
+   "files": [
+    "generated/night_library/pen_scratch_pd_1.wav",
+    "generated/night_library/pen_scratch_pd_2.wav",
+    "generated/night_library/pen_scratch_cc0_1.wav"
+   ],
+   "level_db": 38,
+   "first": 48,
+   "interval": [50, 130],
+   "rate": [0.97, 1.03],
+   "fade": 0.3,
+   "motion": {
+    "type": "fixed",
+    "position": [0.55, -0.5, -0.38]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 60,
+   "group": "clock",
+   "class": "texture",
+   "files": [
+    "generated/night_library/clock_tick_kb_1.wav",
+    "generated/night_library/clock_tick_kb_2.wav",
+    "generated/night_library/clock_tick_kb_3.wav",
+    "generated/night_library/clock_tick_kb_4.wav",
+    "generated/night_library/clock_tick_kb_5.wav",
+    "generated/night_library/clock_tick_kb_6.wav",
+    "generated/night_library/clock_tick_kb_7.wav",
+    "generated/night_library/clock_tick_kb_8.wav",
+    "generated/night_library/clock_tick_kb_9.wav",
+    "generated/night_library/clock_tick_kb_10.wav",
+    "generated/night_library/clock_tick_kb_11.wav",
+    "generated/night_library/clock_tick_kb_12.wav"
+   ],
+   "level_db": 46,
+   "first": 0.5,
+   "exact": true,
+   "interval": [2.588583, 2.588583],
+   "fade": 3,
+   "motion": {
+    "type": "fixed",
+    "position": [4.25, -1.4, 0.55]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 61,
+   "group": "chime",
+   "class": "event",
+   "files": [
+    "generated/night_library/clock_strike_kb_1.wav",
+    "generated/night_library/clock_strike_kb_2.wav"
+   ],
+   "level_db": 52,
+   "first": 420,
+   "exact": true,
+   "interval": [1800, 1800],
+   "fade": 0.02,
+   "motion": {
+    "type": "fixed",
+    "position": [4.25, -1.4, 0.55]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 70,
+   "group": "house",
+   "class": "event",
+   "files": [
+    "generated/night_library/floor_creak_el2_1.wav",
+    "generated/night_library/floor_creak_el2_2.wav",
+    "generated/night_library/floor_creak_el2_3.wav"
+   ],
+   "level_db": 41,
+   "first": 70,
+   "interval": [150, 360],
+   "rate": [0.9, 1.05],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [1.9, 0.9, -1.15]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 71,
+   "group": "house",
+   "class": "event",
+   "files": [
+    "generated/night_library/floor_creak_el2_1.wav",
+    "generated/night_library/floor_creak_el2_2.wav",
+    "generated/night_library/floor_creak_el2_3.wav"
+   ],
+   "level_db": 40,
+   "first": 190,
+   "interval": [200, 480],
+   "rate": [0.85, 1.0],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [-0.9, -1.8, -1.15]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 72,
+   "group": "house",
+   "class": "event",
+   "files": [
+    "generated/night_library/shelf_creak_el2_1.wav",
+    "generated/night_library/shelf_creak_el2_2.wav"
+   ],
+   "level_db": 44,
+   "first": 150,
+   "interval": [200, 480],
+   "rate": [0.92, 1.05],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [4.35, 0.3, 0.4]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 73,
+   "group": "house",
+   "class": "event",
+   "files": [
+    "generated/night_library/radiator_tick_el2_1.wav",
+    "generated/night_library/radiator_tick_el2_2.wav",
+    "generated/night_library/radiator_tick_el2_3.wav"
+   ],
+   "level_db": 37,
+   "first": 35,
+   "interval": [90, 240],
+   "rate": [0.95, 1.06],
+   "fade": 0.05,
+   "motion": {
+    "type": "fixed",
+    "position": [-1.55, -1.2, -0.75]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 74,
+   "group": "corridor",
+   "class": "event",
+   "files": [
+    "generated/night_library/door_far_el2_1.wav",
+    "generated/night_library/door_far_el2_2.wav"
+   ],
+   "level_db": 53,
+   "first": 300,
+   "interval": [300, 900],
+   "rate": [0.92, 1.02],
+   "fade": 0.05,
+   "echo": {
+    "delay": 0.11,
+    "feedback": 0.35,
+    "mix": 0.45,
+    "damp_hz": 2200
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [14.0, 1.8, -0.35]
+   }
+  }
+ ]
+}

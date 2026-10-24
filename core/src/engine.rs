@@ -278,6 +278,8 @@ struct Dsp {
     course_touched: [bool; crate::direction::CHANNELS],
     course_released: [bool; crate::direction::CHANNELS],
     course_cue: Option<crate::direction::Cue>,
+    course_lever_touched: u32,
+    course_lever_released: u32,
     course_publish: f32,
     /// Moves clip entities and cues their players (clips.rs).
     choreo: crate::clips::Choreo,
@@ -337,6 +339,7 @@ impl Engine {
         let sr = if sample_rate.is_finite() && sample_rate >= 8000.0 { sample_rate } else { 48_000.0 };
         let rng = Rng::new(0xA5A5_3000 ^ desc.seed);
         let world = World::build(desc, sr)?;
+        crate::clips::validate_levers(desc)?;
         let director = Director::new(desc, &world);
         let course = crate::direction::Direction::new(desc)?;
         let direction_names = course
@@ -428,6 +431,8 @@ impl Engine {
             course_touched: [false; crate::direction::CHANNELS],
             course_released: [false; crate::direction::CHANNELS],
             course_cue: None,
+            course_lever_touched: 0,
+            course_lever_released: 0,
             course_publish: 0.0,
             choreo,
             acoustics,
@@ -569,7 +574,8 @@ impl Engine {
             let info = self.direction_info();
             let name = |i: u32| self.direction_episode_name(i as usize).unwrap_or("").to_string();
             let segment = self.direction_segment_label(info.episode as usize, info.segment as usize).unwrap_or("").to_string();
-            prompt::DirectionView { episode: name(info.episode), segment, next: name(info.next), info }
+            let episodes = (0..self.direction_episode_count()).map(|i| name(i as u32)).collect();
+            prompt::DirectionView { episode: name(info.episode), segment, next: name(info.next), info, episodes }
         });
         prompt::View { bank: &s.controls, params: &s.params, telemetry: &s.telemetry, glides: &s.glides, objects: &s.objects, labels: &s.labels, live, direction }
     }
@@ -612,6 +618,49 @@ impl Engine {
         // Known before the first block is rendered.
         i.available = !self.shared.direction_names.is_empty() as u32;
         i
+    }
+
+    /// Scene levers (clips.rs `LeverDesc`): count, description, value. Any thread.
+    pub fn scene_lever_count(&self) -> usize {
+        self.shared.clip_groups.lever_count()
+    }
+
+    pub fn scene_lever(&self, i: usize) -> Option<&crate::clips::LeverDesc> {
+        self.shared.clip_groups.lever(i)
+    }
+
+    pub fn scene_lever_value(&self, i: usize) -> f32 {
+        self.shared.clip_groups.lever_value(i)
+    }
+
+    /// Sets scene lever `i` by hand: the direction leaves it to the user for a while. NaN hands
+    /// it back to the direction (or, without one, resets it to its default).
+    pub fn set_scene_lever(&self, i: usize, v: f32) {
+        let directed = !self.shared.direction_names.is_empty();
+        if v.is_nan() {
+            self.shared.touches.mark_lever(i, true);
+            if !directed {
+                self.shared.clip_groups.set_lever(i, v);
+            }
+        } else if v.is_finite() {
+            if (self.scene_lever_value(i) - v).abs() > 1e-5 {
+                self.shared.touches.mark_lever(i, false);
+            }
+            self.shared.clip_groups.set_lever(i, v);
+        }
+    }
+
+    /// Option `i` of a discrete control in this scene: `direction.cue` lists this scene's
+    /// episodes; everything else is static (`controls::option_name`).
+    pub fn control_option(&self, id: u32, i: usize) -> Option<&str> {
+        if id == controls::id::DIRECTION_CUE && !self.shared.direction_names.is_empty() {
+            return match i {
+                0 => Some("none"),
+                1 => Some("next"),
+                k => self.direction_episode_name(k - 2),
+            };
+        }
+        controls::option_name(id, i as u32)
     }
 
     pub fn direction_episode_count(&self) -> usize {
@@ -986,10 +1035,12 @@ impl Dsp {
         let mut wrote = false;
         let cue = st.get(DIRECTION_CUE).round() as usize;
         if cue != 0 {
-            self.course_cue = match controls::CUES.get(cue) {
-                Some(&"next") => Some(Cue::Next),
-                Some(name) => course.index_of(name).map(Cue::Episode),
-                None => None,
+            // Options: none, next, then the scene's episodes in order (the forest's are the
+            // built-in ones, so `controls::CUES` names them).
+            self.course_cue = match cue {
+                1 => Some(Cue::Next),
+                k if k - 2 < course.episodes().len() => Some(Cue::Episode(k - 2)),
+                _ => None,
             };
             // An impulse: taken, it reads "none" again.
             shared.controls.set(DIRECTION_CUE, 0.0, &shared.params);
@@ -1007,13 +1058,29 @@ impl Dsp {
         input.touched = self.course_touched;
         input.released = self.course_released;
         input.cue = self.course_cue;
+        let groups = &shared.clip_groups;
+        for (i, v) in input.levers.iter_mut().enumerate().take(groups.lever_count()) {
+            *v = groups.lever_value(i);
+        }
+        let (lt, lr) = shared.touches.take_levers(&mut self.course_seen);
+        self.course_lever_touched |= lt;
+        self.course_lever_released |= lr;
+        input.lever_touched = self.course_lever_touched;
+        input.lever_released = self.course_lever_released;
         if !course.advance(dt, &input) {
             return wrote;
         }
         self.course_touched = [false; CHANNELS];
         self.course_released = [false; CHANNELS];
         self.course_cue = None;
+        self.course_lever_touched = 0;
+        self.course_lever_released = 0;
         let out = *course.output();
+        for i in 0..groups.lever_count() {
+            if out.lever_write & (1 << i) != 0 {
+                groups.set_lever(i, out.levers[i]);
+            }
+        }
         for c in 0..CHANNELS {
             if out.release[c] {
                 shared.controls.set(CONTROL_IDS[c], f32::NAN, &shared.params);

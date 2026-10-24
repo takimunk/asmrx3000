@@ -34,6 +34,10 @@ struct LeverPanel: View {
     @ObservedObject var audio: AudioEngine
     var stills: StillFrames?
     @AppStorage("levers.showAll") private var showAllStored = false
+    /// The world's levers are open by default; the sound section folds to its strip of mutes.
+    /// (New keys: the earlier "section.*.open" started both folded.)
+    @AppStorage("levers.sound.open") private var soundOpenStored = false
+    @AppStorage("levers.world.open") private var worldOpenStored = true
     @ObservedObject private var lang = Language.shared
 
     static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT,
@@ -52,6 +56,8 @@ struct LeverPanel: View {
     }
 
     private var showAll: Bool { stills.map(\.showAll) ?? showAllStored }
+    private var soundOpen: Bool { stills.map(\.soundOpen) ?? soundOpenStored }
+    private var worldOpen: Bool { stills.map(\.worldOpen) ?? worldOpenStored }
     private var drawer: UInt32? { stills != nil ? stills?.drawer : controls.expanded }
 
     /// The world levers in display order: (always shown, behind "more").
@@ -71,16 +77,24 @@ struct LeverPanel: View {
         return showAll ? s.shown + s.more : s.shown
     }
 
-    /// The clip scene's levers (AudioEngine.sceneControls), in their order.
-    /// The scene's clip groups first (one lever each, level), then the four scene-wide ones.
+    /// The clip scene's technical levers (behind "more"): one per clip group (its aspects open in
+    /// a drawer), then the four scene-wide ones (AudioEngine.sceneControls).
     static func sceneLevers(_ macros: [Control]) -> [Control] {
         func rank(_ c: Control) -> UInt32 { c.id >= AudioEngine.clipControlBase ? c.id : 0x10_0000 + c.id }
-        return macros.filter { $0.group >= AudioEngine.sceneGroup }.sorted { rank($0) < rank($1) }
+        return macros.filter { $0.group >= AudioEngine.sceneGroup && !$0.key.hasPrefix("lever.") }
+            .sorted { rank($0) < rank($1) }
     }
 
-    /// The levers the lever section draws (the tracks behind their sliders follow them).
+    /// The clip scene's world: its scene levers ("Ships", "Whales"), then the direction.
+    static func worldLevers(_ macros: [Control]) -> [Control] {
+        macros.filter { $0.key.hasPrefix("lever.") }.sorted { $0.id < $1.id }
+            + macros.filter { Int($0.group) == ASMR_GROUP_DIRECTION }
+    }
+
+    /// The levers drawn over live waveforms (the tracks behind their sliders follow them): the
+    /// forest's world levers; in a clip scene only the technical ones behind "more".
     static func levers(_ macros: [Control], scene: SceneInfo, flying: Bool, showAll: Bool) -> [Control] {
-        scene.isClip ? sceneLevers(macros) : visible(macros, flying: flying, showAll: showAll)
+        scene.isClip ? worldLevers(macros) + (showAll ? sceneLevers(macros) : []) : visible(macros, flying: flying, showAll: showAll)
     }
 
     static func layout(_ levers: [Control]) -> [ScopeRow] {
@@ -102,25 +116,26 @@ struct LeverPanel: View {
                                value: preview[head] ?? 0, defaultValue: 0, key: head + ".level", unit: "dB")
             }
         }
-        func rank(_ c: Control) -> Int { soundOrder.firstIndex(of: Int(c.group)) ?? 100 + Int(c.group) }
+        // A clip scene's groups keep the order of the scene file.
+        func rank(_ c: Control) -> Int { c.id >= AudioEngine.clipControlBase ? 1000 + Int(c.id) : soundOrder.firstIndex(of: Int(c.group)) ?? 100 + Int(c.group) }
         return found.sorted { rank($0) < rank($1) }
     }
 
     var body: some View {
         let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         if let id = drawer, let macro = controls.controls.first(where: { $0.id == id }) {
-            Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: stills == nil,
+            Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: false,
                    status: Int(macro.group) == ASMR_GROUP_DIRECTION ? { Self.directionStatus(audio) } : nil,
                    set: set, close: { controls.expanded = nil })
         } else if audio.scene.isClip {
             VStack(alignment: .leading, spacing: 0) {
-                sound(hour: hour, only: audio.scene.groups)
                 clipScene(hour: hour)
+                sound(hour: hour, only: audio.scene.groups)
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                sound(hour: hour)
                 world(hour: hour)
+                sound(hour: hour)
             }
         }
     }
@@ -130,8 +145,11 @@ struct LeverPanel: View {
     private func drawerChildren(of id: UInt32) -> [Control] {
         let all = controls.children(of: id)
         let hasLevel = all.contains(where: \.isLevel)
+        // A clip scene's direction drives only the levers: time and weather mean nothing there.
+        let climate = audio.directionInfo().climate != 0 || !audio.scene.isClip
         return all.filter { c in
             !c.isLevel && !(hasLevel && c.key.hasSuffix(".gain"))
+                && (climate || (c.key != "direction.weather" && c.key != "direction.clock"))
         }
     }
 
@@ -139,9 +157,12 @@ struct LeverPanel: View {
     static func directionStatus(_ audio: AudioEngine) -> String? {
         let d = audio.directionInfo()
         guard d.available != 0, d.active != 0 else { return nil }
-        var now = ControlText.option("cue." + audio.directionEpisodeName(d.episode))
+        let episode = audio.directionEpisodeName(d.episode)
+        var now = ControlText.option("cue." + episode)
         let segment = audio.directionSegmentLabel(episode: d.episode, segment: d.segment)
-        if !segment.isEmpty { now += " · " + ControlText.segment(segment) }
+        // A stretch that only repeats the spell's name is left out ("quiet shift" in "quiet_shift").
+        let same = segment.replacingOccurrences(of: " ", with: "_") == episode
+        if !segment.isEmpty, !same, ControlText.segment(segment) != now { now += " · " + ControlText.segment(segment) }
         let next = ControlText.option("cue." + audio.directionEpisodeName(d.next))
         let minutes = Swift.max(1, Int((d.episode_left_s / 60).rounded()))
         return now + " — " + tr("then: %@, ~%d min", next, minutes)
@@ -151,13 +172,24 @@ struct LeverPanel: View {
 
     /// `only`: the groups the scene has sounds of (a clip scene); the mix is the forest's.
     @ViewBuilder private func sound(hour: Float?, only: Set<Int>? = nil) -> some View {
-        let levels = Self.levels(controls.controls).filter { only?.contains(Int($0.group)) ?? true }
+        let levels = Self.levels(controls.controls).filter { $0.id >= AudioEngine.clipControlBase || only?.contains(Int($0.group)) ?? true }
         let mix = only == nil ? controls.macros.first { Int($0.group) == ASMR_GROUP_MIX } : nil
         // Without level controls (an older core) the section keeps only the mix's clarity.
         if !levels.isEmpty || mix != nil {
-            SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : tr("group levels, dB"))
+            if soundOpen {
+                SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : tr("group levels, dB"),
+                              open: true) { soundOpenStored.toggle() }
+            } else {
+                // Folded, the header is the mixer at a glance: every group's pictogram (lit while
+                // it sounds, struck through when muted; a click mutes), and the mix's clarity.
+                SoundStrip(levels: levels, mix: mix, hour: hour, meters: model.stage.meters, set: set,
+                           openMix: { if let mix { controls.expanded = mix.id } }) {
+                    soundOpenStored.toggle()
+                }
+            }
             let cells: [SoundCell.Kind] = levels.map { .level($0) } + (mix.map { [.mix($0)] } ?? [])
             let rows = stride(from: 0, to: cells.count, by: 2).map { Array(cells[$0..<Swift.min($0 + 2, cells.count)]) }
+            if soundOpen {
             VStack(spacing: 0) {
                 ForEach(rows.indices, id: \.self) { r in
                     HStack(spacing: Popover.soundColumnGap) {
@@ -170,7 +202,7 @@ struct LeverPanel: View {
                     .frame(height: Popover.soundRowHeight)
                 }
             }
-            .padding(.bottom, Grid.x3)
+            }
         }
     }
 
@@ -196,29 +228,44 @@ struct LeverPanel: View {
         return VStack(alignment: .leading, spacing: 0) {
             // Polled once a second: in a journey the biome under the listener changes as it flies.
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                SectionHeader(title: tr("World"), note: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest"))
+                SectionHeader(title: tr("World"), note: worldNote(plain: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest")),
+                              open: worldOpen) { worldOpenStored.toggle() }
             }
-            rows(shown, hour: hour)
-            if !split.more.isEmpty {
+            if worldOpen { rows(shown, hour: hour) }
+            if worldOpen, !split.more.isEmpty {
                 MoreRow(more: split.more, hour: hour, showAll: showAll) { showAllStored.toggle() }
                     .frame(height: Popover.leverHeight)
             }
         }
+        .padding(.bottom, worldOpen ? Grid.x2 : 0)
+    }
+
+    /// The world header's note: what is going on in it (the direction's spell and what follows),
+    /// else what the section is. In flight the landscape under the listener says more.
+    private func worldNote(plain: String) -> String {
+        audio.flying ? plain : Self.directionStatus(audio) ?? plain
     }
 
     /// The lever rows over the live waveforms of their groups.
-    private func rows(_ shown: [Control], hour: Float?) -> some View {
+    private func rows(_ shown: [Control], hour: Float?, tracks: Bool = true, stillRow: Int = 0, stillRows: Int? = nil) -> some View {
         ZStack(alignment: .topLeading) {
-            Group {
-                if let stills {
-                    Image(decorative: stills.tracks, scale: 2).resizable()
-                } else {
-                    TracksSurface(stage: model.stage, rows: Self.layout(shown))
+            if tracks {
+                Group {
+                    if let stills {
+                        // One picture serves every block of rows: this block is its slice.
+                        Image(decorative: stills.tracks, scale: 2).resizable()
+                            .frame(height: Popover.leverHeight * CGFloat(stillRows ?? shown.count))
+                            .offset(y: -Popover.leverHeight * CGFloat(stillRow))
+                            .frame(height: Popover.leverHeight * CGFloat(shown.count), alignment: .top)
+                            .clipped()
+                    } else {
+                        TracksSurface(stage: model.stage, rows: Self.layout(shown))
+                    }
                 }
+                .frame(width: Popover.sliderWidth, height: Popover.leverHeight * CGFloat(shown.count))
+                .opacity(0.8)
+                .padding(.leading, Popover.iconColumn + Popover.nameColumn)
             }
-            .frame(width: Popover.sliderWidth, height: Popover.leverHeight * CGFloat(shown.count))
-            .opacity(0.8)
-            .padding(.leading, Popover.iconColumn + Popover.nameColumn)
 
             VStack(spacing: 0) {
                 ForEach(shown, id: \.id) { m in
@@ -232,18 +279,33 @@ struct LeverPanel: View {
 
     // MARK: Clip scene
 
+    /// The world of a clip scene: its levers and the direction; behind "more" the technical
+    /// ones (each group's aspects, the scene-wide multipliers).
     private func clipScene(hour: Float?) -> some View {
-        let grouped = !audio.clipGroups.isEmpty
         let plain: String = switch audio.scene.look {
         case .underwater: tr("what happens in the water")
         case .space: tr("what happens around you")
         default: tr("the scene's sounds")
         }
-        let note = grouped ? tr("group levels; “all” moves every group") : plain
+        let world = Self.worldLevers(controls.macros)
+        let more = Self.sceneLevers(controls.macros)
         return VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(title: tr("Scene"), note: note)
-            rows(Self.sceneLevers(controls.macros), hour: hour)
+            if !world.isEmpty || more.isEmpty {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    SectionHeader(title: tr("World"), note: worldNote(plain: plain), open: worldOpen) { worldOpenStored.toggle() }
+                }
+                if worldOpen { rows(world, hour: hour, stillRows: world.count + (showAll ? more.count : 0)) }
+            } else {
+                SectionHeader(title: tr("Scene"), note: worldOpen ? tr("group levels; “all” moves every group") : tr("levers"),
+                              open: worldOpen) { worldOpenStored.toggle() }
+            }
+            if worldOpen, !more.isEmpty {
+                MoreRow(more: more, hour: hour, showAll: showAll, compact: true) { showAllStored.toggle() }
+                    .frame(height: Popover.leverHeight)
+                if showAll { rows(more, hour: hour, stillRow: world.count, stillRows: world.count + more.count) }
+            }
         }
+        .padding(.bottom, worldOpen ? Grid.x2 : 0)
     }
 
     private func set(_ id: UInt32, _ value: Float) {
@@ -257,22 +319,142 @@ struct LeverPanel: View {
 private struct SectionHeader: View {
     let title: String
     let note: String
+    let open: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
 
     var body: some View {
+        Button {
+            if Motion.reduced { toggle() } else { withAnimation(.easeOut(duration: 0.16)) { toggle() } }
+        } label: {
+            HStack(spacing: Grid.x2) {
+                Text(title)
+                    .font(Ink.text(Ink.Size.body))
+                    .foregroundStyle(Ink.paper)
+                    .fixedSize()
+                Rectangle().fill(Ink.hairline).frame(height: 1)
+                    .frame(minWidth: Grid.x4)
+                Text(note)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.graphite, size: 12, lineWidth: 1)
+                    .rotationEffect(.degrees(open ? -90 : 90))
+            }
+            .frame(height: Popover.headerHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(open ? tr("Fold %@", title) : tr("Unfold %@", title))
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// The sound section folded: "Звук" and, in the hairline's place, one pictogram per group (a
+/// click mutes or unmutes it; lit while it sounds, struck through when muted), the mix's clarity
+/// (opens its drawer), then what is muted and the chevron. Anywhere else on the line unfolds.
+private struct SoundStrip: View {
+    @ObservedObject private var lang = Language.shared
+    let levels: [Control]
+    let mix: Control?
+    var hour: Float?
+    @ObservedObject var meters: Meters
+    let set: (UInt32, Float) -> Void
+    let openMix: () -> Void
+    let toggle: () -> Void
+    @State private var hovering = false
+    @State private var hoveredCell: UInt32?
+    /// What each mute toggles back to.
+    @State private var unmuted: [UInt32: Float] = [:]
+
+    var body: some View {
+        let muted = levels.filter(\.isMuted)
         HStack(spacing: Grid.x2) {
-            Text(title)
+            Text(tr("Sound"))
                 .font(Ink.text(Ink.Size.body))
                 .foregroundStyle(Ink.paper)
                 .fixedSize()
+                .padding(.trailing, Grid.x1)
+            HStack(spacing: 0) {
+                ForEach(levels, id: \.id) { c in cell(c) }
+            }
+            if let mix {
+                Button(action: openMix) {
+                    HStack(spacing: Grid.x1) {
+                        IconView(icon: Icon.forControl(mix, hour: hour), color: hoveredCell == mix.id ? Ink.paper : Ink.graphite,
+                                 size: Popover.smallIconSize, lineWidth: 1)
+                        Text(ControlText.value(mix))
+                            .font(Ink.text(Ink.Size.caption))
+                            .foregroundStyle(hoveredCell == mix.id ? Ink.paper : Ink.graphite)
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, Grid.x1)
+                    .frame(height: Popover.headerHeight + Grid.x1)
+                    .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous)
+                        .fill(hoveredCell == mix.id ? Ink.raised : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .onHover { hoveredCell = $0 ? mix.id : (hoveredCell == mix.id ? nil : hoveredCell) }
+                .help(tr("%@: details", ControlText.lever(mix)))
+                .accessibilityLabel(tr("Mix: details"))
+                .accessibilityValue(ControlText.value(mix))
+            }
             Rectangle().fill(Ink.hairline).frame(height: 1)
-            Text(note)
+                .frame(minWidth: Grid.x4)
+            Text(muted.isEmpty ? tr("levels") : tr("muted: %@", muted.count == 1 ? ControlText.group(muted[0]).lowercased() : String(muted.count)))
                 .font(Ink.text(Ink.Size.caption))
-                .foregroundStyle(Ink.ash)
+                .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
                 .lineLimit(1)
+                .truncationMode(.tail)
+            IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.graphite, size: 12, lineWidth: 1)
+                .rotationEffect(.degrees(90))
         }
-        .frame(height: Popover.headerHeight)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+        .frame(height: Popover.headerHeight + Grid.x1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if Motion.reduced { toggle() } else { withAnimation(.easeOut(duration: 0.16)) { toggle() } }
+        }
+        .onHover { hovering = $0 }
+        .help(tr("Unfold %@", tr("Sound")))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(tr("Sound"))
+        .accessibilityAction(named: tr("Unfold %@", tr("Sound"))) { toggle() }
+    }
+
+    private func cell(_ c: Control) -> some View {
+        let muted = c.isMuted
+        let audible = Track(group: c.group).map { meters.audible.contains($0) } ?? false
+        let lit = hoveredCell == c.id
+        let name = ControlText.group(c)
+        return Button { mute(c) } label: {
+            IconView(icon: Icon.forControl(c, hour: hour),
+                     color: muted ? Ink.ash : lit ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
+                     size: Popover.smallIconSize, animating: lit && meters.live && !muted, struck: muted, lineWidth: 1)
+                .frame(width: Grid.x6, height: Popover.headerHeight + Grid.x1)
+                .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous).fill(lit ? Ink.raised : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { hoveredCell = $0 ? c.id : (hoveredCell == c.id ? nil : hoveredCell) }
+        .help((muted ? tr("unmute %@", name.lowercased()) : tr("mute %@", name.lowercased())) + "   " + ControlText.value(c))
+        .accessibilityLabel(muted ? tr("Unmute: %@", name) : tr("Mute: %@", name))
+        .accessibilityValue(ControlText.value(c))
+    }
+
+    private func mute(_ c: Control) {
+        if c.isMuted {
+            let back = unmuted[c.id] ?? 0
+            set(c.id, back > c.min + 0.01 ? back : 0)
+        } else {
+            unmuted[c.id] = c.value
+            set(c.id, c.min)
+        }
     }
 }
 
@@ -294,11 +476,12 @@ enum ControlText {
 
     /// The name of a world lever: what the macro is, physically.
     static func lever(_ c: Control) -> String {
-        clipName(c) ?? names[c.key].map(tr) ?? group(c)
+        leverTitle(c) ?? clipName(c) ?? names[c.key].map(tr) ?? group(c)
     }
 
     static func group(_ c: Control) -> String {
-        if let t = clipTitle(c) { return t }
+        if let t = leverTitle(c) ?? clipTitle(c) { return t }
+        if c.key.hasPrefix("scene."), let n = names[c.key] { return tr(n) }
         switch Int(c.group) {
         case ASMR_GROUP_WATER: return tr("Water")
         case ASMR_GROUP_WIND: return tr("Wind")
@@ -386,6 +569,66 @@ enum ControlText {
         "cue.breeze": N_("breeze"), "cue.windy": N_("windy"), "cue.overcast": N_("overcast"), "cue.drizzle": N_("drizzle"),
         "cue.shower": N_("shower"), "cue.steady_rain": N_("long rain"), "cue.thunderstorm": N_("thunderstorm"),
         "cue.after_rain": N_("after the rain"), "cue.mist": N_("mist"),
+        // The clip scenes' spells.
+        "cue.calm_drift": N_("calm drift"), "cue.whales_near": N_("whales near"), "cue.pod_passes": N_("a pod passes"),
+        "cue.storm_above": N_("storm above"), "cue.reef_morning": N_("reef morning"), "cue.quiet_shift": N_("quiet shift"),
+        "cue.convoy": N_("convoy"), "cue.docking": N_("docking"), "cue.solar_storm": N_("solar storm"),
+        "cue.night_side": N_("night side"),
+        // The new scenes' episodes.
+        "cue.arrival": N_("arrival"),
+        "cue.body_scan": N_("body scan"),
+        "cue.booming": N_("booming"),
+        "cue.calm_watch": N_("calm watch"),
+        "cue.clearing": N_("clearing up"),
+        "cue.coldest_hour": N_("coldest hour"),
+        "cue.contemplation": N_("contemplation"),
+        "cue.deep_night": N_("deep night"),
+        "cue.deep_quiet": N_("deep quiet"),
+        "cue.departure": N_("departure"),
+        "cue.dusk_cooling": N_("dusk cooling"),
+        "cue.fog": N_("fog"),
+        "cue.freshening": N_("freshening"),
+        "cue.gale": N_("gale"),
+        "cue.hills": N_("hills"),
+        "cue.old_line": N_("old line"),
+        "cue.plains": N_("plains"),
+        "cue.preparation": N_("preparation"),
+        "cue.rain_belt": N_("rain belt"),
+        "cue.rest": N_("rest"),
+        "cue.serving": N_("serving"),
+        "cue.skater": N_("skater"),
+        "cue.snow_drift": N_("snow drifting"),
+        "cue.squall": N_("squall"),
+        "cue.station": N_("a stop"),
+        "cue.still_night": N_("still night"),
+        "cue.whisking": N_("whisking"),
+        // The cave's episodes.
+        "cue.settling_in": N_("settling in"),
+        "cue.drip_by_drip": N_("drip by drip"),
+        "cue.dry_spell": N_("dry spell"),
+        "cue.rain_above": N_("rain above"),
+        "cue.deep_silence": N_("deep silence"),
+        "cue.air_from_outside": N_("air from outside"),
+        "cue.stones_settle": N_("stones settle"),
+        // The yacht at anchor ("breeze" and "still night" are above).
+        "cue.flat_calm": N_("flat calm"),
+        "cue.tide_turns": N_("tide turns"),
+        "cue.dawn": N_("dawn"),
+        // Campfire by the sea.
+        "cue.kindling": N_("kindling"),
+        "cue.steady_fire": N_("steady fire"),
+        "cue.low_embers": N_("low embers"),
+        "cue.rising_tide": N_("rising tide"),
+        "cue.before_dawn": N_("before dawn"),
+        // The night library's episodes.
+        "cue.quiet_reading": N_("quiet reading"),
+        "cue.rain_sets_in": N_("rain sets in"),
+        "cue.fire_burns_low": N_("fire burning low"),
+        "cue.storm_outside": N_("storm outside"),
+        "cue.late_stillness": N_("late stillness"),
+        // The tent in the rain ("drizzle", "steady_rain" and "clearing" are above).
+        "cue.passing_storm": N_("passing storm"),
+        "cue.night_wind": N_("night wind"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -397,18 +640,279 @@ enum ControlText {
         "distant thunder": N_("distant thunder"), "calm before the storm": N_("calm before the storm"),
         "the cell overhead": N_("the cell overhead"), "trailing rain": N_("trailing rain"),
         "storm moving away": N_("storm moving away"), "after the rain": N_("after the rain"), "mist": N_("mist"),
+        // The new scenes' stretches.
+        "a calm watch": N_("a calm watch"),
+        "a late skater": N_("a late skater"),
+        "a sleeping station": N_("a sleeping station"),
+        "a steady blow": N_("a steady blow"),
+        "across to the right arm": N_("across to the right arm"),
+        "afterglow": N_("afterglow"),
+        "alone again": N_("alone again"),
+        "approach": N_("approach"),
+        "around the head": N_("around the head"),
+        "arrival": N_("arrival"),
+        "away again": N_("away again"),
+        "belly": N_("belly"),
+        "calm again": N_("calm again"),
+        "chest & heart": N_("chest & heart"),
+        "clearing the utensils": N_("clearing the utensils"),
+        "clicks in the distance": N_("clicks in the distance"),
+        "convoy moving off": N_("convoy moving off"),
+        "crown": N_("crown"),
+        "deep night": N_("deep night"),
+        "deep quiet": N_("deep quiet"),
+        "deep still night": N_("deep still night"),
+        "drifting snow": N_("drifting snow"),
+        "easing": N_("easing"),
+        "entering the shadow": N_("entering the shadow"),
+        "first drops": N_("first drops"),
+        "fog bank": N_("fog bank"),
+        "fog lifting": N_("fog lifting"),
+        "fog rolls in": N_("fog rolls in"),
+        "full gale": N_("full gale"),
+        "gathering speed": N_("gathering speed"),
+        "hard dock": N_("hard dock"),
+        "inside": N_("inside"),
+        "into the hills": N_("into the hills"),
+        "left arm": N_("left arm"),
+        "legs & feet": N_("legs & feet"),
+        "line speed": N_("line speed"),
+        "moving on": N_("moving on"),
+        "old jointed line": N_("old jointed line"),
+        "open plains": N_("open plains"),
+        "open water": N_("open water"),
+        "out of the hills": N_("out of the hills"),
+        "over the reef": N_("over the reef"),
+        "particle counts rising": N_("particle counts rising"),
+        "pod moving off": N_("pod moving off"),
+        "pulling out": N_("pulling out"),
+        "purifying the utensils": N_("purifying the utensils"),
+        "rain and the water jar": N_("rain and the water jar"),
+        "rain eases": N_("rain eases"),
+        "rain in the garden": N_("rain in the garden"),
+        "rain on the glass": N_("rain on the glass"),
+        "rain starts above": N_("rain starts above"),
+        "rest": N_("rest"),
+        "return": N_("return"),
+        "settling": N_("settling"),
+        "ships on approach": N_("ships on approach"),
+        "slowing": N_("slowing"),
+        "snow begins to drift": N_("snow begins to drift"),
+        "songs from afar": N_("songs from afar"),
+        "squall line": N_("squall line"),
+        "stillness": N_("stillness"),
+        "storm on the surface": N_("storm on the surface"),
+        "storm subsiding": N_("storm subsiding"),
+        "systems settle": N_("systems settle"),
+        "the bowl is set before you": N_("the bowl is set before you"),
+        "the coldest hour": N_("the coldest hour"),
+        "the convoy passes": N_("the convoy passes"),
+        "the eaves drip": N_("the eaves drip"),
+        "the gale builds": N_("the gale builds"),
+        "the ice tightens": N_("the ice tightens"),
+        "the lake booms": N_("the lake booms"),
+        "the pod around you": N_("the pod around you"),
+        "the rain stops": N_("the rain stops"),
+        "the sky clears": N_("the sky clears"),
+        "the squall": N_("the squall"),
+        "the wind freshens": N_("the wind freshens"),
+        "throat & shoulders": N_("throat & shoulders"),
+        "thunder moving off": N_("thunder moving off"),
+        "tunnels and bridges": N_("tunnels and bridges"),
+        "whales close": N_("whales close"),
+        "whisking the tea": N_("whisking the tea"),
+        // The cave's stretches ("drip by drip", "dry spell", "deep silence", "stones settle" are its spells' names).
+        "the cave settles around you": N_("the cave settles around you"),
+        "the drips thin out": N_("the drips thin out"),
+        "the first drips return": N_("the first drips return"),
+        "rain soaks in above": N_("rain soaks in above"),
+        "the cave is raining": N_("the cave is raining"),
+        "the water drains away": N_("the water drains away"),
+        "air from the entrance": N_("air from the entrance"),
+        "the air stills": N_("the air stills"),
+        "still again": N_("still again"),
+        // The yacht at anchor.
+        "a still night at anchor": N_("a still night at anchor"),
+        "a breeze picks up": N_("a breeze picks up"),
+        "a fresh night breeze": N_("a fresh night breeze"),
+        "the breeze dies away": N_("the breeze dies away"),
+        "slack water": N_("slack water"),
+        "the boat swings to the tide": N_("the boat swings to the tide"),
+        "lying to the new tide": N_("lying to the new tide"),
+        "first light": N_("first light"),
+        "dawn over the bay": N_("dawn over the bay"),
+        "morning settles": N_("morning settles"),
+        // Campfire by the sea.
+        "kindling catches": N_("kindling catches"),
+        "the fire takes": N_("the fire takes"),
+        "a good blaze": N_("a good blaze"),
+        "a steady fire": N_("a steady fire"),
+        "the fire burns down": N_("the fire burns down"),
+        "the tide turns": N_("the tide turns"),
+        "high water": N_("high water"),
+        "the tide eases": N_("the tide eases"),
+        "a breeze off the sea": N_("a breeze off the sea"),
+        "breezy": N_("breezy"),
+        "the breeze drops": N_("the breeze drops"),
+        "the fire dies down": N_("the fire dies down"),
+        "embers before dawn": N_("embers before dawn"),
+        // The night library's stretches ("rain setting in", "steady rain", "storm moving away" above).
+        "reading by the fire": N_("reading by the fire"),
+        "the fire burns low": N_("the fire burns low"),
+        "glowing embers": N_("glowing embers"),
+        "a fresh log": N_("a fresh log"),
+        "the wind rises": N_("the wind rises"),
+        "storm over the roofs": N_("storm over the roofs"),
+        "late-night stillness": N_("late-night stillness"),
+        // The tent in the rain ("steady rain", "the rain stops", "thunder moving off" are above).
+        "drizzle on the fly": N_("drizzle on the fly"),
+        "the rain sets in": N_("the rain sets in"),
+        "thunder over the valley": N_("thunder over the valley"),
+        "the storm passes over": N_("the storm passes over"),
+        "only the drips": N_("only the drips"),
+        "wind off the ridge": N_("wind off the ridge"),
+        "gusts on the fly": N_("gusts on the fly"),
+        "the wind drops": N_("the wind drops"),
     ]
 
-    static func segment(_ raw: String) -> String { segments[raw].map(tr) ?? raw }
+    /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
+    static func segment(_ raw: String) -> String {
+        segments[raw].map(tr) ?? options["cue." + raw.replacingOccurrences(of: " ", with: "_")].map(tr) ?? raw
+    }
 
+    /// A scene's own spells may be any snake_case word: the rest are humanised.
     static func option(_ raw: String) -> String {
-        options[raw].map(tr) ?? raw.replacingOccurrences(of: "_", with: " ")
+        options[raw].map(tr) ?? (raw.hasPrefix("cue.") ? String(raw.dropFirst(4)) : raw).replacingOccurrences(of: "_", with: " ")
     }
 
     private static let units = [
         "m/s": N_("m/s"), "m": N_("m"), "mm/h": N_("mm/h"), "kW": N_("kW"), "°C": N_("°C"), "°/s": N_("°/s"), "x": N_("x"), "min": N_("min"),
         "dB": N_("dB"), "LUFS": N_("LUFS"), "Hz": N_("Hz"),
     ]
+
+    // MARK: Scene levers (AudioEngine.SceneLever)
+
+    /// The scene files' lever titles (English, as authored), so the translations are found.
+    private static let leverTitles = [
+        "Ships": N_("Ships"), "Station": N_("Station"), "Docking": N_("Docking"), "Radio": N_("Radio"),
+        "Solar wind": N_("Solar wind"), "Current": N_("Current"), "Whales": N_("Whales"), "Dolphins": N_("Dolphins"),
+        "Reef": N_("Reef"), "Rain above": N_("Rain above"), "Depth": N_("Depth"),
+        // The new scenes' group and lever titles.
+        "Bell buoy": N_("Bell buoy"),
+        "Bowls": N_("Bowls"),
+        "Bridges": N_("Bridges"),
+        "Ceremony": N_("Ceremony"),
+        "Compartment": N_("Compartment"),
+        "Countryside": N_("Countryside"),
+        "Crossings": N_("Crossings"),
+        "Deep ice": N_("Deep ice"),
+        "Eaves": N_("Eaves"),
+        "Fog": N_("Fog"),
+        "Foghorn": N_("Foghorn"),
+        "Frost": N_("Frost"),
+        "Gale": N_("Gale"),
+        "Garden": N_("Garden"),
+        "Guide": N_("Guide"),
+        "Horn": N_("Horn"),
+        "Kettle": N_("Kettle"),
+        "Lamp": N_("Lamp"),
+        "Near cracks": N_("Near cracks"),
+        "Old rails": N_("Old rails"),
+        "Passing trains": N_("Passing trains"),
+        "Rail joints": N_("Rail joints"),
+        "Rain on the window": N_("Rain on the window"),
+        "Room": N_("Room"),
+        "Rumble": N_("Rumble"),
+        "Running cracks": N_("Running cracks"),
+        "Sea": N_("Sea"),
+        "Shore forest": N_("Shore forest"),
+        "Shore life": N_("Shore life"),
+        "Singing ice": N_("Singing ice"),
+        "Snow drift": N_("Snow drift"),
+        "Space weather": N_("Space weather"),
+        "Speed": N_("Speed"),
+        "Stations": N_("Stations"),
+        "Temple bell": N_("Temple bell"),
+        "Thunder": N_("Thunder"),
+        "Tower": N_("Tower"),
+        "Tunnels": N_("Tunnels"),
+        "Vastness": N_("Vastness"),
+        // The cave.
+        "Drips": N_("Drips"),
+        "Pools": N_("Pools"),
+        "Stream": N_("Stream"),
+        "Pebbles": N_("Pebbles"),
+        "Slow drip": N_("Slow drip"),
+        "Drips on rock": N_("Drips on rock"),
+        "Far drips": N_("Far drips"),
+        "Draught": N_("Draught"),
+        // The yacht at anchor.
+        "Anchor chain": N_("Anchor chain"),
+        "Bay": N_("Bay"),
+        "Creaks": N_("Creaks"),
+        "Dawn": N_("Dawn"),
+        "Gulls": N_("Gulls"),
+        "Gusts": N_("Gusts"),
+        "Halyard": N_("Halyard"),
+        "Harbour": N_("Harbour"),
+        "Hull": N_("Hull"),
+        "Moored boats": N_("Moored boats"),
+        "Rigging": N_("Rigging"),
+        "Slaps": N_("Slaps"),
+        "Swell": N_("Swell"),
+        "Tide": N_("Tide"),
+        "Wind": N_("Wind"),
+        // Campfire by the sea.
+        "Surf": N_("Surf"), "Night life": N_("Night life"),
+        "Crackle": N_("Crackle"), "Flames": N_("Flames"), "Embers": N_("Embers"), "Driftwood": N_("Driftwood"),
+        "Dune grass": N_("Dune grass"),
+        // The night library.
+        "Clock": N_("Clock"),
+        "Fire": N_("Fire"),
+        "House": N_("House"),
+        "Pages": N_("Pages"),
+        "Pen": N_("Pen"),
+        "Reading": N_("Reading"),
+        "Storm": N_("Storm"),
+        // The tent in the rain ("Rain", "Wind", "Thunder" are translated as they are).
+        "Rain on the fly": N_("Rain on the fly"),
+        "Downpour": N_("Downpour"),
+        "Meadow": N_("Meadow"),
+        "Fly and poles": N_("Fly and poles"),
+        "Sleeping bag": N_("Sleeping bag"),
+        "Tent": N_("Tent"),
+    ]
+
+    private static func leverKey(_ c: Control) -> String? {
+        c.key.hasPrefix("lever.") ? String(c.key.dropFirst(6)) : nil
+    }
+
+    static func leverTitle(_ c: Control) -> String? {
+        guard let key = leverKey(c) else { return nil }
+        guard let title = ClipGroupLabels.leverTitles[key], !title.isEmpty else { return sentence(key.replacingOccurrences(of: "_", with: " ")) }
+        return leverTitles[title].map(tr) ?? tr(title)
+    }
+
+    static func leverIcon(_ c: Control) -> Icon? {
+        guard let key = leverKey(c) else { return nil }
+        switch ClipGroupLabels.leverIcons[key] ?? "" {
+        case "ship": return .ship
+        case "station": return .station
+        case "docking": return .docking
+        case "radio": return .radio
+        case "plasma": return .plasma
+        case "water", "current": return .water
+        case "whale": return .whale
+        case "dolphin": return .dolphin
+        case "reef": return .reef
+        case "rain": return .rain
+        case "bubbles": return .bubbles
+        case "wind": return .wind
+        case "depth": return .depth
+        case "tone": return .tone
+        default: return Icon.named(ClipGroupLabels.leverIcons[key] ?? "") ?? .dot
+        }
+    }
 
     // MARK: Clip groups (AudioEngine.clipGroups)
 
@@ -463,7 +967,7 @@ enum ControlText {
             case "orbit": return .orbit
             case "wind": return .wind
             case "tone": return .tone
-            default: return .volume
+            default: return Icon.named(key) ?? .volume
             }
         }
         switch p.leaf {
@@ -499,6 +1003,7 @@ enum ControlText {
             if c.isMuted { return tr("off") }
             return decibels(Int(c.value.rounded()))
         }
+        if c.key.hasPrefix("lever.") { return tr("%d%%", Int((c.fraction * 100).rounded())) }
         if let p = clipParts(c) {
             switch p.leaf {
             case "level":
@@ -686,13 +1191,15 @@ private struct WorldRow: View {
     let open: () -> Void
     @State private var hovering = false
     @State private var dragging = false
+    /// A scene lever the direction moves by itself; a double-click hands it back to the direction.
+    private var isLever: Bool { control.key.hasPrefix("lever.") }
 
     var body: some View {
         let track = Track(group: control.group)
         let audible = track.map { meters.audible.contains($0) } ?? false
         let lit = hovering || dragging
         HStack(spacing: 0) {
-            Button(action: open) {
+            Button(action: { if hasChildren { open() } }) {
                 HStack(spacing: 0) {
                     IconView(icon: Icon.forControl(control, hour: hour),
                              color: lit ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
@@ -709,7 +1216,7 @@ private struct WorldRow: View {
             }
             .buttonStyle(.plain)
             .focusable(false)
-            .disabled(!hasChildren)
+            .disabled(!hasChildren && !isLever)
             .padding(.trailing, Grid.x2)
             .help(hasChildren ? tr("%@: details", ControlText.group(control)) : ControlText.group(control))
             .accessibilityLabel(hasChildren ? tr("%@: details", ControlText.group(control)) : ControlText.group(control))
@@ -731,8 +1238,10 @@ private struct WorldRow: View {
                         set(control.id, control.value(atFraction: Float(g.location.x / w)))
                     }
                     .onEnded { _ in dragging = false })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { if isLever { set(control.id, .nan) } })
             }
             .frame(width: Popover.sliderWidth)
+            .help(isLever ? (control.isOverridden ? tr("Set by you: double-click to hand it back to the direction") : tr("The direction moves it: drag to take over")) : "")
             .accessibilityElement()
             .accessibilityLabel(ControlText.lever(control))
             .accessibilityValue(ControlText.value(control))
@@ -742,7 +1251,7 @@ private struct WorldRow: View {
 
             Text(ControlText.value(control))
                 .font(Ink.text(Ink.Size.body))
-                .foregroundStyle(lit ? Ink.paper : Ink.paper.opacity(0.8))
+                .foregroundStyle(lit || (isLever && control.isOverridden) ? Ink.paper : isLever ? Ink.paper.opacity(0.55) : Ink.paper.opacity(0.8))
                 .lineLimit(1)
                 .frame(width: Popover.valueColumn, alignment: .trailing)
 
@@ -767,6 +1276,8 @@ private struct MoreRow: View {
     let more: [Control]
     var hour: Float?
     let showAll: Bool
+    /// Pictograms only (the hidden levers have long names).
+    var compact = false
     let toggle: () -> Void
     @State private var hovering = false
 
@@ -785,7 +1296,7 @@ private struct MoreRow: View {
                         HStack(spacing: Grid.x1) {
                             IconView(icon: Icon.forControl(m, hour: hour), color: hovering ? Ink.graphite : Ink.ash, size: 14,
                                      lineWidth: 1)
-                            Text(ControlText.group(m).lowercased()).foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+                            if !compact { Text(ControlText.group(m).lowercased()).foregroundStyle(hovering ? Ink.graphite : Ink.ash) }
                         }
                     }
                 }
