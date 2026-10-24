@@ -82,3 +82,18 @@ Generated on 2026-10-23 with fal.ai (ElevenLabs Sound Effects v2 `el2`; Stable A
 24 s seamless loops, no noise). The file names are kept so the scene's path layers stay as built.
 The generated takes hissed as they moved ("like Parseltongue", in the user's words). The room tone
 and breeze beds were removed from the scene.
+
+## Cave, Campfire by the sea, Tent in the rain, Yacht at anchor, Night library (assets/sounds/generated/<scene>/)
+
+Added 2026-10-24. Each scene keeps its full table (original URLs, authors, licences, cut times, processing,
+generation prompts and the comparison with reference field recordings) next to its design note. Licences are
+CC0, CC BY, public domain or our own fal generations; nothing NC/ND/SA. Attribution-required (CC BY) files:
+campfire crackle and bonfire (campfire_shore), the longcase clock (night_library); see their tables.
+
+| Scene | Folder | Sources | fal spend |
+|---|---|---|---|
+| Cave | generated/cave_drips/ | [docs/scenes/cave_drips-sources.md](../../docs/scenes/cave_drips-sources.md): 37 Freesound CC0 recordings | $0 |
+| Campfire by the sea | generated/campfire_shore/ | [docs/scenes/campfire_shore-sources.md](../../docs/scenes/campfire_shore-sources.md): 2 CC BY recordings, 19 el2 takes | $0.80 |
+| Tent in the rain | generated/mountain_tent/ | [docs/scenes/mountain_tent-sources.md](../../docs/scenes/mountain_tent-sources.md): Freesound CC0 recordings, 4 el2 pole creaks | $0.03 |
+| Yacht at anchor | generated/sailboat_anchor/ | [docs/scenes/sailboat_anchor-sources.md](../../docs/scenes/sailboat_anchor-sources.md): 9 Freesound CC0 recordings, el2 takes | $0.19 |
+| Night library | generated/night_library/ | [docs/scenes/night_library-sources.md](../../docs/scenes/night_library-sources.md): CC BY clock, PD/CC0 rain, pages, pen; el2 takes | $0.68 |
