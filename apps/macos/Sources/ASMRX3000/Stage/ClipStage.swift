@@ -10,7 +10,7 @@ import simd
 ///
 /// Distances run from 0.6 m (the screen) to ~100 m (a whale passing), so the stage is drawn in
 /// a radially compressed space around the head (`ClipSpace.map`): directions are true, near
-/// things get room, far ones stay in view.
+/// things get room, far ones stay in view. Each scene's place and framing: `ClipSet`.
 enum ClipSpace {
     /// Mapped radius: 1.6 m · ln(1 + r / 0.15 m). 0.6 m → 2.6, 3 m → 4.9, 10 m → 6.8, 30 m → 8.5,
     /// 100 m → 10.4.
@@ -20,18 +20,6 @@ enum ClipSpace {
         let r = simd_length(p)
         guard r > 1e-4 else { return p }
         return p * (radius(r) / r)
-    }
-
-    /// The framing of a clip scene: straight behind and a little above the listener, looking
-    /// where they look (at the screen), so left and right on the stage are left and right in
-    /// the ears. Drag to orbit as in the forest.
-    static var camera: OrbitCamera {
-        var c = OrbitCamera()
-        c.target = SIMD3(1.2, 0, -0.4)
-        c.azimuth = .pi
-        c.elevation = 0.36
-        c.distance = 19
-        return c
     }
 }
 
@@ -76,6 +64,13 @@ enum ClipProps {
             }
         }
         return Mesh.make(v, idx)
+    }()
+
+    /// A unit cube in the set's material (the train's passing poles and wires).
+    static let setBox: Mesh? = {
+        var b = MeshBuilder()
+        b.add(Prim.box, matrix_identity_float4x4, part: Part.set)
+        return b.build()
     }()
 
     /// The bottom of the water at the scene's depth (mapped), as far as the haze.
@@ -718,6 +713,11 @@ final class ClipActors {
             let c = ClipSpace.map(centre)
             let a = atan2(raw.y - centre.y, raw.x - centre.x)
             out.append(ClipPiece(mesh: lens, model: M4.move(c) * M4.rotZ(a) * M4.scale(0.75 * pulse)))
+            // Its light going out over the sea where the lens faces.
+            if let beam = PropMeshes.lightBeam {
+                out.append(ClipPiece(mesh: beam, model: M4.move(c) * M4.rotZ(a) * M4.rotY(0.05) * M4.scale(SIMD3(10, 10, 10)),
+                                     ghost: ClipPiece.veryFaint))
+            }
             return (out, simd_distance(c, p) + 0.5)
 
         case .prop(let prop):
@@ -725,6 +725,8 @@ final class ClipActors {
             if !out.isEmpty { return (out, extent) }
 
         case .bed:
+            // A hum about the head itself (a room tone, the air) is the listener's own space: no mark.
+            if simd_length(raw) < 1.2 { return ([], 0.4) }
             let extent = propPieces(.marker, clip: clip, raw: raw, time: t, level: level, fwd: fwd, out: &out)
             return (out, extent)
 

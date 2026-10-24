@@ -396,7 +396,14 @@ enum PropMeshes {
     // MARK: Lighthouse
 
     /// A Fresnel lens: a ribbed drum with bull's-eye panels on four sides, on a pedestal.
-    static let lens = make { b in
+    static let lens = make { $0 = lensParts }
+
+    /// The lighthouse's beam: a long cone along +x from the lens, drawn see-through.
+    static let lightBeam = make { b in
+        b.rod(v(0.3, 0, 0), v(1, 0, 0), 0.03, 0.16, segs: 12, part: LIGHT)
+    }
+
+    static let lensParts: MeshBuilder = builder { b in
         var prof: [SIMD2<Float>] = [v2(0, -0.62), v2(0.5, -0.62)]
         for i in 0..<12 {
             let z = -0.6 + 0.1 * Float(i)
@@ -453,13 +460,9 @@ enum PropMeshes {
         }
     }
 
-    /// A pane of glass streaked with rain, facing +x.
+    /// Rain running down a pane, facing +x: only the streaks and their drops (the glass is the
+    /// place's own: the lantern's glazing, the compartment's window).
     static let rainGlass = make { b in
-        for (c, s) in [(v(0, 0, 0.75), v(0.1, 1.2, 0.1)), (v(0, 0, -0.75), v(0.1, 1.2, 0.1)),
-                       (v(0, 0.6, 0), v(0.1, 0.1, 1.6)), (v(0, -0.6, 0), v(0.1, 0.1, 1.6))] {
-            b.box(c, s, part: MID)
-        }
-        b.box(.zero, v(0.02, 1.1, 1.4), part: Part.water)
         var rng = SeededGenerator(3)
         for k in 0..<7 {
             let y = -0.45 + 0.15 * Float(k) + 0.05 * rng.next()
@@ -545,16 +548,13 @@ enum PropMeshes {
         b.rod(v(0.15, 0, 0.25), v(0.4, 0, -0.1), 0.035, 0.012, segs: 4, part: LIGHT)
     }
 
-    /// The lantern room's panes: a 2 x 2 window, facing +x.
+    /// A rattling pane of the lantern's glazing, facing +x: its frame alone, lit up on the glass
+    /// where it sounds (the glazing itself is the place's).
     static let pane = make { b in
-        for (c, s) in [(v(0, 0, 0.8), v(0.1, 1.5, 0.1)), (v(0, 0, -0.8), v(0.1, 1.5, 0.1)), (v(0, 0, 0), v(0.08, 1.5, 0.06)),
-                       (v(0, 0.72, 0), v(0.1, 0.1, 1.7)), (v(0, -0.72, 0), v(0.1, 0.1, 1.7)), (v(0, 0, 0), v(0.08, 0.06, 1.7))] {
-            b.box(c, s, part: MID)
+        for (c, s) in [(v(0, 0, 0.8), v(0.06, 1.5, 0.06)), (v(0, 0, -0.8), v(0.06, 1.5, 0.06)),
+                       (v(0, 0.72, 0), v(0.06, 0.06, 1.66)), (v(0, -0.72, 0), v(0.06, 0.06, 1.66))] {
+            b.box(c, s, part: LIGHT)
         }
-        for (y, z) in [(0.36, 0.4), (-0.36, 0.4), (0.36, -0.4), (-0.36, -0.4)] as [(Float, Float)] {
-            b.box(v(0, y, z), v(0.02, 0.66, 0.74), part: Part.water)
-        }
-        b.box(v(0.12, 0, -0.9), v(0.25, 1.6, 0.06), part: LIGHT)
     }
 
     /// A turn of the spiral stair with its handrail.

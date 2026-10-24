@@ -306,7 +306,7 @@ final class Stage {
         // --azimuth (snapshots).
         if !first || isClipScene {
             let azimuth = camera.azimuth
-            camera = isClipScene ? ClipSpace.camera : OrbitCamera()
+            camera = isClipScene ? ClipSet.of(audio.scene).camera : OrbitCamera()
             if first && azimuth != OrbitCamera().azimuth { camera.azimuth = azimuth }
         }
     }

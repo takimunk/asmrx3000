@@ -48,7 +48,7 @@ enum Shaders {
         float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
         float4 gaze;         // listener point screen x, y px, px per metre, live 1 / resting 0
         float4 gazeHead;     // head forward direction xyz (world), visible
-        float4 haze;         // horizon y px (where the level ground meets the sky), -, -, -
+        float4 haze;         // horizon y px (where the level ground meets the sky), stars 0..1, planet 0/1, clip scene 0/1
         float4 listener;     // head position xyz, its distance from the eye
         float4x4 invViewProj;
         float4 world;        // flight relief: snow cover, sand cover, bare rock above this slope, flying 0/1
@@ -72,7 +72,7 @@ enum Shaders {
     constant int D_GENINFO = 40;// 8: kind (ASMR_SOURCE_*), screen x px, y px, px per metre
 
     constant int M_VOID = 0, M_GROUND = 1, M_WATER = 2, M_FOLIAGE = 3, M_WOOD = 4, M_BIRD = 5,
-                 M_STONE = 6, M_SECTION = 7;
+                 M_STONE = 6, M_SECTION = 7, M_SET = 8;
 
     float windAt(float y, constant float4* D) {
         float x = clamp((20.0 - y) / 40.0, 0.0, 1.0) * 63.0;
@@ -171,7 +171,7 @@ enum Shaders {
         if (dot(n, V) < 0.0) n = -n;
         float part = in.part;
         int mat = part < 0.5 ? M_WOOD : part < 1.5 ? M_FOLIAGE : part < 4.5 ? M_BIRD : part < 5.5 ? M_STONE
-                : part < 6.5 ? M_BIRD : part < 7.5 ? M_GROUND : part < 8.5 ? M_WATER : M_SECTION;
+                : part < 6.5 ? M_BIRD : part < 7.5 ? M_GROUND : part < 8.5 ? M_WATER : part < 9.5 ? M_SECTION : M_SET;
         float time = F.cam.w;
         float3 L = F.sun.xyz;
 
@@ -271,11 +271,16 @@ enum Shaders {
             tone = 0.12 + 0.75 * diff;
         } else if (mat == M_SECTION) {
             tone = 0.18 + 0.35 * max(dot(n, L), 0.0);
+        } else if (mat == M_SET) {
+            // A clip scene's place: pencil lines, lit softly from everywhere.
+            tone = 0.45 + 0.35 * max(dot(n, L), 0.0) + 0.2 * sky;
         } else if (mat == M_FOLIAGE) {
             tone = 0.08 + 0.95 * diff + 0.08 * sky;
         } else {
             tone = 0.06 + 0.7 * diff;
         }
+        // The faintest ghosts are light, not things (a lighthouse's beam, a glow): self-lit.
+        if (ghost > 0.7 && mat == M_STONE) tone = 1.45;
         float dist = length(eye - in.world);
         float distS = dist / max(F.precip.z, 1.0);
         tone *= mix(1.0, 0.7, clamp((distS - 24.0) / 24.0, 0.0, 1.0));
@@ -298,7 +303,7 @@ enum Shaders {
         float flags = I.info.y;
         float id = I.info.x;
         if (mat == M_WATER) id = 100.0;
-        if (mat == M_GROUND || mat == M_SECTION) { id = -1.0; flags = 0.0; }
+        if (mat == M_GROUND || mat == M_SECTION || mat == M_SET) { id = -1.0; flags = 0.0; }
 
         GBuf o;
         o.a = float4(clamp(tone, 0.0, 1.5), float(mat) + 32.0 * flags + (ghost > 0.0 ? 128.0 : 0.0), mat == M_GROUND ? albedo : angle, dist / 60.0);
@@ -319,17 +324,74 @@ enum Shaders {
 
     inline int contourClass(int mat) {
         if (mat == M_VOID) return 0;
-        if (mat == M_GROUND || mat == M_SECTION) return 1;
+        if (mat == M_GROUND || mat == M_SECTION || mat == M_SET) return 1;
         if (mat == M_WATER) return 2;
         return 3;
     }
 
     // Daylight values per material: the darkest (in shade) and the lightest (in full sun).
     // Near-black trees on a dark field, the river a little lighter than the land, the herm grey stone.
-    constant float2 RANGE[8] = {
+    constant float2 RANGE[9] = {
         float2(0.0), float2(0.06, 0.19), float2(0.17, 0.32), float2(0.022, 0.15),
-        float2(0.018, 0.11), float2(0.04, 0.16), float2(0.20, 0.56), float2(0.08, 0.16)
+        float2(0.018, 0.11), float2(0.04, 0.16), float2(0.20, 0.56), float2(0.08, 0.16),
+        float2(0.24, 0.5)
     };
+
+    // The sky of a clip scene's place, seen along the pixel's ray (at infinity, so it turns
+    // with the camera and never swims): sparse fine stars, and in orbit the planet below, its
+    // night side dark, a thin lit crescent and the bright line of its air at the limb.
+    float skyOf(constant FrameU& F, float2 uv, float base) {
+        float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+        float4 q0 = F.invViewProj * float4(ndc, 0.0, 1.0);
+        float4 q1 = F.invViewProj * float4(ndc, 1.0, 1.0);
+        float3 rd = normalize(q1.xyz / q1.w - q0.xyz / q0.w);
+        float radPerPx = F.view.w;
+        float v = base;
+        float planetCover = 0.0;
+        if (F.haze.z > 0.5) {
+            float3 c = normalize(float3(0.45, -0.3, -1.0));
+            float R = 1.0;
+            float cd = clamp(dot(rd, c), -1.0, 1.0);
+            float ang = acos(cd);
+            float rho = sin(ang) / sin(R);
+            float limbPx = (ang - R) / radPerPx;
+            if (ang < R) {
+                float3 t = normalize(rd - c * cd + float3(1e-5));
+                float3 n = normalize(-c * sqrt(max(1.0 - rho * rho, 0.0)) + t * rho);
+                float lit = dot(n, normalize(F.sun.xyz));
+                v = 0.03 + 0.20 * smoothstep(-0.05, 0.7, lit) + 0.012 * sin(ang * 90.0 + 2.0 * sin(rd.x * 40.0));
+                planetCover = 1.0;
+                // The air at the limb, brighter on the day side.
+                v += cut(-limbPx, 1.6 * F.view.z) * mix(0.10, 0.42, smoothstep(-0.3, 0.4, lit));
+            } else {
+                // A faint glow of air just outside the limb.
+                v += 0.05 * exp(-limbPx / (5.0 * F.view.z));
+            }
+        }
+        if (F.haze.y > 0.0 && planetCover < 0.5) {
+            // One candidate star per cell of a grid on the sphere, kept only when it falls in its
+            // own cell, so the dot is never cut by a cell edge.
+            float K = 70.0;
+            float3 p = rd * K;
+            float3 cell = floor(p);
+            float h = hash21(cell.xy + cell.z * 17.31);
+            float h2 = hash21(cell.yz * 1.37 + cell.x * 3.11);
+            float3 sp = cell + 0.25 + 0.5 * float3(h, h2, hash21(cell.zx * 2.13 + 5.7));
+            float3 sd = normalize(sp);
+            bool own = all(floor(sd * K) == cell);
+            float dens = 0.09 * F.haze.y;
+            if (own && h2 < dens) {
+                float d = acos(clamp(dot(rd, sd), -1.0, 1.0)) / radPerPx;
+                float b = pow(fract(h * 7.31 + h2 * 3.7), 3.0);
+                float size = (0.55 + 0.6 * b) * F.view.z;
+                float star = clamp(size - d + 0.5, 0.0, 1.0);
+                // Near a horizon they sink into the haze.
+                float lift = F.haze.z > 0.5 ? 1.0 : smoothstep(0.0, 0.12, rd.z);
+                v = mix(v, 0.85, star * (0.18 + 0.55 * b) * lift);
+            }
+        }
+        return v;
+    }
 
     // The scene as a quiet tonal picture in grey: smooth light and shade, soft depth fog into
     // a dusk-grey haze by day and near black by night, a sparse contour where things overlap, and the
@@ -353,8 +415,8 @@ enum Shaders {
         float dist = a.w * 60.0;
         float pxWorld = dist * F.view.w;      // metres per pixel at this depth
         if (DEBUG_VIEW) {
-            float3 pal[8] = { float3(0), float3(0.6, 0.45, 0.25), float3(0.25, 0.45, 1), float3(0.2, 0.85, 0.3),
-                              float3(0.7, 0.35, 0.15), float3(1, 0.25, 0.25), float3(1, 1, 0.6), float3(0.5) };
+            float3 pal[9] = { float3(0), float3(0.6, 0.45, 0.25), float3(0.25, 0.45, 1), float3(0.2, 0.85, 0.3),
+                              float3(0.7, 0.35, 0.15), float3(1, 0.25, 0.25), float3(1, 1, 0.6), float3(0.5), float3(0.8, 0.8, 1) };
             return float4(pal[mat] * (0.25 + 0.75 * min(tone, 1.0)) + (sel ? 0.25 : 0.0), 1);
         }
 
@@ -373,6 +435,7 @@ enum Shaders {
             float above = clamp((F.haze.x - px.y) / (F.view.y * 0.75), 0.0, 1.0);
             v = mix(fogC, skyTop, pow(above, 0.8));
             fog = 1.0;
+            if (F.haze.y > 0.0 || F.haze.z > 0.5) v = skyOf(F, in.uv, v);
         } else {
             float2 r = RANGE[mat];
             if (mat == M_GROUND && F.world.w > 0.5) {
@@ -385,7 +448,7 @@ enum Shaders {
             float t = clamp(tone, 0.0, 1.0);
             if (sel) t = min(t + 0.18, 1.0);
             // Less ambient: the shaded side sinks further towards black.
-            v = mix(r.x * 0.7, r.y, smoothstep(0.0, 1.0, t)) * dim;
+            v = mix(r.x * 0.7, r.y, smoothstep(0.0, 1.0, t)) * (mat == M_SET ? mix(dim, 1.0, 0.45) : dim);
             // Sun glints on the water.
             if (mat == M_WATER) v += max(tone - 1.0, 0.0) * 0.35 * dim;
             if (mat == M_GROUND) v *= 1.0 - 0.25 * F.env.y;      // wet ground darkens
@@ -401,7 +464,10 @@ enum Shaders {
                 fog = 1.0 - exp(-max(dist - 12.0, 0.0) / span);
                 fog = max(fog, smoothstep(420.0, 600.0, dist));
             }
+            if (mat == M_SET) fog *= 0.55;
             v = mix(v, fogC, fog);
+            // Light itself (a lighthouse's beam, a glow: see gbufFrag) is not dimmed by the haze.
+            if (ghost && mat == M_STONE && tone > 1.3) v = mix(fogC, 0.55, 0.6);
         }
 
         // Contours: a soft line where the next pixel is farther away or another kind of thing.
@@ -657,8 +723,9 @@ enum Shaders {
                 if (along <= 0.0) continue;
                 float radial = length(w - along * dirB);
                 float wd = along * spread + 0.12;
-                // In the void of a clip scene the camera sits close: a short beam, not a column.
-                float fall = exp(-along / (mat == M_VOID ? 2.5 : 10.0)) * smoothstep(0.0, 0.6, along);
+                // In a clip scene (haze.w) the camera sits close: a short beam, not a column, over
+                // the sky and the set alike (no seam where they meet).
+                float fall = exp(-along / (mat == M_VOID || F.haze.w > 0.5 ? 2.5 : 10.0)) * smoothstep(0.0, 0.6, along);
                 beam += exp(-(radial * radial) / (wd * wd)) * fall / (wd * 1.6) * dt;
                 beam += exp(-(radial * radial) / (0.0225 + 0.0025 * along * along)) * fall * 0.8 * dt;
             }
@@ -772,6 +839,28 @@ enum Shaders {
         }
         g = mix(g, 0.62, body * (before ? 1.0 : 0.0));
         return float4(g, g, g, 1.0);
+    }
+
+    // ---- labels over the scene -----------------------------------------------------------------
+
+    // Names of the loudest sounds with their leader lines (ClipLabels.swift): triangles in pixels,
+    // a grey and a coverage each; text samples its glyph texture, lines are solid.
+    struct OVtx { float2 pos; float2 uv; float4 color; };
+    struct OOut { float4 pos [[position]]; float2 uv; float4 color; };
+
+    vertex OOut overlayVert(uint vid [[vertex_id]], const device OVtx* V [[buffer(0)]], constant float2& size [[buffer(1)]]) {
+        OVtx v = V[vid];
+        OOut o;
+        o.pos = float4(v.pos.x / size.x * 2.0 - 1.0, 1.0 - v.pos.y / size.y * 2.0, 0.0, 1.0);
+        o.uv = v.uv;
+        o.color = v.color;
+        return o;
+    }
+
+    fragment float4 overlayFrag(OOut in [[stage_in]], texture2d<float> glyphs [[texture(0)]], constant float& textured [[buffer(0)]]) {
+        constexpr sampler smp(filter::linear, address::clamp_to_edge);
+        float cov = textured > 0.5 ? glyphs.sample(smp, in.uv).r : 1.0;
+        return float4(in.color.rgb, in.color.a * cov);
     }
     """
 }

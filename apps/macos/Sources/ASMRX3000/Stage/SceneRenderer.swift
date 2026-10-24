@@ -16,7 +16,7 @@ private struct FrameUniforms {
     var env: SIMD4<Float>
     var gaze: SIMD4<Float>      // listener point screen x, y px, px per metre, live (1) or resting (0)
     var gazeHead: SIMD4<Float>  // head forward direction xyz, visible
-    var haze: SIMD4<Float>      // horizon y px
+    var haze: SIMD4<Float>      // horizon y px, stars, planet, clip scene
     var listener: SIMD4<Float>  // head position xyz, distance from the eye
     var invViewProj: simd_float4x4
     var world: SIMD4<Float>     // snow cover, sand cover, bare rock above this slope, flying (0..1)
@@ -98,6 +98,7 @@ final class SceneRenderer {
         gbufPipeline = try! device.makeRenderPipelineState(descriptor: gd)
 
         engravePipeline = gpu.pipeline(fragment: "engrave", format: format)
+        labels = ClipLabels(format: format)
 
         let ds = MTLDepthStencilDescriptor()
         ds.depthCompareFunction = .less
@@ -214,6 +215,11 @@ final class SceneRenderer {
             enc.setFragmentTexture(gA, index: 0)
             enc.setFragmentTexture(gB, index: 1)
         }
+
+        // 4. Clip scenes: the names of the sounds that matter now.
+        if stage.isClipScene && !stage.flight.active {
+            labels.encode(cb, target: target, proj: proj, scale: scale, time: time, candidates: labelCandidates)
+        }
     }
 
     // MARK: Instances
@@ -283,6 +289,11 @@ final class SceneRenderer {
             }
             clipInstances(&list, proj: proj, scale: scale)
             u.counts = SIMD4(0, Float(ringCount), 0, 0)
+            // The sky of the place: stars, and in orbit the planet below.
+            let set = ClipSet.of(scene)
+            u.haze.y = set.stars
+            u.haze.z = set.planet ? 1 : 0
+            u.haze.w = 1
             return list
         } else if let terrain {
             list.append((terrain, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, flags(.river), 0, 0), anim: .zero)))
@@ -411,6 +422,10 @@ final class SceneRenderer {
     /// Rings written into the bird slots by `clipInstances`.
     private var ringCount = 0
     private let actors = ClipActors()
+    private let labels: ClipLabels
+    /// Sounds that may be named on the stage this frame (`ClipLabels`).
+    private var labelCandidates: [ClipLabels.Candidate] = []
+    private var labelsFor = ""
     /// Where each clip is drawn and how far it reaches, for the selection brackets.
     private var clipBoxes: [UInt32: (centre: SIMD3<Float>, half: Float)] = [:]
 
@@ -420,17 +435,21 @@ final class SceneRenderer {
     private func clipInstances(_ list: inout [(Mesh, Instance)], proj: Projector, scale: Float) {
         guard let sphere = ClipProps.sphere, let box = ClipProps.box else { return }
         let scene = stage.audio.scene
+        let set = ClipSet.of(scene)
         let stone = SIMD4<Float>(-1, 0, 0, 0)
         ringCount = 0
 
-        // The screen in front of the listener: four bars around its visible area.
+        // The screen in front of the listener: four bars around its visible area, only where
+        // sounds go through it or into it (elsewhere a frame in the air reads as a window).
         let scr = stage.audio.screenSize
-        let centre = SIMD3<Float>(scr.distance, 0, -0.05)
-        let corners = [SIMD3<Float>(0, 1, 1), SIMD3(0, -1, 1), SIMD3(0, -1, -1), SIMD3(0, 1, -1)].map {
-            ClipSpace.map(centre + $0 * SIMD3(0, scr.width / 2, scr.height / 2))
-        }
-        for k in 0..<4 {
-            list.append((box, Instance(model: ClipProps.bar(corners[k], corners[(k + 1) % 4], thickness: 0.06), info: stone, anim: .zero)))
+        if scene.clips.values.contains(where: { $0.sweep != nil || $0.toScreen || $0.motion == "portal" }) {
+            let centre = SIMD3<Float>(scr.distance, 0, -0.05)
+            let corners = [SIMD3<Float>(0, 1, 1), SIMD3(0, -1, 1), SIMD3(0, -1, -1), SIMD3(0, 1, -1)].map {
+                ClipSpace.map(centre + $0 * SIMD3(0, scr.width / 2, scr.height / 2))
+            }
+            for k in 0..<4 {
+                list.append((box, Instance(model: ClipProps.bar(corners[k], corners[(k + 1) % 4], thickness: 0.04), info: stone, anim: .zero)))
+            }
         }
 
         // Trails: beads behind the sounds that have no model of their own.
@@ -445,6 +464,8 @@ final class SceneRenderer {
 
         var rings: [(SIMD3<Float>, Float)] = []
         clipBoxes.removeAll(keepingCapacity: true)
+        labelCandidates.removeAll(keepingCapacity: true)
+        if labelsFor != scene.entry.id { labelsFor = scene.entry.id; labels.reset() }
         let clock = Float(stage.time.truncatingRemainder(dividingBy: 3600))
         for t in stage.things where t.kind == .clip {
             guard let id = t.ids.first, let clip = scene.clips[id] else { continue }
@@ -456,6 +477,10 @@ final class SceneRenderer {
                                      screen: (scr.distance, scr.width))
             for piece in made.pieces { list.append((piece.mesh, Instance(model: piece.model, info: info, anim: SIMD4(0, piece.ghost, 0, 0)))) }
             clipBoxes[id] = (p, made.extent)
+            if Self.named(clip, kind: kind), made.pieces.contains(where: { $0.ghost == 0 }) {
+                labelCandidates.append(ClipLabels.Candidate(id: id, name: clip.name.lowercased(), point: p, extent: made.extent,
+                                                            level: level, hovered: stage.hover == t.key && stage.selection != t.key))
+            }
             // A bed or texture spread over several emitters: a pebble at each.
             if kind == .generic && clip.emitters > 1 && clip.spread > 0 && clip.sweep == nil {
                 for k in 0..<clip.emitters {
@@ -464,10 +489,13 @@ final class SceneRenderer {
                     list.append((sphere, Instance(model: ClipProps.ball(e, radius: 0.1), info: info, anim: .zero)))
                 }
             }
-            if level > 0.05 { rings.append((p, level)) }
+            // Rings for things; an effect about the head (the air, a room tone) would only ring the listener.
+            if level > 0.05, made.pieces.contains(where: { $0.ghost == 0 }) || simd_length(t.anchor) > 1.5 { rings.append((p, level)) }
         }
         // The scene's still things (the ice, the seated listener), once the clips are known.
-        for piece in actors.scenery { list.append((piece.mesh, Instance(model: piece.model, info: stone, anim: SIMD4(0, piece.ghost, 0, 0)))) }
+        for piece in actors.scenery + set.moving(time: clock) {
+            list.append((piece.mesh, Instance(model: piece.model, info: stone, anim: SIMD4(0, piece.ghost, 0, 0))))
+        }
         let focal = proj.size.y * 0.5 / tan(proj.camera.fovY / 2)
         for (p, level) in rings.sorted(by: { $0.1 > $1.1 }).prefix(4) {
             guard let sp = proj.project(p) else { continue }
@@ -475,6 +503,16 @@ final class SceneRenderer {
             data[8 + ringCount] = SIMD4(sp.point.x * scale, sp.point.y * scale, focal / sp.w * scale * 0.35, level / 9)
             data[12 + ringCount] = SIMD4(simd_distance(proj.camera.eye, p), 0, 0, 0)
             ringCount += 1
+        }
+    }
+
+    /// Whether a sound has a name worth putting on the stage: a thing (not an effect or a
+    /// room tone) with a name of its own.
+    private static func named(_ clip: ClipInfo, kind: ClipKind) -> Bool {
+        if ["background", "texture", "creature", "event"].contains(clip.nameKey) { return false }
+        switch kind {
+        case .bed, .generic, .tunnel, .sweep, .beam, .shimmer, .pulsar: return false
+        default: return true
         }
     }
 

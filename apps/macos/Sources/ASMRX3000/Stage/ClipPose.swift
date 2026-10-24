@@ -22,7 +22,7 @@ struct PropLook {
     /// Effects and phenomena (wind, rain, cracks, a far flash) are see-through; things are solid.
     static func ghost(_ p: Prop) -> Float {
         switch p {
-        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker:
+        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches:
             return ClipPiece.faint
         default:
             return 0
@@ -38,7 +38,7 @@ struct PropLook {
         case .station: return PropLook(size: 1.4, face: .still)
         case .fan: return PropLook(size: 0.5, face: .toward)
         case .pump: return PropLook(size: 0.6, face: .listener)
-        case .panel: return PropLook(size: 0.6, face: .toward)
+        case .panel: return PropLook(size: 0.45, face: .toward)
         case .rcs: return PropLook(size: 0.5, face: .listener)
         case .clamp: return PropLook(size: 0.55, face: .listener)
         case .hatch: return PropLook(size: 0.55, face: .toward)
@@ -59,7 +59,7 @@ struct PropLook {
         case .buoy: return PropLook(size: 0.6, face: .still)
         case .foghorn: return PropLook(size: 0.8, face: .listener)
         case .bolt: return PropLook(size: 0.7, face: .listener)
-        case .pane: return PropLook(size: 0.5, face: .listener)
+        case .pane: return PropLook(size: 0.42, face: .listener)
         case .stairs: return PropLook(size: 0.55, face: .still)
         case .track, .bridge: return PropLook(size: 1, face: .still)
         case .bogie: return PropLook(size: 0.6, face: .still)
@@ -303,16 +303,17 @@ extension ClipActors {
 
     // MARK: Scenery
 
-    /// The still things a scene gets from its kinds of sound: the ice under the singing ice
-    /// (the bare stage has no ground), the listener seated when a guide travels about the body.
+    /// The still things of the scene: its place (`ClipSet`: the lantern room, the compartment,
+    /// the lake…). An unknown scene with ice sounds still gets the ice under it. No seated figure
+    /// under the body-scan guide: the user found it ugly; the guide's own path reads the body.
     static func scenery(kinds: [ClipKind], scene: SceneInfo) -> [ClipPiece] {
-        var out: [ClipPiece] = []
+        let set = ClipSet.of(scene)
+        var out = set.scenery(groundZ: scene.groundZ)
         let ice = kinds.contains { k in
             if case .prop(let p) = k { return p == .iceStar || p == .zigzag || p == .boom }
             return false
         }
-        if ice, scene.look == .void, let m = iceSheet(z: scene.groundZ) { out.append(ClipPiece(mesh: m, model: matrix_identity_float4x4)) }
-        if kinds.contains(.prop(.bead)), let m = seated(floor: scene.groundZ) { out.append(ClipPiece(mesh: m, model: matrix_identity_float4x4)) }
+        if set == .none, ice, scene.look == .void, let m = iceSheet(z: scene.groundZ) { out.append(ClipPiece(mesh: m, model: matrix_identity_float4x4)) }
         return out
     }
 
@@ -338,15 +339,6 @@ extension ClipActors {
         }
         var b = MeshBuilder()
         b.smooth(pos, tri, part: Part.ground)
-        return b.warped(ClipSpace.map).build()
-    }
-
-    /// The listener sitting cross-legged on a cushion, mapped like everything about them.
-    static func seated(floor: Float) -> Mesh? {
-        var b = Figure.body(kneeling: false, head: false)
-        let seat = min(-0.86, floor + 0.3)
-        b.turn([SIMD2(0, seat - 0.14), SIMD2(0.2, seat - 0.13), SIMD2(0.23, seat - 0.06), SIMD2(0.2, seat), SIMD2(0, seat + 0.01)],
-               segs: 12, part: Part.section)
         return b.warped(ClipSpace.map).build()
     }
 }
