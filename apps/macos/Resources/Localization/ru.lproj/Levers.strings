@@ -506,3 +506,25 @@
 "Embers" = "Угли";
 "Driftwood" = "Плавник";
 "Dune grass" = "Трава на дюнах";
+
+/* The night library. */
+"Night library" = "Ночная библиотека";
+"Clock" = "Часы";
+"Fire" = "Огонь";
+"House" = "Дом";
+"Pages" = "Страницы";
+"Pen" = "Перо";
+"Reading" = "Чтение";
+"Storm" = "Буря";
+"quiet reading" = "тихое чтение";
+"rain sets in" = "зарядил дождь";
+"fire burning low" = "огонь угасает";
+"storm outside" = "буря за окном";
+"late stillness" = "поздняя тишина";
+"reading by the fire" = "чтение у камина";
+"the fire burns low" = "огонь догорает";
+"glowing embers" = "тлеющие угли";
+"a fresh log" = "свежее полено";
+"the wind rises" = "поднимается ветер";
+"storm over the roofs" = "буря над крышами";
+"late-night stillness" = "глубокая ночная тишина";

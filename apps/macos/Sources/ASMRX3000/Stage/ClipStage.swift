@@ -227,6 +227,18 @@ struct ClipRule {
         ClipRule(files: ["shishi"], .prop(.shishi)),
         ClipRule(files: ["furin"], .prop(.chime)),
         ClipRule(files: ["temple_bell"], .prop(.templeBell)),
+        // Night library
+        ClipRule(files: ["hearth_crackle"], .prop(.hearth)),
+        ClipRule(files: ["hearth_embers"], .prop(.hearthEmbers)),
+        ClipRule(files: ["log_settle"], .prop(.log)),
+        ClipRule(files: ["tallwindow"], .prop(.rainGlass)),
+        ClipRule(files: ["page_turn"], .prop(.book)),
+        ClipRule(files: ["pen_scratch"], .prop(.inkPen)),
+        ClipRule(files: ["clock_tick", "clock_strike"], .prop(.longcaseClock)),
+        ClipRule(files: ["shelf_creak"], .prop(.bookcase)),
+        ClipRule(files: ["radiator"], .prop(.radiator)),
+        ClipRule(files: ["floor_creak"], .prop(.boards)),
+        ClipRule(files: ["door_far"], .prop(.door)),
         // Body scan
         ClipRule(group: "guide", .prop(.bead)),
         ClipRule(files: ["bowl_strike"], .prop(.singingBowl)),

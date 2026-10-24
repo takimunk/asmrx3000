@@ -620,6 +620,12 @@ enum ControlText {
         "cue.low_embers": N_("low embers"),
         "cue.rising_tide": N_("rising tide"),
         "cue.before_dawn": N_("before dawn"),
+        // The night library's episodes.
+        "cue.quiet_reading": N_("quiet reading"),
+        "cue.rain_sets_in": N_("rain sets in"),
+        "cue.fire_burns_low": N_("fire burning low"),
+        "cue.storm_outside": N_("storm outside"),
+        "cue.late_stillness": N_("late stillness"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -747,6 +753,14 @@ enum ControlText {
         "the breeze drops": N_("the breeze drops"),
         "the fire dies down": N_("the fire dies down"),
         "embers before dawn": N_("embers before dawn"),
+        // The night library's stretches ("rain setting in", "steady rain", "storm moving away" above).
+        "reading by the fire": N_("reading by the fire"),
+        "the fire burns low": N_("the fire burns low"),
+        "glowing embers": N_("glowing embers"),
+        "a fresh log": N_("a fresh log"),
+        "the wind rises": N_("the wind rises"),
+        "storm over the roofs": N_("storm over the roofs"),
+        "late-night stillness": N_("late-night stillness"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -837,9 +851,17 @@ enum ControlText {
         "Tide": N_("Tide"),
         "Wind": N_("Wind"),
         // Campfire by the sea.
-        "Fire": N_("Fire"), "Surf": N_("Surf"), "Wind": N_("Wind"), "Night life": N_("Night life"),
+        "Surf": N_("Surf"), "Night life": N_("Night life"),
         "Crackle": N_("Crackle"), "Flames": N_("Flames"), "Embers": N_("Embers"), "Driftwood": N_("Driftwood"),
         "Dune grass": N_("Dune grass"),
+        // The night library.
+        "Clock": N_("Clock"),
+        "Fire": N_("Fire"),
+        "House": N_("House"),
+        "Pages": N_("Pages"),
+        "Pen": N_("Pen"),
+        "Reading": N_("Reading"),
+        "Storm": N_("Storm"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

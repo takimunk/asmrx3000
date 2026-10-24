@@ -19,6 +19,9 @@ struct PropLook {
     var size: Float
     var face: Face
 
+    /// Furniture drawn at the room's scale, which does not swell with its sound.
+    static let grounded: Set<Prop> = [.longcaseClock, .bookcase, .radiator, .boards, .door]
+
     /// Effects and phenomena (wind, rain, cracks, a far flash) are see-through; things are solid.
     static func ghost(_ p: Prop) -> Float {
         switch p {
@@ -89,6 +92,17 @@ struct PropLook {
         case .shishi: return PropLook(size: 0.55, face: .across)
         case .chime: return PropLook(size: 0.45, face: .still)
         case .templeBell: return PropLook(size: 0.9, face: .listener)
+        // The night library's things are built in metres: 1.5 is the room's own scale.
+        case .hearth: return PropLook(size: 1.5, face: .listener)
+        case .hearthEmbers: return PropLook(size: 1.5, face: .still)
+        case .log: return PropLook(size: 1.5, face: .listener)
+        case .book: return PropLook(size: 1.5, face: .listener)
+        case .inkPen: return PropLook(size: 1.5, face: .still)
+        case .longcaseClock: return PropLook(size: 1.45, face: .listener)
+        case .bookcase: return PropLook(size: 1.45, face: .listener)
+        case .radiator: return PropLook(size: 1.5, face: .listener)
+        case .boards: return PropLook(size: 1.5, face: .still)
+        case .door: return PropLook(size: 0.75, face: .listener)
         case .bead: return PropLook(size: 0.17, face: .still)
         case .singingBowl: return PropLook(size: 0.4, face: .still)
         case .tingsha: return PropLook(size: 0.22, face: .listener)
@@ -127,8 +141,10 @@ extension ClipActors {
         let p = ClipSpace.map(raw)
         let id = clip.id
         let ph = Float(id % 13) * 0.9
-        let pulse = 1 + 0.08 * level
         let look = PropLook.of(prop)
+        // Furniture standing on the floor keeps its size (and its feet on the floor); the clock's
+        // beat and its strike are drawn as the same clock, so they must coincide.
+        let pulse = PropLook.grounded.contains(prop) ? 1 : 1 + 0.08 * level
         let s = look.size * pulse
         let ghost = PropLook.ghost(prop)
         func put(_ mesh: Mesh?, _ m: simd_float4x4, ghost g: Float? = nil) {
@@ -177,6 +193,16 @@ extension ClipActors {
             let tilt: Float = cycle < 0.88 ? -0.32 + 0.3 * cycle : 0.42 - 0.6 * (cycle - 0.88) / 0.12
             put(PropMeshes.shishiFrame, root)
             put(PropMeshes.shishiTube, root * M4.rotY(-tilt))
+
+        case .longcaseClock:
+            // The pendulum swings at the recording's beat (2.59 s a full swing).
+            put(PropMeshes.longcaseClock, root)
+            put(PropMeshes.clockPendulum, root * M4.move(SIMD3(0.0, 0, -0.3)) * M4.rotX(0.09 * sin(t * 2 * .pi / 2.589)))
+
+        case .book:
+            // A leaf lifts with the sound of the page and settles again.
+            put(PropMeshes.book, root)
+            put(PropMeshes.bookPage, root * M4.move(SIMD3(0, 0, 0.022)) * M4.rotX(0.1 + 2.4 * min(level * 1.6, 1)))
 
         case .chime:
             put(PropMeshes.chime, root * M4.rotX(0.22 * sin(t * 1.3 + ph)) * M4.rotY(0.12 * sin(t * 0.9 + ph)))

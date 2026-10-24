@@ -35,6 +35,7 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "night_train", key: N_("Night train"), file: "night_train.json"),
         SceneEntry(id: "singing_ice", key: N_("Singing ice"), file: "singing_ice.json"),
         SceneEntry(id: "tea_house", key: N_("Tea house"), file: "tea_house.json"),
+        SceneEntry(id: "night_library", key: N_("Night library"), file: "night_library.json"),
         SceneEntry(id: "body_scan", key: N_("Body scan"), file: "body_scan.json"),
         SceneEntry(id: "cave_drips", key: N_("Cave"), file: "cave_drips.json"),
         SceneEntry(id: "sailboat_anchor", key: N_("Yacht at anchor"), file: "sailboat_anchor.json"),
@@ -249,6 +250,11 @@ enum Scenes {
             ("campfire_crackle", N_("campfire")), ("campfire_flare", N_("flames")), ("campfire_bonfire", N_("flames")),("campfire_log", N_("log")),
             ("campfire_damp", N_("damp driftwood")), ("shore_breakers", N_("breakers")), ("shore_wave", N_("wave")),
             ("shore_curlew", N_("curlew")),
+            // The night library.
+            ("hearth_crackle", N_("fire")), ("hearth_embers", N_("embers")), ("log_settle", N_("settling logs")),
+            ("tallwindow_squall", N_("rain lashing the windows")), ("tallwindow", N_("rain on the windows")),
+            ("page_turn", N_("pages")), ("pen_scratch", N_("pen")), ("clock_tick", N_("clock")), ("clock_strike", N_("clock strikes")),
+            ("floor_creak", N_("floorboards")), ("shelf_creak", N_("bookcase")), ("radiator", N_("radiator")), ("door_far", N_("distant door")),
             // The singing ice, last: "bowl_strike" and "bowl_slide" hold "owl_".
             ("ice_sing", N_("singing ice")), ("ice_crack", N_("crack")), ("ice_run", N_("running crack")),
             ("ice_boom", N_("ice boom")), ("owl_", N_("owl")), ("skater", N_("skater")),
