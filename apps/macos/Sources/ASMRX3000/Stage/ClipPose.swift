@@ -22,7 +22,8 @@ struct PropLook {
     /// Effects and phenomena (wind, rain, cracks, a far flash) are see-through; things are solid.
     static func ghost(_ p: Prop) -> Float {
         switch p {
-        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches:
+        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches,
+             .flyRain, .drip:
             return ClipPiece.faint
         default:
             return 0
@@ -92,6 +93,13 @@ struct PropLook {
         case .singingBowl: return PropLook(size: 0.4, face: .still)
         case .tingsha: return PropLook(size: 0.22, face: .listener)
         case .marker: return PropLook(size: 0.13, face: .still)
+        case .flyRain: return PropLook(size: 0.32, face: .still)
+        case .drip: return PropLook(size: 0.34, face: .listener)
+        case .flap: return PropLook(size: 0.42, face: .listener)
+        case .pole: return PropLook(size: 0.4, face: .listener)
+        case .brook: return PropLook(size: 0.95, face: .across)
+        case .sleepingBag: return PropLook(size: 0.8, face: .still)
+        case .zipper: return PropLook(size: 0.3, face: .listener)
         }
     }
 }
@@ -178,6 +186,33 @@ extension ClipActors {
                 let fall = (t * 1.5 + Float(k) * 0.37).truncatingRemainder(dividingBy: 1) * 0.4
                 put(PropMeshes.rain, M4.move(ClipSpace.map(e)) * M4.rotZ(Float(k)) * M4.scale(s) * M4.move(SIMD3(0, 0, -fall)))
             }
+
+        case .flyRain:
+            // Rain on the fly: streaks coming down onto the fabric at each emitter and the small
+            // crown of each drop's splash spreading where it lands.
+            for (k, e) in emitters().enumerated() {
+                let q = ClipSpace.map(e)
+                let fall = (t * 1.5 + Float(k) * 0.37).truncatingRemainder(dividingBy: 1) * 0.4
+                put(PropMeshes.rain, M4.move(q) * M4.rotZ(Float(k)) * M4.scale(s) * M4.move(SIMD3(0, 0, 0.8 - fall)))
+                let age = (t * 0.9 + Float(k) * 0.29).truncatingRemainder(dividingBy: 1)
+                put(PropMeshes.hoop, M4.move(q) * M4.scale(SIMD3(repeating: s * (0.1 + 0.5 * age))))
+            }
+            return 0.5
+
+        case .drip:
+            // A drop gathers on the hem and falls; its ring spreads in the wet grass below.
+            put(PropMeshes.drip, root)
+            let age = (t * 0.7 + ph).truncatingRemainder(dividingBy: 1)
+            put(PropMeshes.hoop, M4.move(p) * M4.scale(SIMD3(repeating: s * (0.1 + 0.7 * age))))
+
+        case .flap:
+            // The panel shivers about its hem, quicker in a gust.
+            put(PropMeshes.flap, root * M4.move(SIMD3(0, 0, -0.6)) * M4.rotY(0.1 * sin(t * (2.5 + 7 * level) + ph))
+                * M4.move(SIMD3(0, 0, 0.6)))
+
+        case .sleepingBag:
+            // Along the body (feet to +x), breathing a little.
+            put(PropMeshes.sleepingBag, M4.move(p) * M4.scale(SIMD3(s, s, s * (1 + 0.03 * sin(t * 0.9)))))
 
         case .sea:
             for (k, e) in emitters().enumerated() {

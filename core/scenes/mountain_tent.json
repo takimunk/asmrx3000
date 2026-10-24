@@ -1,0 +1,1202 @@
+{
+ "name": "Tent in the rain",
+ "seed": 7300,
+ "environment": {
+  "time_of_day": 23.5,
+  "wind_ms": 5.0,
+  "rain_mm_h": 3.0,
+  "storm": 0.0,
+  "temperature_c": 8.0,
+  "humidity": 0.98,
+  "wetness": 1.0,
+  "ground_z": -0.3
+ },
+ "entities": [
+  {
+   "kind": "clip",
+   "id": 10,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_light_1.wav",
+    "generated/mountain_tent/tent_fly_light_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 52,
+   "emitters": 3,
+   "spread": 0.45,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.62
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 11,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_light_2.wav",
+    "generated/mountain_tent/tent_fly_light_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 50,
+   "emitters": 4,
+   "spread": 1.0,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.05
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 12,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_steady_1.wav",
+    "generated/mountain_tent/tent_fly_steady_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 52,
+   "emitters": 3,
+   "spread": 0.45,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.62
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 13,
+   "group": "rain",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_steady_2.wav",
+    "generated/mountain_tent/tent_fly_steady_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 50,
+   "emitters": 4,
+   "spread": 1.0,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.05
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 14,
+   "group": "downpour",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_heavy_1.wav",
+    "generated/mountain_tent/tent_fly_heavy_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 52,
+   "emitters": 3,
+   "spread": 0.45,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.62
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 15,
+   "group": "downpour",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_fly_heavy_2.wav",
+    "generated/mountain_tent/tent_fly_heavy_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 50,
+   "emitters": 4,
+   "spread": 1.0,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.3,
+     0.0,
+     0.05
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 16,
+   "group": "meadow",
+   "emitters": 6,
+   "spread": 7,
+   "first": 0,
+   "fade": 6,
+   "sound": {
+    "model": "rain",
+    "preset": "on_soil",
+    "params": {
+     "area_m2": 80,
+     "gain": 1.0
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     1.0,
+     0.0,
+     -0.3
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 20,
+   "group": "drips",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_drips_1.wav",
+    "generated/mountain_tent/tent_drips_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 41,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.45,
+     1.15,
+     -0.3
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 21,
+   "group": "drips",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_drips_2.wav",
+    "generated/mountain_tent/tent_drips_1.wav"
+   ],
+   "playback": "loop",
+   "level_db": 41,
+   "first": 0,
+   "fade": 4,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.15000000000000002,
+     -1.15,
+     -0.3
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 30,
+   "group": "wind",
+   "emitters": 3,
+   "spread": 12,
+   "first": 0,
+   "fade": 6,
+   "sound": {
+    "model": "wind",
+    "preset": "breeze",
+    "params": {
+     "exposure": 0.6,
+     "gain": 1.0
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -5.0,
+     9.0,
+     0.5
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 31,
+   "group": "gusts",
+   "emitters": 3,
+   "spread": 15,
+   "first": 0,
+   "fade": 6,
+   "sound": {
+    "model": "wind",
+    "preset": "storm",
+    "params": {
+     "exposure": 1.2
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -20.0,
+     25.0,
+     4.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 32,
+   "group": "fly",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_flap_1.wav",
+    "generated/mountain_tent/tent_flap_2.wav",
+    "generated/mountain_tent/tent_flap_3.wav",
+    "generated/mountain_tent/tent_flap_4.wav"
+   ],
+   "level_db": 48,
+   "first": 40,
+   "interval": [
+    25,
+    70
+   ],
+   "rate": [
+    0.92,
+    1.06
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.45,
+     0.85,
+     0.3
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 33,
+   "group": "fly",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_flap_3.wav",
+    "generated/mountain_tent/tent_flap_4.wav",
+    "generated/mountain_tent/tent_flap_1.wav",
+    "generated/mountain_tent/tent_flap_2.wav"
+   ],
+   "level_db": 47,
+   "first": 75,
+   "interval": [
+    30,
+    80
+   ],
+   "rate": [
+    0.92,
+    1.06
+   ],
+   "fade": 0.3,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.6,
+     -0.85,
+     0.3
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 34,
+   "group": "fly",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_pole_creak_el2_1.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_2.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_3.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_4.wav"
+   ],
+   "level_db": 46,
+   "first": 60,
+   "interval": [
+    45,
+    120
+   ],
+   "rate": [
+    0.94,
+    1.06
+   ],
+   "fade": 0.1,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.5,
+     0.95,
+     -0.15
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 35,
+   "group": "fly",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_pole_creak_el2_3.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_4.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_1.wav",
+    "generated/mountain_tent/tent_pole_creak_el2_2.wav"
+   ],
+   "level_db": 46,
+   "first": 110,
+   "interval": [
+    45,
+    120
+   ],
+   "rate": [
+    0.94,
+    1.06
+   ],
+   "fade": 0.1,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.5,
+     -0.95,
+     -0.15
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 40,
+   "group": "storm",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_thunder_roll_1.wav",
+    "generated/mountain_tent/tent_thunder_roll_2.wav",
+    "generated/mountain_tent/tent_thunder_roll_3.wav"
+   ],
+   "level_db": 116,
+   "first": 40,
+   "interval": [
+    60,
+    150
+   ],
+   "rate": [
+    0.94,
+    1.04
+   ],
+   "fade": 2,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     2600.0,
+     900.0,
+     600.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 41,
+   "group": "storm",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_thunder_roll_2.wav",
+    "generated/mountain_tent/tent_thunder_roll_3.wav",
+    "generated/mountain_tent/tent_thunder_roll_1.wav"
+   ],
+   "level_db": 116,
+   "first": 95,
+   "interval": [
+    70,
+    170
+   ],
+   "rate": [
+    0.94,
+    1.04
+   ],
+   "fade": 2,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     1900.0,
+     -2300.0,
+     500.0
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 50,
+   "group": "stream",
+   "emitters": 4,
+   "spread": 5,
+   "first": 0,
+   "fade": 6,
+   "sound": {
+    "model": "water",
+    "preset": "brook_rocks",
+    "params": {
+     "gain": 0.1
+    }
+   },
+   "motion": {
+    "type": "fixed",
+    "position": [
+     3.0,
+     14.0,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 51,
+   "group": "stream",
+   "class": "bed",
+   "files": [
+    "generated/mountain_tent/tent_creek_1.wav",
+    "generated/mountain_tent/tent_creek_2.wav"
+   ],
+   "playback": "loop",
+   "level_db": 45,
+   "emitters": 3,
+   "spread": 6,
+   "first": 0,
+   "fade": 6,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     -3.0,
+     16.0,
+     -0.8
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 60,
+   "group": "tent",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_bag_rustle_1.wav",
+    "generated/mountain_tent/tent_bag_rustle_2.wav",
+    "generated/mountain_tent/tent_bag_rustle_3.wav",
+    "generated/mountain_tent/tent_bag_rustle_4.wav"
+   ],
+   "level_db": 35,
+   "first": 30,
+   "interval": [
+    50,
+    140
+   ],
+   "rate": [
+    0.95,
+    1.05
+   ],
+   "fade": 0.2,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.15,
+     0.28,
+     -0.2
+    ]
+   }
+  },
+  {
+   "kind": "clip",
+   "id": 61,
+   "group": "tent",
+   "class": "event",
+   "files": [
+    "generated/mountain_tent/tent_zipper_1.wav",
+    "generated/mountain_tent/tent_zipper_2.wav",
+    "generated/mountain_tent/tent_zipper_3.wav"
+   ],
+   "level_db": 41,
+   "first": 240,
+   "interval": [
+    300,
+    600
+   ],
+   "rate": [
+    0.96,
+    1.04
+   ],
+   "fade": 0.1,
+   "motion": {
+    "type": "fixed",
+    "position": [
+     0.6,
+     -0.75,
+     -0.05
+    ]
+   }
+  }
+ ],
+ "controls": [
+  {
+   "group": "rain",
+   "title": "Rain on the fly",
+   "icon": "rain"
+  },
+  {
+   "group": "downpour",
+   "title": "Downpour",
+   "icon": "rain"
+  },
+  {
+   "group": "meadow",
+   "title": "Meadow",
+   "icon": "rain"
+  },
+  {
+   "group": "drips",
+   "title": "Drips",
+   "icon": "water"
+  },
+  {
+   "group": "wind",
+   "title": "Wind",
+   "icon": "wind"
+  },
+  {
+   "group": "gusts",
+   "title": "Gusts",
+   "icon": "wind"
+  },
+  {
+   "group": "fly",
+   "title": "Fly and poles",
+   "icon": "tent"
+  },
+  {
+   "group": "storm",
+   "title": "Thunder",
+   "icon": "thunder"
+  },
+  {
+   "group": "stream",
+   "title": "Stream",
+   "icon": "water"
+  },
+  {
+   "group": "tent",
+   "title": "Sleeping bag",
+   "icon": "tent"
+  }
+ ],
+ "levers": [
+  {
+   "key": "rain",
+   "title": "Rain",
+   "icon": "rain",
+   "min": 0,
+   "max": 1,
+   "default": 0.35,
+   "lively": 0.5,
+   "drives": [
+    {
+     "group": "rain",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.08,
+       -18
+      ],
+      [
+       0.35,
+       0
+      ],
+      [
+       0.7,
+       2
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    {
+     "group": "downpour",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.55,
+       -40
+      ],
+      [
+       0.75,
+       -10
+      ],
+      [
+       1,
+       0
+      ]
+     ]
+    },
+    {
+     "group": "meadow",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.1,
+       -16
+      ],
+      [
+       0.5,
+       -4
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "drips",
+   "title": "Drips",
+   "icon": "water",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "drips",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.15,
+       -14
+      ],
+      [
+       0.5,
+       -4
+      ],
+      [
+       1,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "wind",
+   "title": "Wind",
+   "icon": "wind",
+   "min": 0,
+   "max": 1,
+   "default": 0.25,
+   "lively": 0.6,
+   "drives": [
+    {
+     "group": "wind",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -30
+      ],
+      [
+       0.25,
+       -6
+      ],
+      [
+       0.6,
+       0
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    },
+    {
+     "group": "gusts",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.35,
+       -30
+      ],
+      [
+       0.7,
+       -10
+      ],
+      [
+       1,
+       -2
+      ]
+     ]
+    },
+    {
+     "group": "fly",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.2,
+       0.25
+      ],
+      [
+       0.5,
+       0.9
+      ],
+      [
+       1,
+       2.2
+      ]
+     ]
+    },
+    {
+     "group": "fly",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -6
+      ],
+      [
+       0.5,
+       0
+      ],
+      [
+       1,
+       3
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "thunder",
+   "title": "Thunder",
+   "icon": "storm",
+   "min": 0,
+   "max": 1,
+   "default": 0,
+   "lively": 0.2,
+   "drives": [
+    {
+     "group": "storm",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -40
+      ],
+      [
+       0.3,
+       -10
+      ],
+      [
+       1,
+       0
+      ]
+     ]
+    },
+    {
+     "group": "storm",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.3,
+       0.5
+      ],
+      [
+       1,
+       1.4
+      ]
+     ]
+    },
+    {
+     "group": "storm",
+     "param": "distance",
+     "at": [
+      [
+       0,
+       2
+      ],
+      [
+       1,
+       1
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "stream",
+   "title": "Stream",
+   "icon": "water",
+   "min": 0,
+   "max": 1,
+   "default": 0.5,
+   "lively": 0.1,
+   "drives": [
+    {
+     "group": "stream",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -30
+      ],
+      [
+       0.5,
+       0
+      ],
+      [
+       1,
+       4
+      ]
+     ]
+    },
+    {
+     "group": "stream",
+     "param": "distance",
+     "at": [
+      [
+       0,
+       1.6
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       0.8
+      ]
+     ]
+    },
+    {
+     "group": "stream",
+     "param": "a",
+     "at": [
+      [
+       0,
+       0.6
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       1,
+       1.35
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "key": "tent",
+   "title": "Tent",
+   "icon": "tent",
+   "min": 0,
+   "max": 1,
+   "default": 0.4,
+   "lively": -0.2,
+   "drives": [
+    {
+     "group": "tent",
+     "param": "events",
+     "at": [
+      [
+       0,
+       0
+      ],
+      [
+       0.4,
+       1
+      ],
+      [
+       1,
+       2.2
+      ]
+     ]
+    },
+    {
+     "group": "tent",
+     "param": "level",
+     "at": [
+      [
+       0,
+       -4
+      ],
+      [
+       0.4,
+       0
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "direction": {
+  "climate": false,
+  "only": true,
+  "start": "drizzle",
+  "change": 0.35,
+  "episodes": [
+   {
+    "name": "drizzle",
+    "wet": -0.2,
+    "energy": -0.6,
+    "drama": 0,
+    "segments": [
+     {
+      "label": "drizzle on the fly",
+      "minutes": [
+       10,
+       20
+      ],
+      "levers": {
+       "rain": 0.18,
+       "drips": 0.3,
+       "wind": 0.15,
+       "stream": 0.45
+      }
+     }
+    ]
+   },
+   {
+    "name": "steady_rain",
+    "wet": 0.4,
+    "energy": -0.1,
+    "drama": 0.1,
+    "after": [
+     "drizzle",
+     "clearing",
+     "night_wind"
+    ],
+    "segments": [
+     {
+      "label": "the rain sets in",
+      "minutes": 5,
+      "levers": {
+       "rain": 0.4,
+       "drips": 0.5,
+       "wind": 0.2,
+       "stream": 0.55
+      }
+     },
+     {
+      "label": "steady rain",
+      "minutes": [
+       12,
+       25
+      ],
+      "levers": {
+       "rain": 0.55,
+       "drips": 0.7,
+       "wind": 0.25,
+       "stream": 0.6
+      }
+     }
+    ]
+   },
+   {
+    "name": "passing_storm",
+    "wet": 1,
+    "energy": 0.7,
+    "drama": 1,
+    "after": [
+     "steady_rain",
+     "night_wind"
+    ],
+    "then": "clearing",
+    "segments": [
+     {
+      "label": "thunder over the valley",
+      "minutes": 4,
+      "levers": {
+       "rain": 0.6,
+       "drips": 0.7,
+       "wind": 0.45,
+       "thunder": 0.3,
+       "stream": 0.65
+      }
+     },
+     {
+      "label": "the storm passes over",
+      "minutes": [
+       4,
+       7
+      ],
+      "ease": 25,
+      "levers": {
+       "rain": 0.95,
+       "drips": 0.9,
+       "wind": 0.8,
+       "thunder": 0.85,
+       "stream": 0.75
+      }
+     },
+     {
+      "label": "thunder moving off",
+      "minutes": 6,
+      "levers": {
+       "rain": 0.5,
+       "drips": 0.8,
+       "wind": 0.35,
+       "thunder": 0.35,
+       "stream": 0.75
+      }
+     }
+    ]
+   },
+   {
+    "name": "clearing",
+    "wet": -0.6,
+    "energy": -0.7,
+    "drama": 0.1,
+    "after": [
+     "passing_storm",
+     "steady_rain",
+     "drizzle"
+    ],
+    "segments": [
+     {
+      "label": "the rain stops",
+      "minutes": 4,
+      "levers": {
+       "rain": 0.05,
+       "drips": 0.75,
+       "wind": 0.1,
+       "stream": 0.7
+      }
+     },
+     {
+      "label": "only the drips",
+      "minutes": [
+       10,
+       18
+      ],
+      "levers": {
+       "rain": 0,
+       "drips": 0.55,
+       "wind": 0.08,
+       "stream": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "name": "night_wind",
+    "wet": 0.1,
+    "energy": 0.4,
+    "drama": 0.4,
+    "weight": 0.6,
+    "after": [
+     "drizzle",
+     "steady_rain",
+     "clearing"
+    ],
+    "segments": [
+     {
+      "label": "wind off the ridge",
+      "minutes": 4,
+      "levers": {
+       "rain": 0.25,
+       "drips": 0.45,
+       "wind": 0.55
+      }
+     },
+     {
+      "label": "gusts on the fly",
+      "minutes": [
+       6,
+       12
+      ],
+      "levers": {
+       "rain": 0.3,
+       "drips": 0.5,
+       "wind": 0.75
+      }
+     },
+     {
+      "label": "the wind drops",
+      "minutes": 4,
+      "levers": {
+       "rain": 0.25,
+       "drips": 0.4,
+       "wind": 0.3
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

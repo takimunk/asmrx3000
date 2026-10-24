@@ -602,6 +602,9 @@ enum ControlText {
         "cue.station": N_("a stop"),
         "cue.still_night": N_("still night"),
         "cue.whisking": N_("whisking"),
+        // The tent in the rain ("drizzle", "steady_rain" and "clearing" are above).
+        "cue.passing_storm": N_("passing storm"),
+        "cue.night_wind": N_("night wind"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -694,6 +697,15 @@ enum ControlText {
         "tunnels and bridges": N_("tunnels and bridges"),
         "whales close": N_("whales close"),
         "whisking the tea": N_("whisking the tea"),
+        // The tent in the rain ("steady rain", "the rain stops", "thunder moving off" are above).
+        "drizzle on the fly": N_("drizzle on the fly"),
+        "the rain sets in": N_("the rain sets in"),
+        "thunder over the valley": N_("thunder over the valley"),
+        "the storm passes over": N_("the storm passes over"),
+        "only the drips": N_("only the drips"),
+        "wind off the ridge": N_("wind off the ridge"),
+        "gusts on the fly": N_("gusts on the fly"),
+        "the wind drops": N_("the wind drops"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -758,6 +770,16 @@ enum ControlText {
         "Tower": N_("Tower"),
         "Tunnels": N_("Tunnels"),
         "Vastness": N_("Vastness"),
+        // The tent in the rain ("Rain", "Wind", "Thunder" are translated as they are).
+        "Rain on the fly": N_("Rain on the fly"),
+        "Downpour": N_("Downpour"),
+        "Meadow": N_("Meadow"),
+        "Drips": N_("Drips"),
+        "Gusts": N_("Gusts"),
+        "Fly and poles": N_("Fly and poles"),
+        "Stream": N_("Stream"),
+        "Sleeping bag": N_("Sleeping bag"),
+        "Tent": N_("Tent"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

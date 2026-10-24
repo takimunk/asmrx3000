@@ -422,3 +422,25 @@
 "Fold %@" = "Свернуть: %@";
 "Unfold %@" = "Развернуть: %@";
 "muted: %@" = "выключены: %@";
+
+/* The tent in the rain (mountain_tent.json): title, group and lever titles, spells and their stretches. */
+"Tent in the rain" = "Палатка в дождь";
+"Rain on the fly" = "Дождь по тенту";
+"Downpour" = "Ливень";
+"Meadow" = "Луг";
+"Drips" = "Капель";
+"Gusts" = "Порывы";
+"Fly and poles" = "Тент и дуги";
+"Stream" = "Ручей";
+"Sleeping bag" = "Спальник";
+"Tent" = "Палатка";
+"passing storm" = "гроза проходит";
+"night wind" = "ночной ветер";
+"drizzle on the fly" = "морось по тенту";
+"the rain sets in" = "дождь зарядил";
+"thunder over the valley" = "гром над долиной";
+"the storm passes over" = "гроза над головой";
+"only the drips" = "только капель";
+"wind off the ridge" = "ветер с хребта";
+"gusts on the fly" = "порывы треплют тент";
+"the wind drops" = "ветер стихает";

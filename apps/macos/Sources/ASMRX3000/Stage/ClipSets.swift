@@ -13,7 +13,7 @@ import simd
 /// and far. The wall nearest the camera is left out (a cutaway), so the room never hides the
 /// listener.
 enum ClipSet: Equatable {
-    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan
+    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan, tent
 
     static func of(_ scene: SceneInfo) -> ClipSet {
         let id = scene.entry.id
@@ -26,6 +26,7 @@ enum ClipSet: Equatable {
         if has("singing_ice") { return .ice }
         if has("tea_house") { return .teaHouse }
         if has("body_scan") { return .bodyScan }
+        if has("mountain_tent") { return .tent }
         switch scene.look {
         case .space: return .space
         case .underwater: return .underwater
@@ -54,6 +55,10 @@ enum ClipSet: Equatable {
             c.target = SIMD3(1.0, -0.9, -1.0); c.azimuth = .pi - 0.38; c.elevation = 0.46; c.distance = 13
         case .bodyScan:
             c.target = SIMD3(0.4, 0, -0.6); c.elevation = 0.5; c.distance = 7
+        case .tent:
+            // From behind the right shoulder over the tent: the fly about the listener, the stream
+            // across the meadow on the left, the valley and its ridges beyond.
+            c.target = SIMD3(0.8, 0.9, -0.3); c.azimuth = .pi + 0.35; c.elevation = 0.4; c.distance = 9.5
         case .underwater:
             // Under the surface: the eye stays below it.
             c.target = SIMD3(1.2, 0, -0.6); c.elevation = 0.22; c.distance = 17
@@ -88,6 +93,14 @@ enum ClipSet: Equatable {
     /// on the module's hull in their direction (the open top arc avoided), so they read as the
     /// station's.
     func drawnAt(_ kind: ClipKind, raw: SIMD3<Float>) -> SIMD3<Float> {
+        if self == .tent, case .prop(.flap) = kind {
+            // On the fly sheet, in the sound's direction from the tent's middle.
+            let c = Self.tentCentre
+            let a = atan2(raw.y - c.y, raw.x - c.x)
+            let rho = min(simd_length(SIMD2(raw.x, raw.y) - c) / Self.flyRadius(a), 0.92)
+            let q = c + rho * Self.flyRadius(a) * SIMD2(cos(a), sin(a))
+            return SIMD3(q.x, q.y, Self.flyZ(rho))
+        }
         if self == .train, case .prop(.panel) = kind {
             // On the partition to the corridor.
             return SIMD3(min(max(raw.x, -1.0), 1.4), Self.partition, min(raw.z, Self.ceiling - 0.3))
@@ -104,7 +117,7 @@ enum ClipSet: Equatable {
 
     /// Whether the sounds that are part of the place (a pane, a window, the eaves) are drawn on
     /// the set rather than as things of their own.
-    var hasRoom: Bool { self == .lighthouse || self == .train || self == .teaHouse }
+    var hasRoom: Bool { self == .lighthouse || self == .train || self == .teaHouse || self == .tent }
 
     // MARK: Geometry
 
@@ -120,6 +133,7 @@ enum ClipSet: Equatable {
         case .teaHouse: Self.teaHouse(&k, &ground)
         case .space: Self.space(&k)
         case .bodyScan: Self.bodyScan(&k, &ground, z: groundZ)
+        case .tent: Self.tent(&k, &ground, z: groundZ)
         case .underwater, .none: break
         }
         var out: [ClipPiece] = []
@@ -346,6 +360,113 @@ enum ClipSet: Equatable {
                     k.line([SIMD3(x, s * ya, 0.05), SIMD3(x, s * yb, 0.05)], 0.008)
                 }
             }
+        }
+    }
+
+    // MARK: The tent
+
+    /// The tent's middle (the listener lies with the head near its back end, feet to +x), its
+    /// floor, the fly's hem and apex heights, metres.
+    static let tentCentre = SIMD2<Float>(0.4, 0)
+    static let tentFloor: Float = -0.3, flyHem: Float = -0.2, flyApex: Float = 0.8
+
+    /// The fly's hem radius from the tent's middle at angle `a`: an ellipse (1.35 x 1.15 m),
+    /// drawn out into the vestibule over the door on the right (-y).
+    static func flyRadius(_ a: Float) -> Float {
+        let e = 1 / ((cos(a) / 1.35) * (cos(a) / 1.35) + (sin(a) / 1.15) * (sin(a) / 1.15)).squareRoot()
+        return e * (1 + 0.42 * pow(max(0, -sin(a)), 6))
+    }
+
+    /// The fly's height at `rho` (0 at the apex, 1 at the hem).
+    static func flyZ(_ rho: Float) -> Float {
+        flyHem + (flyApex - flyHem) * pow(max(0, 1 - rho * rho), 0.6)
+    }
+
+    /// A small dome tent on an alpine meadow: the fly sheet over the listener in seams from its
+    /// apex to the hem (the vestibule over the door on the right), the two crossing poles of the
+    /// inner tent, its floor and door, the sleeping pad, guy lines to their pegs; a few boulders
+    /// in the grass, the mountain stream across the meadow on the left, and the ridges of the
+    /// valley all round, lower ahead where it opens.
+    private static func tent(_ k: inout SetKit, _ ground: inout SetKit, z: Float) {
+        let c = tentCentre, floor = tentFloor
+        // Cut away on the camera's side (behind the right shoulder).
+        let open: (Float, Float) = (.pi + 0.35, 0.95)
+        ground.surface(centre: .zero, z: z, from: 0, to: 1200, rings: 28, part: Part.ground)
+        ground.plane(x: (c.x - 1.1, c.x + 1.1), y: (-0.7, 0.7), z: floor + 0.006, part: Part.section)
+        func fly(_ a: Float, _ rho: Float) -> SIMD3<Float> {
+            let r = rho * flyRadius(a)
+            return SIMD3(c.x + r * cos(a), c.y + r * sin(a), flyZ(rho))
+        }
+        // The fly: its hem, one fold line half way up, and the seams from the apex.
+        let n = 64
+        let a0 = open.0 + open.1, span = 2 * Float.pi - 2 * open.1
+        k.line((0...n).map { fly(a0 + span * Float($0) / Float(n), 1) }, 0.018)
+        k.line((0...n).map { fly(a0 + span * Float($0) / Float(n), 0.62) }, 0.008)
+        for i in 0..<8 {
+            let a = -Float.pi / 2 + 2 * Float.pi * Float(i) / 8
+            if SetKit.inside(a, open) { continue }
+            k.line((0...8).map { fly(a, 1 - Float($0) / 8) }, i == 0 ? 0.014 : 0.011)
+        }
+        k.b.ball(ClipSpace.map(SIMD3(c.x, c.y, flyApex + 0.02)), 0.05, part: Part.set)
+        // Guy lines from the fly's shoulders out to their pegs.
+        for a in [Float.pi / 4, 3 * .pi / 4, -.pi / 4, -3 * .pi / 4, .pi / 2] where !SetKit.inside(a, open) {
+            let top = fly(a, 0.72)
+            let peg = SIMD3(c.x + 1.75 * flyRadius(a) * cos(a), c.y + 1.75 * flyRadius(a) * sin(a), z)
+            k.line([top, peg], 0.006)
+            k.line([peg, peg + SIMD3(0, 0, 0.12)], 0.012)
+        }
+        // The inner tent's two poles, crossing over the listener, and its door on the right.
+        let hx: Float = 1.1, hy: Float = 0.7, poleTop: Float = 0.68
+        for s: Float in [1, -1] {
+            let a = SIMD3(c.x - hx, -s * hy, floor), b = SIMD3(c.x + hx, s * hy, floor)
+            k.line((0...16).map { i -> SIMD3<Float> in
+                let u = Float(i) / 16
+                return a + (b - a) * u + SIMD3(0, 0, (poleTop - floor) * sin(.pi * u))
+            }, 0.014)
+        }
+        k.line((0...12).map { i -> SIMD3<Float> in
+            let a = Float.pi * Float(i) / 12
+            return SIMD3(c.x + 0.55 * cos(a), -hy + 0.16 * sin(a), floor + 0.82 * sin(a))
+        }, 0.011)
+        // The sleeping pad under the listener.
+        let pad: [SIMD3<Float>] = [SIMD3(-0.45, -0.3, floor + 0.02), SIMD3(1.45, -0.3, floor + 0.02), SIMD3(1.45, 0.3, floor + 0.02),
+                                   SIMD3(-0.45, 0.3, floor + 0.02), SIMD3(-0.45, -0.3, floor + 0.02)]
+        k.line(pad, 0.012)
+        for x: Float in [0.05, 0.55, 1.05] { k.line([SIMD3(x, -0.3, floor + 0.02), SIMD3(x, 0.3, floor + 0.02)], 0.006) }
+        // Boulders in the meadow.
+        var rng = SeededGenerator(0x7E47)
+        for (x, y, r) in [(Float(6), Float(-4.5), Float(0.5)), (-3.5, -6.5, 0.35), (10, 4, 0.7), (14, -9, 0.9), (-9, -3, 0.6), (22, 6, 1.2),
+                          (4.5, 9.5, 0.45), (-5, 11, 0.6)] as [(Float, Float, Float)] {
+            var s = MeshBuilder()
+            s.rock(seed: UInt64(1 + rng.next() * 90), bumps: 0.14, squash: SIMD3(r, r * 0.85, r * 0.55), part: Part.set)
+            k.b.add(s.warped { ClipSpace.map($0 + SIMD3(x, y, z)) }, matrix_identity_float4x4)
+        }
+        // The stream across the meadow on the left: its two banks, a few riffles, stones in it.
+        func mid(_ x: Float) -> Float { 14 + 1.8 * sin(x / 9 + 0.5) + 0.7 * sin(x / 3.7) }
+        let xs = Array(stride(from: Float(-60), through: 80, by: 1.5))
+        for side: Float in [1, -1] { k.line(xs.map { SIMD3($0, mid($0) + side * 1.1, z + 0.02) }, 0.014) }
+        for x0 in stride(from: Float(-14), through: 22, by: 4.5) {
+            let w = 0.35 * sin(x0 * 1.3)
+            k.line((0...4).map { i in let x = x0 + Float(i) * 0.5; return SIMD3(x, mid(x) + w, z + 0.03) }, 0.007)
+        }
+        for x in stride(from: Float(-10), through: 18, by: 3.5) {
+            var s = MeshBuilder()
+            let r = 0.18 + 0.2 * rng.next()
+            s.rock(seed: UInt64(1 + rng.next() * 90), bumps: 0.14, squash: SIMD3(r * 1.3, r, r * 0.5), part: Part.set)
+            let at = SIMD3(x + rng.next(), mid(x) + 1.6 * (rng.next() - 0.5), z)
+            k.b.add(s.warped { ClipSpace.map($0 + at) }, matrix_identity_float4x4)
+        }
+        // The ridges of the valley: high on both sides, lower ahead where it opens out.
+        for (d, w) in [(Float(950), Float(0.02)), (1150, 0.012)] {
+            var pts: [SIMD3<Float>] = []
+            for i in 0...240 {
+                let a = -Float.pi + 2 * Float.pi * Float(i) / 240
+                let s = sin(a)
+                let h = 70 + 260 * s * s * (1 - 0.3 * cos(a)) + 40 * sin(7 * a + 1 + d) + 22 * sin(13 * a + d)
+                let r = d + 90 * sin(3 * a)
+                pts.append(SIMD3(r * cos(a), r * sin(a), z + h * (d > 1000 ? 1.25 : 1)))
+            }
+            k.line(pts, w)
         }
     }
 
