@@ -50,7 +50,7 @@ SCENES=(forest_river underwater_drift space_still lighthouse_gale night_train si
 # The light build carries only the procedural scenes, which need no sound files.
 [[ "${LITE:-0}" == "1" ]] && SCENES=(open_country)
 for s in "${SCENES[@]}"; do cp "$ROOT/core/scenes/$s.json" "$APP/Contents/Resources/scenes/"; done
-missing=$(cd "$APP/Contents/Resources/scenes" && grep -ho '"[^"]*\.wav"' *.json | tr -d '"' | sort -u | while read -r f; do
+missing=$(cd "$APP/Contents/Resources/scenes" && { grep -ho '"[^"]*\.wav"' *.json || true; } | tr -d '"' | sort -u | while read -r f; do
   if [[ -f "$ROOT/assets/sounds/$f" ]]; then
     mkdir -p "$APP/Contents/Resources/sounds/$(dirname "$f")"
     cp "$ROOT/assets/sounds/$f" "$APP/Contents/Resources/sounds/$f"
