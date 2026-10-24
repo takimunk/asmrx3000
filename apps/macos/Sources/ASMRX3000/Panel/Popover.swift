@@ -229,12 +229,67 @@ private struct SceneArea: View {
                 .padding(Grid.x3)
         }
         .overlay(alignment: .topTrailing) {
-            SettingsChip(open: settingsOpen, hint: $hint, toggle: toggleSettings)
-                .padding(Grid.x3)
+            HStack(spacing: Grid.x2) {
+                SessionChip(audio: model.audio, hint: $hint)
+                SettingsChip(open: settingsOpen, hint: $hint, toggle: toggleSettings)
+            }
+            .padding(Grid.x3)
         }
         .frame(width: Popover.width, height: Popover.sceneHeight)
         .clipped()
         .onHover { hovering = $0 }
+    }
+}
+
+/// A timed session (a scene with a script, such as the body scan): time gone and left, and a
+/// button that starts it over. Polled once a second; absent in scenes without a script.
+private struct SessionChip: View {
+    let audio: AudioEngine
+    @Binding var hint: String?
+    @ObservedObject private var lang = Language.shared
+    @State private var hovering = false
+
+    static func clock(_ s: Float) -> String {
+        let t = Swift.max(0, Int(s.rounded()))
+        return String(format: "%d:%02d", t / 60, t % 60)
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let d = audio.directionInfo()
+            if d.script_s > 0 {
+                let done = d.elapsed_s >= d.script_s
+                let name = tr("Start over")
+                HStack(spacing: Grid.x2) {
+                    Text(done ? tr("finished") : Self.clock(d.elapsed_s))
+                        .foregroundStyle(Ink.paper)
+                    if !done {
+                        Text(tr("%@ left", Self.clock(d.script_s - d.elapsed_s)))
+                            .foregroundStyle(Ink.ash)
+                    }
+                    Button { audio.restartScene() } label: {
+                        Text("↺")
+                            .foregroundStyle(hovering ? Ink.paper : Ink.paper.opacity(0.8))
+                            .frame(width: Grid.x4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .onHover { h in
+                        hovering = h
+                        hint = h ? name : nil
+                    }
+                    .help(name)
+                    .accessibilityLabel(name)
+                }
+                .font(Ink.text(Ink.Size.caption).monospacedDigit())
+                .lineLimit(1)
+                .padding(.horizontal, Grid.x3)
+                .frame(height: Popover.chipHeight)
+                .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.88)))
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 }
 

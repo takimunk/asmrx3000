@@ -170,16 +170,16 @@ def bowl(cid, at, pos, level, rate, files):
 bowls = [G + f"bowl_strike_el2_{i}.wav" for i in (1, 2, 3)]
 tingsha = [G + f"tingsha_el2_{i}.wav" for i in (1, 2)]
 entities = [
-    path_clip(10, "brush", [G + "guide_brush_el2_1.wav", G + "guide_brush_el2_2.wav"], 46, layer('brush', proxy("guide_brush_el2_1.wav"))),
-    path_clip(11, "air", [G + "guide_air_el2_1.wav"], 46, layer('air', proxy("guide_air_el2_1.wav"))),
-    path_clip(12, "grain", [G + "guide_grain_el2_1.wav"], 44, layer('grain', proxy("guide_grain_el2_1.wav"))),
-    path_clip(13, "warm", [G + "guide_warm_el2_1.wav"], 48, layer('warm', proxy("guide_warm_el2_1.wav", warm=True))),
-    path_clip(14, "twin", [G + "guide_grain_el2_2.wav"], 44, twin(proxy("guide_grain_el2_2.wav"))),
-    bowl(30, 1, [1.5, 0, -0.25], 53, [1, 1], bowls),
-    bowl(31, 140, [0.25, 0.36, -0.62], 46, [0.97, 1.03], tingsha),
-    bowl(32, 160, [0.23, -0.36, -0.62], 46, [0.97, 1.03], tingsha),
-    bowl(33, 264, [0.5, 0, -1.22], 50, [0.8, 0.8], bowls),
-    bowl(34, 292, [1.4, 0, -0.3], 51, [1, 1], bowls),
+    path_clip(10, "brush", [G + "guide_brush_el2_1.wav", G + "guide_brush_el2_2.wav"], 38, layer('brush', proxy("guide_brush_el2_1.wav"))),
+    path_clip(11, "air", [G + "guide_air_el2_1.wav"], 38, layer('air', proxy("guide_air_el2_1.wav"))),
+    path_clip(12, "grain", [G + "guide_grain_el2_1.wav"], 36, layer('grain', proxy("guide_grain_el2_1.wav"))),
+    path_clip(13, "warm", [G + "guide_warm_el2_1.wav"], 40, layer('warm', proxy("guide_warm_el2_1.wav", warm=True))),
+    path_clip(14, "twin", [G + "guide_grain_el2_2.wav"], 36, twin(proxy("guide_grain_el2_2.wav"))),
+    bowl(30, 1, [1.5, 0, -0.25], 49, [1, 1], bowls),
+    bowl(31, 140, [0.25, 0.36, -0.62], 42, [0.97, 1.03], tingsha),
+    bowl(32, 160, [0.23, -0.36, -0.62], 42, [0.97, 1.03], tingsha),
+    bowl(33, 264, [0.5, 0, -1.22], 46, [0.8, 0.8], bowls),
+    bowl(34, 292, [1.4, 0, -0.3], 47, [1, 1], bowls),
 ]
 
 # The direction starts somewhere inside its first segment (30..100 % of it left). A 3 s lead-in
@@ -199,7 +199,7 @@ scene = {
     "name": "Body scan",
     "seed": 6100,
     "environment": {"time_of_day": 21.0, "rain_mm_h": 0.0, "wind_ms": 2.0, "storm": 0.0, "temperature_c": 20.0,
-                    "humidity": 0.5, "ground_z": -1.23},
+                    "humidity": 0.5, "ground_z": -1.23, "loudness_lufs": -30.0},
     "controls": [
         {"group": "guide", "title": "Guide", "icon": "tone", "params": ["level"]},
         {"group": "bowls", "title": "Bowls", "icon": "tone", "params": ["level"]},

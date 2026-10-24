@@ -596,6 +596,8 @@ typedef struct AsmrDirectionInfo {
     uint32_t held;           /* bit ASMR_DIRECTION_* set = that quantity is left to the user now */
     uint32_t climate;        /* 1 = it drives time and weather (the forest); 0 = only the scene levers (clip scenes) */
     uint32_t held_levers;    /* bit i set = scene lever i is left to the user now */
+    float elapsed_s;         /* seconds the scene has run (stands while paused) */
+    float script_s;          /* length of the scene's script, s; 0 = none (a timed session such as the body scan) */
 } AsmrDirectionInfo;
 void asmr_get_direction(const AsmrEngine *engine, AsmrDirectionInfo *out);
 uint32_t asmr_direction_episode_count(const AsmrEngine *engine);

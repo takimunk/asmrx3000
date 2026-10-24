@@ -186,6 +186,10 @@ pub struct Info {
     pub climate: bool,
     /// Bit per scene lever left to the user right now.
     pub held_levers: u32,
+    /// Seconds the direction has run (scene time: it stands while paused).
+    pub elapsed_s: f32,
+    /// Length of the scene's script, s (0 = no script): a timed session (the body scan).
+    pub script_s: f32,
 }
 
 /// The scene's own values: what the climate is anchored to and `amount` blends from.
@@ -265,6 +269,8 @@ pub struct Direction {
     bird_mult: f32,
     out: Output,
     climate: bool,
+    elapsed: f64,
+    script_s: f32,
     lever_spec: Vec<LeverSpec>,
     /// Per episode, per segment: (lever index, target range).
     lever_plan: Vec<Vec<Vec<(usize, Span)>>>,
@@ -360,6 +366,8 @@ impl Direction {
         }
         let mut me = Self {
             climate: d.climate,
+            elapsed: 0.0,
+            script_s: 0.0,
             lever_spec,
             lever_plan,
             lever_target: [None; MAX_LEVERS],
@@ -417,6 +425,10 @@ impl Direction {
             me.draw(None, &steer, true)
         };
         let scripted = !me.script.is_empty();
+        me.script_s = me.script.iter().map(|&(i, m)| {
+            let mean: f32 = me.eps[i].segments.iter().map(|s| s.minutes.map_or(20.0, |r| 0.5 * (r.0[0] + r.0[1]))).sum();
+            mean * 60.0 * me.script_scale(i, m)
+        }).sum();
         me.begin(first, &steer);
         // Start somewhere inside it, not always at its very beginning (a script starts at its
         // beginning: a timed session must not lose its first minute).
@@ -858,6 +870,7 @@ impl Direction {
     /// Advance by `dt` seconds of audio, planning in `TICK` steps; `input` is read on each.
     /// Returns true when the output changed (a step ran).
     pub fn advance(&mut self, dt: f32, input: &Input) -> bool {
+        self.elapsed += dt as f64;
         self.acc += dt;
         if self.acc < TICK {
             return false;
@@ -901,6 +914,8 @@ impl Direction {
             held,
             climate: self.climate,
             held_levers,
+            elapsed_s: self.elapsed as f32,
+            script_s: self.script_s,
         }
     }
 

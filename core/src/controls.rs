@@ -344,6 +344,8 @@ pub struct Bases {
     pub direction: Option<crate::direction::Steer>,
     /// Its episodes: `direction.cue` offers none, next and these.
     pub cues: usize,
+    /// The scene's loudness target (mix.loudness), LUFS.
+    pub loudness: f32,
 }
 
 impl Bases {
@@ -374,7 +376,7 @@ impl Bases {
         };
         let direction = desc.direction.as_ref().map(crate::direction::Steer::from_desc);
         let cues = desc.direction.as_ref().and_then(|d| d.catalogue().ok()).map_or(CUES.len() - 2, |e| e.len());
-        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0), direction, cues }
+        Self { water, wind, fire, temperature: e.temperature_c, humidity: e.humidity, hour: e.time_of_day, season, drying: e.weather_time_scale.clamp(0.1, 200.0), direction, cues, loudness: e.loudness_lufs.unwrap_or(-22.0).clamp(-36.0, -10.0) }
     }
 
     fn regime(&self, idx: f32) -> WaterConfig {
@@ -503,7 +505,7 @@ impl ControlBank {
             MIX_CLARITY => 0.6,
             MIX_DENSITY => mix_density(0.6),
             MIX_SOLOISTS => mix_soloists(0.6),
-            MIX_LOUDNESS => -22.0,
+            MIX_LOUDNESS => b.loudness,
             MIX_DYNAMICS => 0.7,
             MIX_FRONT_FOCUS => 0.5,
             MIX_DISTANCE => 0.6,

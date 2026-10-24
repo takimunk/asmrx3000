@@ -336,8 +336,14 @@ final class AudioEngine: ObservableObject {
 
     /// Builds the chosen scene off the main thread (clip files are decoded and resampled), then
     /// swaps cores; playback, volume, head pose and screen carry over. Remembered across launches.
-    func switchScene(to entry: SceneEntry) {
-        guard entry != scene.entry || sceneError != nil, loadingScene != entry else { return }
+    /// Starts the current scene over from its beginning (a timed session such as the body scan):
+    /// a fresh core, so its path, script and accents start together.
+    func restartScene() {
+        switchScene(to: scene.entry, force: true)
+    }
+
+    func switchScene(to entry: SceneEntry, force: Bool = false) {
+        guard entry != scene.entry || sceneError != nil || force, loadingScene != entry else { return }
         SceneEntry.saved = entry
         guard let info = SceneInfo.load(entry) else {
             sceneError = tr("No scene file")

@@ -26,9 +26,11 @@ pub struct DirectionInfo {
     pub held: u32,
     pub climate: u32,
     pub held_levers: u32,
+    pub elapsed_s: f32,
+    pub script_s: f32,
 }
 
-const FIELDS: usize = 17;
+const FIELDS: usize = 19;
 
 /// Latest [`DirectionInfo`], written by the audio thread a few times a second.
 pub struct DirectionBridge {
@@ -62,6 +64,8 @@ impl DirectionBridge {
             i.held,
             i.climate as u32,
             i.held_levers,
+            f(i.elapsed_s),
+            f(i.script_s),
         ];
         for (a, v) in self.v.iter().zip(vals) {
             a.store(v, Ordering::Relaxed);
@@ -89,6 +93,8 @@ impl DirectionBridge {
             held: u(14),
             climate: u(15),
             held_levers: u(16),
+            elapsed_s: f(17),
+            script_s: f(18),
         }
     }
 }
