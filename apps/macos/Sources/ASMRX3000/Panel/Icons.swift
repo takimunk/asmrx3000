@@ -85,6 +85,8 @@ enum Icon: Hashable {
     case course
     // The newer scenes: lighthouse, night train, singing ice, tea house.
     case light, lamp, tower, bell, fog, horn, rumble, rail, train, bridge, tunnel, cup, tea, ice, crack, owl, distance
+    // Campfire by the sea.
+    case surf
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -181,6 +183,9 @@ enum Icon: Hashable {
         case "crack": return .crack
         case "owl": return .owl
         case "distance": return .distance
+        case "surf": return .surf
+        case "moon": return .moon
+        case "leaf", "grass": return .leaf
         case "fire": return .flame
         case "thunder", "storm": return .bolt
         case "temperature": return .thermometer
@@ -581,6 +586,15 @@ enum Icon: Hashable {
                 Stroke(d: "M12 20 V18.5 M12 16.5 V14.5", opacity: 0.7),
                 Stroke(d: "M12 6 V9 M10.5 7.5 H13.5", opacity: 0.45),
             ]
+        case .surf:
+            // A wave curling over onto a shelving beach; its wash runs up the slope and back.
+            let run = 1.6 * sin(t * 1.2)
+            return [
+                Stroke(d: "M2 13.5 C5 13.5 6.5 6 11.5 6 C15 6 16.5 8.5 15.5 10.5 C14.6 12.2 12.2 11.6 12.6 9.8"),
+                Stroke(d: "M2 17 C6 16.2 9 14.6 12.5 14.2", opacity: 0.75),
+                Stroke(d: "M3 21 L21.5 14.5", opacity: 0.55),
+                Stroke(d: "M\(f(12 + run)) 18 C\(f(14 + run)) 17.2 \(f(16 + run)) 16.5 \(f(18 + run)) 15.8", opacity: 0.6),
+            ]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -602,6 +616,7 @@ extension Icon {
         case .recenter: return 2 * .pi / 3
         case .head: return .pi
         case .tree: return 2 * .pi / 1.5
+        case .surf: return 2 * .pi / 1.2
         case .wind: return 4.0 / 3.0
         case .rain: return 0.8
         case .sun: return 12

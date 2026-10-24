@@ -422,3 +422,32 @@
 "Fold %@" = "Свернуть: %@";
 "Unfold %@" = "Развернуть: %@";
 "muted: %@" = "выключены: %@";
+
+/* Campfire by the sea */
+"Campfire by the sea" = "Костёр у моря";
+"kindling" = "растопка";
+"steady fire" = "ровный огонь";
+"low embers" = "тлеющие угли";
+"rising tide" = "прилив";
+"before dawn" = "перед рассветом";
+"kindling catches" = "растопка занимается";
+"the fire takes" = "огонь разгорается";
+"a good blaze" = "яркое пламя";
+"a steady fire" = "огонь горит ровно";
+"the fire burns down" = "костёр прогорает";
+"the tide turns" = "начинается прилив";
+"high water" = "полная вода";
+"the tide eases" = "прилив стихает";
+"a breeze off the sea" = "ветерок с моря";
+"breezy" = "свежо";
+"the breeze drops" = "ветер стихает";
+"the fire dies down" = "огонь угасает";
+"embers before dawn" = "угли перед рассветом";
+"Fire" = "Огонь";
+"Surf" = "Прибой";
+"Night life" = "Ночная жизнь";
+"Crackle" = "Треск";
+"Flames" = "Пламя";
+"Embers" = "Угли";
+"Driftwood" = "Плавник";
+"Dune grass" = "Трава на дюнах";

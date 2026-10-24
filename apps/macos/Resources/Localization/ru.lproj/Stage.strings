@@ -53,3 +53,11 @@
 "tingsha" = "тингша";
 "rain on the surface" = "дождь по воде";
 "fish" = "рыбы";
+
+/* Campfire by the sea */
+"flames" = "пламя";
+"log" = "полено";
+"damp driftwood" = "сырой плавник";
+"breakers" = "прибой";
+"wave" = "волна";
+"curlew" = "кроншнеп";

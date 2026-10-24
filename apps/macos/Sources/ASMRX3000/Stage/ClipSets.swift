@@ -13,7 +13,7 @@ import simd
 /// and far. The wall nearest the camera is left out (a cutaway), so the room never hides the
 /// listener.
 enum ClipSet: Equatable {
-    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan
+    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan, beach
 
     static func of(_ scene: SceneInfo) -> ClipSet {
         let id = scene.entry.id
@@ -26,6 +26,7 @@ enum ClipSet: Equatable {
         if has("singing_ice") { return .ice }
         if has("tea_house") { return .teaHouse }
         if has("body_scan") { return .bodyScan }
+        if has("campfire_shore") { return .beach }
         switch scene.look {
         case .space: return .space
         case .underwater: return .underwater
@@ -54,6 +55,9 @@ enum ClipSet: Equatable {
             c.target = SIMD3(1.0, -0.9, -1.0); c.azimuth = .pi - 0.38; c.elevation = 0.46; c.distance = 13
         case .bodyScan:
             c.target = SIMD3(0.4, 0, -0.6); c.elevation = 0.5; c.distance = 7
+        case .beach:
+            // From behind the driftwood seat, over the fire to the waterline and the sea.
+            c.target = SIMD3(2.4, 0, -0.7); c.elevation = 0.3; c.distance = 7.5
         case .underwater:
             // Under the surface: the eye stays below it.
             c.target = SIMD3(1.2, 0, -0.6); c.elevation = 0.22; c.distance = 17
@@ -72,6 +76,7 @@ enum ClipSet: Equatable {
         case .ice: return 0.8
         case .train: return 0.45
         case .bodyScan: return 0.0
+        case .beach: return 0.75
         default: return 0
         }
     }
@@ -120,6 +125,7 @@ enum ClipSet: Equatable {
         case .teaHouse: Self.teaHouse(&k, &ground)
         case .space: Self.space(&k)
         case .bodyScan: Self.bodyScan(&k, &ground, z: groundZ)
+        case .beach: Self.beach(&k, &ground, &water, z: groundZ)
         case .underwater, .none: break
         }
         var out: [ClipPiece] = []
@@ -354,6 +360,95 @@ enum ClipSet: Equatable {
         ground.surface(centre: .zero, z: z, from: 0, to: 9, rings: 10, part: Part.ground)
         k.surface(centre: .zero, z: z + 0.02, from: 0, to: 0.9, rings: 4, part: Part.section)
         k.ring(centre: .zero, radius: 0.92, z: z + 0.03, w: 0.02)
+    }
+}
+
+extension ClipSet {
+    /// The waterline of the campfire beach: 14 m ahead, curving gently away to both sides (a
+    /// wide bay), so the sea fills the front arc and the sand runs back to the dunes.
+    static func shore(_ y: Float) -> Float { 14 + 0.0035 * y * y }
+    /// The sea's surface: a little below the sand where the listener sits (ground_z -0.85); the
+    /// scene's sea sounds sit just above it, since the engine's ground is one flat plane.
+    static let seaZ: Float = -0.97
+
+    /// Night on a pebble beach: sand from the dunes behind down to the waterline, the sea beyond
+    /// it to the horizon with two lines of foam along the shore, the driftwood log the listener
+    /// sits on, a few pebbles, and the dunes behind with tufts of marram along their crest.
+    fileprivate static func beach(_ k: inout SetKit, _ ground: inout SetKit, _ water: inout SetKit, z: Float) {
+        // Rows along the shore (y) and away from it (x), spaced geometrically so the grid stays fine
+        // near the listener and coarse far out; built in world metres, then mapped.
+        let ys = (-24...24).map { i -> Float in
+            let u = Float(i) / 24
+            return 320 * u * u * u + 6 * u
+        }
+        func sheet(_ rows: (Float) -> [SIMD3<Float>], part: Float, into kit: inout SetKit) {
+            var pos: [SIMD3<Float>] = []
+            var tri: [UInt32] = []
+            var width = 0
+            for y in ys {
+                let r = rows(y)
+                width = r.count
+                pos += r
+            }
+            for j in 0..<(ys.count - 1) {
+                for i in 0..<(width - 1) {
+                    let a = UInt32(j * width + i), b = a + 1, c = a + UInt32(width), d = c + 1
+                    tri += [a, c, b, b, c, d]
+                }
+            }
+            var m = MeshBuilder()
+            m.smooth(pos, tri, part: part)
+            kit.b.add(m.warped(ClipSpace.map), matrix_identity_float4x4)
+        }
+        // Sand: from 40 m behind to the waterline, sloping gently down to it.
+        sheet({ y in
+            let x1 = shore(y)
+            return (0...28).map { i -> SIMD3<Float> in
+                let u = Float(i) / 28
+                let x = -40 + (x1 + 40) * (1 - (1 - u) * (1 - u))
+                let slope = max(0, (x - 4) / (x1 - 4))
+                return SIMD3(x, y, z + (seaZ - z) * slope * slope)
+            }
+        }, part: Part.ground, into: &ground)
+        // The sea, from the waterline out to the horizon.
+        sheet({ y in
+            let x0 = shore(y)
+            return (0...14).map { i -> SIMD3<Float> in
+                let u = Float(i) / 14
+                return SIMD3(x0 + (1500 - x0) * u * u * u, y, seaZ)
+            }
+        }, part: Part.water, into: &water)
+        // The waterline and two lines of foam, the horizon.
+        for (off, w) in [(Float(0), Float(0.026)), (2.5, 0.012), (6.5, 0.008)] {
+            k.line(stride(from: Float(-60), through: 60, by: 3).map { y in SIMD3(shore(y) + off, y, seaZ + 0.02) }, w)
+        }
+        k.ring(centre: .zero, radius: 1500, z: seaZ, w: 0.03, open: (.pi, 1.45))
+        // The driftwood log the listener sits on, a branch stub, and pebbles about the fire.
+        k.line([SIMD3(-0.45, 1.0, z + 0.12), SIMD3(-0.42, 0, z + 0.15), SIMD3(-0.4, -0.9, z + 0.12)], 0.028)
+        k.line([SIMD3(-0.42, -0.55, z + 0.16), SIMD3(-0.3, -0.72, z + 0.3)], 0.012)
+        var rng = SeededGenerator(0xB3AC)
+        for _ in 0..<14 {
+            let a = 2 * Float.pi * rng.next(), r = 1.6 + 5.5 * rng.next()
+            let p = SIMD3(1.0 + r * cos(a) * 0.8, r * sin(a), z)
+            var s = MeshBuilder()
+            let d = 0.05 + 0.07 * rng.next()
+            s.rock(seed: UInt64(3 + rng.next() * 90), bumps: 0.15, squash: SIMD3(d, d * 0.8, d * 0.45), part: Part.set)
+            k.b.add(s.warped { ClipSpace.map($0 + p) }, matrix_identity_float4x4)
+        }
+        // The dunes behind: three low crests, marram along the nearest.
+        for (x, h, w) in [(Float(-6), Float(0.9), Float(0.016)), (-11, 1.6, 0.012), (-18, 2.4, 0.01)] {
+            k.line(stride(from: Float(-40), through: 40, by: 2).map { y in
+                SIMD3(x - 0.002 * y * y + 0.6 * sin(y * 0.21), y, z + h * (0.75 + 0.25 * sin(y * 0.13 + x)))
+            }, w)
+        }
+        for i in 0..<34 {
+            let y = -13 + Float(i) * 0.8 + 0.3 * rng.next()
+            let base = SIMD3(-6 - 0.002 * y * y + 0.6 * sin(y * 0.21), y, z + 0.9 * (0.75 + 0.25 * sin(y * 0.13 - 6)))
+            for b in 0..<3 {
+                let lean = SIMD3(0.12 * (rng.next() - 0.5) + 0.12, 0.25 * (Float(b) - 1), 0.55 + 0.25 * rng.next())
+                k.line([base, base + lean], 0.006)
+            }
+        }
     }
 }
 

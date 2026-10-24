@@ -21,6 +21,8 @@ enum Prop: CaseIterable {
     case kettle, brazier, cloth, ladle, whisk, host, teaBowl, eaves, basin, shishi, chime, templeBell
     // Body scan
     case bead, singingBowl, tingsha
+    // Campfire by the sea
+    case campfire, flames, sparks, embers, driftLog, steam, duneGrass, curlew
     /// A bed that is no object (a hum, a room tone): a small gimbal of two hoops.
     case marker
 }
@@ -106,6 +108,14 @@ enum PropMeshes {
         case .bead: return bead
         case .singingBowl: return singingBowl
         case .tingsha: return tingsha
+        case .campfire: return campfire
+        case .flames: return flames
+        case .sparks: return sparks
+        case .embers: return embers
+        case .driftLog: return driftLog
+        case .steam: return steam
+        case .duneGrass: return duneGrass
+        case .curlew: return curlew
         case .marker: return marker
         }
     }
@@ -904,6 +914,103 @@ enum PropMeshes {
                    at: M4.move(v(0, 0.3 * s, 0)) * M4.rotX(-s * .pi / 2 * 0.85))
         }
         b.path([v(0, 0.4, 0), v(0, 0.35, 0.35), v(0, 0, 0.5), v(0, -0.35, 0.35), v(0, -0.4, 0)], 0.015, segs: 4, part: MID)
+    }
+
+    // MARK: Campfire by the sea
+
+    /// A small driftwood fire: a ring of beach stones, four bleached branches crossed over the
+    /// coals. The sounding point is the fire's heart.
+    static let campfire = make { b in
+        var rng = SeededGenerator(0xF1E)
+        for k in 0..<9 {
+            let a = 2 * Float.pi * (Float(k) + 0.3 * rng.next()) / 9
+            var s = MeshBuilder()
+            s.rock(seed: UInt64(11 + k * 7), bumps: 0.18, squash: v(0.13, 0.11, 0.08), part: MID)
+            b.add(s, M4.move(v(0.52 * cos(a), 0.52 * sin(a), -0.32)))
+        }
+        for k in 0..<4 {
+            let a = Float(k) * 1.62 + 0.4
+            let foot = v(0.5 * cos(a), 0.5 * sin(a), -0.34)
+            b.rod(foot, v(0.06 * cos(a + 0.5), 0.06 * sin(a + 0.5), 0.12), 0.05, 0.035, segs: 6, part: DARK)
+        }
+        for (x, y) in [(0.08, 0.04), (-0.1, 0.1), (0.02, -0.12), (0.14, -0.06), (-0.12, -0.08)] as [(Float, Float)] {
+            b.ball(v(x, y, -0.3), 0.06, part: MID, squash: v(1.2, 1, 0.6))
+        }
+    }
+
+    /// Tongues of flame, drawn see-through: posed taller and flickering with their sound.
+    static let flames = make { b in
+        for k in 0..<5 {
+            let a = Float(k) * 1.26
+            let r: Float = k == 0 ? 0 : 0.12
+            let base = v(r * cos(a), r * sin(a), -0.3)
+            let h: Float = k == 0 ? 0.75 : 0.42 + 0.06 * Float(k % 2)
+            b.path([base, base + v(0.03, 0.02, h * 0.45), base + v(-0.02, 0.03, h * 0.8), base + v(0.02, 0, h)],
+                   k == 0 ? 0.13 : 0.08, 0.005, segs: 6, part: LIGHT)
+        }
+    }
+
+    /// Sparks rising from the fire: a loose column of motes (z 0...1.2, slid up and wrapped).
+    static let sparks = make { b in
+        var rng = SeededGenerator(0x5A4)
+        for k in 0..<9 {
+            let z = 0.13 * Float(k)
+            let a = rng.next() * 6.28, r = 0.05 + 0.18 * rng.next() * (0.4 + Float(k) / 9)
+            b.ball(v(r * cos(a), r * sin(a), z), 0.022, part: LIGHT)
+        }
+    }
+
+    /// The bed of coals: glowing lumps in a shallow pile.
+    static let embers = make { b in
+        var rng = SeededGenerator(0xE3B)
+        for k in 0..<11 {
+            let a = Float(k) * 2.4, r = 0.32 * rng.next().squareRoot()
+            b.ball(v(r * cos(a), r * sin(a), 0.03 * rng.next()), 0.07 + 0.04 * rng.next(), part: LIGHT, squash: v(1.3, 1, 0.55))
+        }
+    }
+
+    /// One branch of driftwood across the fire, a stub of a side branch on it.
+    static let driftLog = make { b in
+        b.rod(v(-0.75, 0.1, -0.05), v(0.75, -0.1, 0.12), 0.09, 0.07, segs: 7, part: DARK)
+        b.rod(v(0.2, -0.03, 0.07), v(0.38, 0.22, 0.2), 0.035, 0.015, segs: 5, part: DARK)
+    }
+
+    /// Steam curling off the end of a wet log, drawn see-through.
+    static let steam = make { b in
+        for k in 0..<3 {
+            var pts: [SIMD3<Float>] = []
+            for i in 0...10 {
+                let u = Float(i) / 10
+                pts.append(v(0.12 * sin(u * 5 + Float(k) * 2.1) * u, 0.1 * Float(k - 1) + 0.08 * cos(u * 4 + Float(k)) * u, u * 0.9))
+            }
+            b.path(pts, 0.035, 0.012, segs: 4, part: LIGHT)
+        }
+    }
+
+    /// A tuft of marram grass: long blades bowing away from the sea.
+    static let duneGrass = make { b in
+        var rng = SeededGenerator(0xD6E)
+        for k in 0..<11 {
+            let a = Float(k) * 0.57
+            let base = v(0.1 * cos(a), 0.1 * sin(a), -0.5)
+            let h = 0.75 + 0.35 * rng.next()
+            let lean = v(-0.35 - 0.2 * rng.next(), 0.35 * sin(a), 0)
+            b.path([base, base + v(0, 0, h * 0.5) + lean * 0.2, base + v(0, 0, h * 0.85) + lean * 0.6, base + v(0, 0, h) + lean],
+                   0.022, 0.004, segs: 3, part: LIGHT)
+        }
+    }
+
+    /// A curlew on the tideline, facing +x: long legs, the long down-curved bill.
+    static let curlew = make { b in
+        b.ball(v(0, 0, 0.18), 0.22, part: Part.feathers, squash: v(1.35, 0.8, 0.75))
+        b.rod(v(-0.22, 0, 0.2), v(-0.42, 0, 0.16), 0.08, 0.02, segs: 6, part: Part.feathers)
+        b.path([v(0.22, 0, 0.26), v(0.3, 0, 0.36), v(0.33, 0, 0.44)], 0.06, 0.05, segs: 6, part: Part.feathers)
+        b.ball(v(0.35, 0, 0.47), 0.075, part: Part.feathers)
+        b.path([v(0.41, 0, 0.47), v(0.6, 0, 0.42), v(0.74, 0, 0.3), v(0.8, 0, 0.18)], 0.016, 0.006, segs: 4, part: DARK)
+        for s: Float in [1, -1] {
+            b.rod(v(0.02, 0.05 * s, 0.05), v(0.0, 0.06 * s, -0.48), 0.016, segs: 4, part: DARK)
+            b.ball(v(0.39, 0.035 * s, 0.5), 0.016, part: DARK)
+        }
     }
 
     /// Two hoops at right angles about a pip.
