@@ -24,14 +24,12 @@ mkdir -p "$SRC/.background"
 tiffutil -cathidpicheck "$WORK/bg/background.png" "$WORK/bg/background@2x.png" -out "$SRC/.background/background.tiff" 2>/dev/null
 cp -R "$APP" "$SRC/"
 ln -s /Applications "$SRC/Applications"
-cp "$APP/Contents/Resources/AppIcon.icns" "$SRC/.VolumeIcon.icns"
 
 echo "▸ layout"
 hdiutil detach -quiet "/Volumes/$VOL" 2>/dev/null || true
 SIZE=$(( $(du -sm "$SRC" | cut -f1) + 40 ))
 hdiutil create -quiet -volname "$VOL" -srcfolder "$SRC" -fs HFS+ -format UDRW -size "${SIZE}m" "$WORK/rw.dmg"
 hdiutil attach -quiet -noautoopen "$WORK/rw.dmg"
-SetFile -a C "/Volumes/$VOL" 2>/dev/null || true   # use .VolumeIcon.icns
 osascript <<EOF
 tell application "Finder"
   tell disk "$VOL"
