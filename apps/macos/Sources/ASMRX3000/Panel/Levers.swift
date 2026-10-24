@@ -602,6 +602,12 @@ enum ControlText {
         "cue.station": N_("a stop"),
         "cue.still_night": N_("still night"),
         "cue.whisking": N_("whisking"),
+        // The night library's episodes.
+        "cue.quiet_reading": N_("quiet reading"),
+        "cue.rain_sets_in": N_("rain sets in"),
+        "cue.fire_burns_low": N_("fire burning low"),
+        "cue.storm_outside": N_("storm outside"),
+        "cue.late_stillness": N_("late stillness"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -694,6 +700,14 @@ enum ControlText {
         "tunnels and bridges": N_("tunnels and bridges"),
         "whales close": N_("whales close"),
         "whisking the tea": N_("whisking the tea"),
+        // The night library's stretches ("rain setting in", "steady rain", "storm moving away" above).
+        "reading by the fire": N_("reading by the fire"),
+        "the fire burns low": N_("the fire burns low"),
+        "glowing embers": N_("glowing embers"),
+        "a fresh log": N_("a fresh log"),
+        "the wind rises": N_("the wind rises"),
+        "storm over the roofs": N_("storm over the roofs"),
+        "late-night stillness": N_("late-night stillness"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -758,6 +772,14 @@ enum ControlText {
         "Tower": N_("Tower"),
         "Tunnels": N_("Tunnels"),
         "Vastness": N_("Vastness"),
+        // The night library.
+        "Clock": N_("Clock"),
+        "Fire": N_("Fire"),
+        "House": N_("House"),
+        "Pages": N_("Pages"),
+        "Pen": N_("Pen"),
+        "Reading": N_("Reading"),
+        "Storm": N_("Storm"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

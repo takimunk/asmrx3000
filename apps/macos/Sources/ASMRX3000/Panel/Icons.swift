@@ -85,6 +85,8 @@ enum Icon: Hashable {
     case course
     // The newer scenes: lighthouse, night train, singing ice, tea house.
     case light, lamp, tower, bell, fog, horn, rumble, rail, train, bridge, tunnel, cup, tea, ice, crack, owl, distance
+    // The night library.
+    case book, pen, clock, house
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -181,6 +183,10 @@ enum Icon: Hashable {
         case "crack": return .crack
         case "owl": return .owl
         case "distance": return .distance
+        case "book": return .book
+        case "pen": return .pen
+        case "clock": return .clock
+        case "house": return .house
         case "fire": return .flame
         case "thunder", "storm": return .bolt
         case "temperature": return .thermometer
@@ -581,6 +587,40 @@ enum Icon: Hashable {
                 Stroke(d: "M12 20 V18.5 M12 16.5 V14.5", opacity: 0.7),
                 Stroke(d: "M12 6 V9 M10.5 7.5 H13.5", opacity: 0.45),
             ]
+        case .book:
+            // An open book seen from above, a page lifting.
+            return [
+                Stroke(d: "M12 6.5 C9.5 5 6 4.8 3 5.5 V18.5 C6 17.8 9.5 18 12 19.5 C14.5 18 18 17.8 21 18.5 V5.5 C18 4.8 14.5 5 12 6.5 Z"),
+                Stroke(d: "M12 6.5 V19.5", opacity: 0.8),
+                Stroke(d: "M5.5 9 C7.3 8.6 9 8.8 10.3 9.4 M5.5 12 C7.3 11.6 9 11.8 10.3 12.4", opacity: 0.45),
+                Stroke(d: "M12 6.5 C14 4.3 16.5 3.6 19 3.8", opacity: 0.6),
+            ]
+        case .pen:
+            // A dip pen over its line of ink.
+            return [
+                Stroke(d: "M18.5 3.5 L20.5 5.5 L10 16 L7 17 L8 14 Z"),
+                Stroke(d: "M16.5 5.5 L18.5 7.5", opacity: 0.7),
+                Stroke(d: "M8 14 L10 16", opacity: 0.6),
+                Stroke(d: "M3 20.5 C5 19 6.5 21.5 8.5 20 C10.5 18.5 12 21 14 19.8", opacity: 0.55),
+            ]
+        case .clock:
+            // A long-case clock: hood and dial, the trunk with its pendulum.
+            return [
+                Stroke(d: "M8 21.5 V10 H16 V21.5 M7 21.5 H17"),
+                Stroke(d: "M8.5 10 V3.5 C10 2.5 14 2.5 15.5 3.5 V10"),
+                Stroke(d: Icon.circle(12, 6.5, 2.2), opacity: 0.85),
+                Stroke(d: "M12 6.5 V5.2 M12 6.5 H13.1", opacity: 0.7),
+                Stroke(d: "M12 10.5 V16.6", opacity: 0.6),
+                Stroke(d: Icon.circle(12, 17.8, 1.2), opacity: 0.6),
+            ]
+        case .house:
+            // An old house: a gable, a chimney, a lit window.
+            return [
+                Stroke(d: "M4 11 L12 4 L20 11 M6 9.5 V20.5 H18 V9.5"),
+                Stroke(d: "M15.5 6.8 V4 H17.5 V8.5", opacity: 0.8),
+                Stroke(d: "M10 20.5 V15 H14 V20.5", opacity: 0.7),
+                Stroke(d: "M8 12 H10.5 V14 H8 Z M13.5 12 H16 V14 H13.5 Z", opacity: 0.5),
+            ]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
             return [
@@ -615,7 +655,7 @@ extension Icon {
              .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma,
              .ship, .station, .docking, .radio, .reef, .course,
              .light, .lamp, .tower, .bell, .fog, .horn, .rumble, .rail, .train, .bridge, .tunnel, .cup, .tea, .ice, .crack, .owl,
-             .distance: return nil
+             .distance, .book, .pen, .clock, .house: return nil
         }
     }
 }

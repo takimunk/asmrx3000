@@ -53,3 +53,18 @@
 "tingsha" = "тингша";
 "rain on the surface" = "дождь по воде";
 "fish" = "рыбы";
+
+/* The night library. */
+"fire" = "огонь";
+"embers" = "угли";
+"settling logs" = "оседают поленья";
+"rain lashing the windows" = "ливень хлещет в окна";
+"rain on the windows" = "дождь по окнам";
+"pages" = "страницы";
+"pen" = "перо";
+"clock" = "часы";
+"clock strikes" = "бой часов";
+"floorboards" = "половицы";
+"bookcase" = "книжный шкаф";
+"radiator" = "батарея";
+"distant door" = "дальняя дверь";

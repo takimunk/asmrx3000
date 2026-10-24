@@ -3,7 +3,8 @@ import simd
 
 /// The place a clip scene happens in, drawn around the listener so they feel placed: the
 /// lantern room of a lighthouse over the sea, a sleeper compartment, a frozen lake under the
-/// stars, a station module in orbit, a tea room open to a rain garden. The place is the
+/// stars, a station module in orbit, a tea room open to a rain garden, a reading room at night
+/// with its fireplace, tall windows and long-case clock. The place is the
 /// "set": quiet linework and surfaces in their own material (`Part.set`, a pale pencil grey
 /// that never takes a contour or the selection), always there, behind the sounds. The sounds'
 /// models stay brighter stone and come and go as they sound.
@@ -13,7 +14,7 @@ import simd
 /// and far. The wall nearest the camera is left out (a cutaway), so the room never hides the
 /// listener.
 enum ClipSet: Equatable {
-    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan
+    case none, space, underwater, lighthouse, train, ice, teaHouse, library, bodyScan
 
     static func of(_ scene: SceneInfo) -> ClipSet {
         let id = scene.entry.id
@@ -25,6 +26,7 @@ enum ClipSet: Equatable {
         if has("night_train") { return .train }
         if has("singing_ice") { return .ice }
         if has("tea_house") { return .teaHouse }
+        if has("night_library") { return .library }
         if has("body_scan") { return .bodyScan }
         switch scene.look {
         case .space: return .space
@@ -52,6 +54,10 @@ enum ClipSet: Equatable {
         case .teaHouse:
             // From behind the left shoulder: the room, the host across, the garden on the right.
             c.target = SIMD3(1.0, -0.9, -1.0); c.azimuth = .pi - 0.38; c.elevation = 0.46; c.distance = 13
+        case .library:
+            // From behind the right shoulder: the fireplace on the left wall, the clock and the
+            // doorway to the corridor ahead; the tall windows behind are cut low.
+            c.target = SIMD3(1.7, 0.3, -0.4); c.azimuth = .pi + 0.42; c.elevation = 0.52; c.distance = 14
         case .bodyScan:
             c.target = SIMD3(0.4, 0, -0.6); c.elevation = 0.5; c.distance = 7
         case .underwater:
@@ -104,7 +110,7 @@ enum ClipSet: Equatable {
 
     /// Whether the sounds that are part of the place (a pane, a window, the eaves) are drawn on
     /// the set rather than as things of their own.
-    var hasRoom: Bool { self == .lighthouse || self == .train || self == .teaHouse }
+    var hasRoom: Bool { self == .lighthouse || self == .train || self == .teaHouse || self == .library }
 
     // MARK: Geometry
 
@@ -118,6 +124,7 @@ enum ClipSet: Equatable {
         case .train: Self.train(&k, &ground)
         case .ice: Self.ice(&k, &ground, z: groundZ)
         case .teaHouse: Self.teaHouse(&k, &ground)
+        case .library: Self.library(&k, &ground)
         case .space: Self.space(&k)
         case .bodyScan: Self.bodyScan(&k, &ground, z: groundZ)
         case .underwater, .none: break
@@ -311,6 +318,76 @@ enum ClipSet: Equatable {
             k.line([SIMD3(x, -10.5, garden), SIMD3(x, -10.5, garden + 1.6)], 0.012)
         }
         for z in [garden + 0.5, garden + 1.3] { k.line([SIMD3(-5, -10.5, z), SIMD3(6, -10.5, z)], 0.014) }
+    }
+
+    /// The reading room, cut open on the right (the camera's side): the floorboards and a rug under
+    /// the armchair, the writing table at the right hand; the fireplace in the left wall with its
+    /// mantel and hearth; behind, the two tall windows with their glazing bars and the radiator
+    /// under the right one; ahead, the front wall with the doorway into a long corridor, a door at
+    /// its far end.
+    private static func library(_ k: inout SetKit, _ ground: inout SetKit) {
+        let floor: Float = -1.15, ceiling: Float = 2.35
+        let xb: Float = -1.8, xf: Float = 4.6, yl: Float = 2.8, yr: Float = -3.0
+        let lift: Float = 0.012
+        ground.plane(x: (xb, xf), y: (yr, yl), z: floor, part: Part.ground)
+        // Floorboards along the room.
+        for y in stride(from: yr + 0.45, through: yl - 0.2, by: 0.45) {
+            k.line([SIMD3(xb, y, floor + lift), SIMD3(xf, y, floor + lift)], 0.007)
+        }
+        // A rug under the armchair.
+        ground.plane(x: (-0.95, 1.25), y: (-1.05, 1.1), z: floor + 0.006, part: Part.section)
+        k.line([SIMD3(-0.95, -1.05, floor + 0.02), SIMD3(1.25, -1.05, floor + 0.02), SIMD3(1.25, 1.1, floor + 0.02),
+                SIMD3(-0.95, 1.1, floor + 0.02), SIMD3(-0.95, -1.05, floor + 0.02)], 0.012)
+        // The armchair: seat, arms and a winged back below the head.
+        let seat: Float = -0.72, arm: Float = -0.48
+        k.line([SIMD3(0.28, -0.36, seat), SIMD3(0.28, 0.36, seat)], 0.016)
+        for y: Float in [-0.4, 0.4] {
+            k.line([SIMD3(-0.45, y, arm), SIMD3(0.3, y, arm), SIMD3(0.3, y, floor)], 0.016)
+            k.line([SIMD3(-0.48, y, floor), SIMD3(-0.48, y, 0.05), SIMD3(-0.3, y * 1.1, 0.12)], 0.014)
+        }
+        k.line([SIMD3(-0.48, -0.4, 0.05), SIMD3(-0.52, 0, 0.12), SIMD3(-0.48, 0.4, 0.05)], 0.014)
+        // The writing table at the right hand.
+        let top: Float = -0.43
+        k.line([SIMD3(0.2, -0.3, top), SIMD3(0.95, -0.3, top), SIMD3(0.95, -0.95, top), SIMD3(0.2, -0.95, top), SIMD3(0.2, -0.3, top)], 0.016)
+        for (x, y) in [(Float(0.25), Float(-0.35)), (0.9, -0.35), (0.9, -0.9), (0.25, -0.9)] {
+            k.line([SIMD3(x, y, top), SIMD3(x, y, floor)], 0.011)
+        }
+        // The left wall's foot and top, the fireplace in it: chimney breast, mantel, the opening
+        // and the hearth stone before it.
+        k.line([SIMD3(xb, yl, floor), SIMD3(xf, yl, floor), SIMD3(xf, yr, floor)], 0.018)
+        k.line([SIMD3(xb, yl, ceiling), SIMD3(xf, yl, ceiling), SIMD3(xf, yr, ceiling)], 0.012)
+        k.line([SIMD3(xf, yl, floor), SIMD3(xf, yl, ceiling)], 0.012)
+        let yc: Float = 2.5, x0: Float = 0.2, x1: Float = 1.8
+        for x in [x0, x1] { k.line([SIMD3(x, yl, floor), SIMD3(x, yc, floor), SIMD3(x, yc, ceiling), SIMD3(x, yl, ceiling)], 0.014) }
+        k.line([SIMD3(x0 - 0.12, yc - 0.1, -0.05), SIMD3(x1 + 0.12, yc - 0.1, -0.05), SIMD3(x1 + 0.12, yl, -0.05)], 0.022)
+        k.line([SIMD3(x0 - 0.12, yc - 0.1, -0.05), SIMD3(x0 - 0.12, yl, -0.05)], 0.022)
+        k.line([SIMD3(0.55, yc, floor), SIMD3(0.55, yc, -0.45), SIMD3(0.75, yc, -0.3), SIMD3(1.25, yc, -0.3),
+                SIMD3(1.45, yc, -0.45), SIMD3(1.45, yc, floor)], 0.02)
+        ground.plane(x: (0.3, 1.7), y: (1.95, yc), z: floor + 0.01, part: Part.section)
+        // Behind, on the camera's side: the two tall windows cut like a plan section a little
+        // above the sill (they would hide the room), sash bars up to the cut, the sills; the
+        // radiator stands under the right one as a thing of its own.
+        let sill: Float = -0.42, cut: Float = 0.55
+        for (ya, yb) in [(Float(0.55), Float(1.85)), (-1.85, -0.55)] {
+            k.line([SIMD3(xb, ya, cut), SIMD3(xb, ya, sill), SIMD3(xb, yb, sill), SIMD3(xb, yb, cut)], 0.02)
+            k.line([SIMD3(xb - 0.06, ya, cut), SIMD3(xb - 0.06, yb, cut)], 0.024)
+            k.line([SIMD3(xb, (ya + yb) / 2, sill), SIMD3(xb, (ya + yb) / 2, cut)], 0.01)
+            k.line([SIMD3(xb, ya, sill + 0.47), SIMD3(xb, yb, sill + 0.47)], 0.008)
+            k.line([SIMD3(xb + 0.12, ya - 0.08, sill - 0.03), SIMD3(xb + 0.12, yb + 0.08, sill - 0.03)], 0.014)
+        }
+        k.line([SIMD3(xb, yr, floor), SIMD3(xb, yl, floor)], 0.014)
+        // Ahead: the doorway in the front wall and the corridor beyond it, a door frame or two
+        // along it, and the door at its end.
+        let da: Float = 1.4, de: Float = 2.2, dh: Float = 1.0, xe: Float = 14.2
+        k.line([SIMD3(xf, da, floor), SIMD3(xf, da, dh), SIMD3(xf, de, dh), SIMD3(xf, de, floor)], 0.02)
+        for y in [da, de] {
+            k.line([SIMD3(xf, y, floor), SIMD3(xe, y, floor)], 0.012)
+            k.line([SIMD3(xf, y, dh + 0.25), SIMD3(xe, y, dh + 0.25)], 0.009)
+        }
+        for x: Float in [7.5, 10.5] {
+            k.line([SIMD3(x, de, floor), SIMD3(x, de, dh - 0.1), SIMD3(x + 0.9, de, dh - 0.1), SIMD3(x + 0.9, de, floor)], 0.01)
+        }
+        k.line([SIMD3(xe, da, floor), SIMD3(xe, da, dh + 0.25), SIMD3(xe, de, dh + 0.25), SIMD3(xe, de, floor)], 0.012)
     }
 
     /// A pressurised module around the listener, its ribs and longerons; a truss out to the

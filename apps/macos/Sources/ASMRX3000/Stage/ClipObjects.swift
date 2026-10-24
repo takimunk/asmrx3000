@@ -19,6 +19,8 @@ enum Prop: CaseIterable {
     case treeLine, iceStar, zigzag, boom, owl, skater
     // Tea house
     case kettle, brazier, cloth, ladle, whisk, host, teaBowl, eaves, basin, shishi, chime, templeBell
+    // Night library (built in metres, drawn at the room's scale)
+    case hearth, embers, log, book, inkPen, longcaseClock, bookcase, radiator, boards, door
     // Body scan
     case bead, singingBowl, tingsha
     /// A bed that is no object (a hum, a room tone): a small gimbal of two hoops.
@@ -103,6 +105,16 @@ enum PropMeshes {
         case .shishi: return shishiFrame
         case .chime: return chime
         case .templeBell: return templeBell
+        case .hearth: return hearth
+        case .embers: return embers
+        case .log: return log
+        case .book: return book
+        case .inkPen: return inkPen
+        case .longcaseClock: return longcaseClock
+        case .bookcase: return bookcase
+        case .radiator: return radiator
+        case .boards: return boards
+        case .door: return door
         case .bead: return bead
         case .singingBowl: return singingBowl
         case .tingsha: return tingsha
@@ -871,6 +883,151 @@ enum PropMeshes {
         b.rod(v(0, 0, 0.55), v(0, 0, 0.8), 0.04, part: DARK)
         b.rod(v(-1.05, 0, -0.1), v(-0.55, 0, -0.1), 0.07, segs: 8, part: LIGHT)
         for x: Float in [-0.95, -0.65] { b.rod(v(x, 0, -0.1), v(x, 0, 0.8), 0.008, segs: 3, part: LIGHT) }
+    }
+
+    // MARK: Night library (metres, the sounding point at the origin)
+
+    /// Two andirons in the fireplace with three logs across them; the hearth floor 0.35 below.
+    static let hearth = make { b in
+        for y: Float in [-0.24, 0.24] {
+            b.path([v(-0.22, y, -0.35), v(-0.22, y, -0.12), v(0.16, y, -0.12), v(0.16, y, -0.35)], 0.014, segs: 4, part: DARK)
+            b.rod(v(0.16, y, -0.12), v(0.18, y, 0.08), 0.016, segs: 6, part: DARK)
+            b.ball(v(0.18, y, 0.1), 0.026, part: DARK)
+        }
+        b.rod(v(-0.04, -0.33, -0.06), v(-0.04, 0.33, -0.06), 0.065, 0.06, segs: 9, part: MID)
+        b.rod(v(0.08, -0.3, -0.07), v(0.06, 0.3, -0.07), 0.055, segs: 9, part: MID)
+        b.rod(v(0.0, -0.28, 0.04), v(0.02, 0.26, 0.05), 0.05, 0.045, segs: 9, part: MID)
+        for y: Float in [-0.32, 0.32] { b.box(v(-0.03, y, -0.355), v(0.5, 0.06, 0.012), part: LIGHT) }
+    }
+
+    /// A bed of coals under the logs.
+    static let embers = make { b in
+        var rng = SeededGenerator(77)
+        for _ in 0..<16 {
+            let a = 2 * Float.pi * rng.next(), r = 0.2 * rng.next().squareRoot()
+            b.ball(v(r * cos(a), 0.9 * r * sin(a), -0.02 * rng.next()), 0.03 + 0.025 * rng.next(), part: rng.next() > 0.5 ? LIGHT : MID,
+                   squash: v(1.2, 1, 0.65))
+        }
+        b.box(v(0, 0, -0.045), v(0.5, 0.42, 0.012), part: DARK)
+    }
+
+    /// A charred log slumping, one end down.
+    static let log = make { b in
+        b.rod(v(-0.04, -0.24, -0.06), v(0.05, 0.24, 0.06), 0.055, 0.05, segs: 9, part: MID)
+        for t: Float in [-0.12, 0.05, 0.18] { b.hoop(0.057, 0.008, segs: 10, part: DARK, at: M4.move(v(0.0, t, t * 0.25)) * M4.rotX(.pi / 2)) }
+    }
+
+    /// An open book on the lap, the reader's side to +x, the spine along x; `bookPage` turns over it.
+    static let book = make { b in
+        for s: Float in [1, -1] {
+            b.box(v(0, 0.08 * s, -0.012), v(0.25, 0.16, 0.006), part: DARK, rot: M4.rotX(-0.08 * s))
+            b.box(v(0, 0.075 * s, 0.006), v(0.23, 0.145, 0.026), part: LIGHT, rot: M4.rotX(-0.1 * s))
+            for k in 1...4 { b.box(v(0.085 - 0.04 * Float(k), 0.075 * s, 0.0205), v(0.004, 0.11, 0.002), part: MID, rot: M4.rotX(-0.1 * s)) }
+        }
+        b.rod(v(-0.125, 0, -0.008), v(0.125, 0, -0.008), 0.012, segs: 6, part: DARK)
+    }
+
+    /// One leaf, hinged on the spine (the x axis), lying to +y.
+    static let bookPage = make { b in
+        b.box(v(0, 0.072, 0.0), v(0.22, 0.14, 0.002), part: LIGHT)
+    }
+
+    /// A sheet of paper, an inkwell and a dip pen on the writing table.
+    static let inkPen = make { b in
+        b.box(v(0, 0, -0.04), v(0.3, 0.21, 0.003), part: LIGHT, rot: M4.rotZ(0.12))
+        for k in 0..<5 { b.box(v(0.08 - 0.04 * Float(k), 0.01, -0.037), v(0.004, 0.15, 0.0015), part: MID, rot: M4.rotZ(0.12)) }
+        b.turn([v2(0, -0.04), v2(0.035, -0.04), v2(0.04, -0.02), v2(0.03, 0.0), v2(0.014, 0.004), v2(0.014, 0.012), v2(0, 0.012)],
+               segs: 10, part: DARK, at: M4.move(v(-0.1, 0.16, 0)))
+        b.rod(v(0.05, -0.03, -0.035), v(-0.09, 0.06, 0.12), 0.006, 0.008, segs: 5, part: DARK)
+        b.rod(v(0.05, -0.03, -0.035), v(0.07, -0.043, -0.04), 0.003, 0.001, segs: 4, part: LIGHT)
+    }
+
+    /// A long-case clock: plinth, the trunk open in front so its pendulum shows, the hood with the
+    /// dial (facing +x) at the origin, a broken pediment; the floor 1.7 below.
+    static let longcaseClock = make { b in
+        let f: Float = -1.7
+        b.box(v(0, 0, f + 0.25), v(0.3, 0.52, 0.5), part: MID)
+        b.box(v(0, 0, f + 0.52), v(0.32, 0.5, 0.04), part: MID)
+        for y: Float in [-0.19, 0.19] { b.box(v(0, y, -0.73), v(0.24, 0.025, 0.95), part: MID) }
+        b.box(v(-0.11, 0, -0.73), v(0.02, 0.38, 0.95), part: DARK)
+        b.box(v(0.11, 0, -1.19), v(0.02, 0.38, 0.03), part: MID)
+        b.box(v(0.11, 0, -0.27), v(0.02, 0.38, 0.03), part: MID)
+        b.box(v(0, 0, -0.24), v(0.3, 0.48, 0.04), part: MID)
+        b.box(v(0, 0, 0.02), v(0.28, 0.46, 0.5), part: MID)
+        b.turn([v2(0, 0), v2(0.17, 0), v2(0.17, 0.012), v2(0, 0.012)], segs: 20, part: LIGHT, at: M4.move(v(0.141, 0, 0)) * M4.rotY(.pi / 2))
+        b.hoop(0.13, 0.006, segs: 20, part: DARK, at: M4.move(v(0.155, 0, 0)) * M4.rotY(.pi / 2))
+        b.box(v(0.158, 0, 0.045), v(0.004, 0.01, 0.09), part: DARK)
+        b.box(v(0.158, 0.03, 0), v(0.004, 0.065, 0.008), part: DARK, rot: M4.rotX(0.5))
+        for s: Float in [1, -1] {
+            b.box(v(0, 0.13 * s, 0.32), v(0.3, 0.22, 0.04), part: MID, rot: M4.rotX(0.35 * s))
+            b.ball(v(0.0, 0.24 * s, 0.3), 0.025, part: LIGHT)
+        }
+        b.ball(v(0, 0, 0.4), 0.03, part: LIGHT)
+    }
+
+    /// The pendulum, hung from its pivot at the origin.
+    static let clockPendulum = make { b in
+        b.rod(v(0, 0, 0), v(0, 0, -0.72), 0.006, segs: 4, part: LIGHT)
+        b.turn([v2(0, -0.012), v2(0.075, -0.008), v2(0.075, 0.008), v2(0, 0.012)], segs: 18, part: LIGHT,
+               at: M4.move(v(0, 0, -0.76)) * M4.rotY(.pi / 2))
+    }
+
+    /// A tall bookcase, its front to +x; the floor 1.55 below the origin.
+    static let bookcase = make { b in
+        let f: Float = -1.55, w: Float = 0.5, d: Float = 0.16, top: Float = 0.45
+        for y in [-w, w] { b.box(v(0, y, (f + top) / 2), v(2 * d, 0.03, top - f), part: MID) }
+        b.box(v(-d, 0, (f + top) / 2), v(0.02, 2 * w, top - f), part: DARK)
+        var rng = SeededGenerator(41)
+        var z = f + 0.08
+        while z < top - 0.1 {
+            b.box(v(0, 0, z), v(2 * d, 2 * w, 0.025), part: MID)
+            var y = -w + 0.03
+            while y < w - 0.06 {
+                let t = 0.025 + 0.03 * rng.next(), h = 0.2 + 0.1 * rng.next()
+                if rng.next() > 0.12 {
+                    b.box(v(0.01, y + t / 2, z + 0.012 + h / 2), v(0.2, t, h), part: rng.next() > 0.6 ? LIGHT : MID)
+                }
+                y += t + 0.004
+            }
+            z += 0.38
+        }
+        b.box(v(0, 0, top), v(2 * d + 0.04, 2 * w + 0.06, 0.04), part: MID)
+    }
+
+    /// A cast-iron column radiator, front to +x, on its feet; the floor 0.4 below the origin.
+    static let radiator = make { b in
+        let f: Float = -0.4, lo: Float = -0.3, hi: Float = 0.25
+        for k in 0..<11 {
+            let y = -0.4 + 0.08 * Float(k)
+            b.rod(v(0, y, lo), v(0, y, hi), 0.026, segs: 6, part: MID)
+        }
+        for z in [lo + 0.03, hi - 0.03] { b.rod(v(0, -0.42, z), v(0, 0.42, z), 0.02, segs: 6, part: MID) }
+        for y: Float in [-0.36, 0.36] { b.rod(v(0, y, lo), v(0, y, f), 0.018, segs: 5, part: DARK) }
+        b.rod(v(-0.04, 0.42, lo + 0.03), v(-0.04, 0.6, lo + 0.03), 0.014, segs: 5, part: DARK)
+        b.rod(v(-0.04, 0.6, lo + 0.03), v(-0.04, 0.6, f), 0.014, segs: 5, part: DARK)
+    }
+
+    /// Three floorboards and their nails, lying along x, on the floor at the origin.
+    static let boards = make { b in
+        for k in -1...1 {
+            let y = 0.15 * Float(k)
+            b.box(v(0.03 * Float(k), y, 0.008), v(1.1, 0.14, 0.016), part: MID)
+            for x: Float in [-0.45, 0.45] { b.ball(v(x + 0.03 * Float(k), y, 0.017), 0.01, part: DARK) }
+        }
+    }
+
+    /// A panelled door ajar in its frame, front to +x; the floor 0.75 below the origin.
+    static let door = make { b in
+        let f: Float = -0.75, top: Float = 1.3
+        for y: Float in [-0.5, 0.5] { b.box(v(0, y, (f + top) / 2), v(0.08, 0.06, top - f), part: MID) }
+        b.box(v(0, 0, top), v(0.08, 1.06, 0.07), part: MID)
+        // The leaf, hinged on its left post and swung a little open.
+        var l = MeshBuilder()
+        l.box(v(0, 0, (f + top) / 2 - 0.02), v(0.04, 0.92, top - f - 0.06), part: DARK)
+        for z: Float in [-0.25, 0.65] {
+            for y: Float in [-0.22, 0.22] { l.box(v(0.025, y, z), v(0.012, 0.3, 0.6), part: MID) }
+        }
+        b.add(l, M4.about(v(0, -0.47, 0), M4.rotZ(0.45)))
     }
 
     // MARK: Body scan
