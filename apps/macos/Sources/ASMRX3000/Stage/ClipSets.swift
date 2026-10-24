@@ -467,7 +467,12 @@ enum ClipSet: Equatable {
     /// The cave's pools (x, y, radius): where the plinks fall (cave_drips.json, groups pools and deep).
     static let cavePools: [(Float, Float, Float)] = {
         let ring: [(Float, Float, Float)] = [(35, 5.2, 1.1), (-40, 8.5, 1.5), (120, 6.5, 1.3), (-70, 4.0, 0.9), (10, 13.0, 2.0), (-145, 7.5, 1.4)]
-        return ring.map { (az, r, size) in (r * cos(az * .pi / 180), r * sin(az * .pi / 180), size) } + [(16, -7, 2.4), (11, 12, 2.2)]
+        let placed: [(Float, Float, Float)] = ring.map { (az: Float, r: Float, size: Float) -> (Float, Float, Float) in
+            let a: Float = az * Float.pi / 180
+            return (r * cos(a), r * sin(a), size)
+        }
+        let far: [(Float, Float, Float)] = [(16, -7, 2.4), (11, 12, 2.2)]
+        return placed + far
     }()
     /// Where drops land on rock (the rock group's places), for the stalactites above them.
     static let caveRockDrips: [SIMD3<Float>] = [SIMD3(1.0, 1.1, -0.9), SIMD3(-1.5, 2.6, 2.8), SIMD3(2.6, -1.8, 4.6),
