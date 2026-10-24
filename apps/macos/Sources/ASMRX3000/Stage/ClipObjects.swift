@@ -29,6 +29,8 @@ enum Prop: CaseIterable {
     case ripples, splash, joinery, cleat, halyard, chain, mooredYacht, gull
     // Campfire by the sea
     case campfire, flames, sparks, embers, driftLog, steam, duneGrass, curlew
+    // Tent in the rain
+    case flyRain, drip, flap, pole, brook, sleepingBag, zipper
     /// A bed that is no object (a hum, a room tone): a small gimbal of two hoops.
     case marker
 }
@@ -145,6 +147,13 @@ enum PropMeshes {
         case .steam: return steam
         case .duneGrass: return duneGrass
         case .curlew: return curlew
+        case .flyRain: return rain
+        case .drip: return drip
+        case .flap: return flap
+        case .pole: return pole
+        case .brook: return brook
+        case .sleepingBag: return sleepingBag
+        case .zipper: return zipper
         case .marker: return marker
         }
     }
@@ -1055,6 +1064,97 @@ enum PropMeshes {
             for y: Float in [-0.22, 0.22] { l.box(v(0.025, y, z), v(0.012, 0.3, 0.6), part: MID) }
         }
         b.add(l, M4.about(v(0, -0.47, 0), M4.rotZ(0.45)))
+    }
+
+    // MARK: Tent in the rain
+
+    /// A stretch of the fly's hem along y with drops gathering on it and one falling below
+    /// (a column of drops repeating every 0.6 in z: slid down by 0.6 it matches).
+    static let drip = make { b in
+        b.path([v(0, -0.7, 0.62), v(0.04, -0.35, 0.58), v(0.05, 0, 0.57), v(0.04, 0.35, 0.58), v(0, 0.7, 0.62)], 0.022, segs: 4, part: LIGHT)
+        for y: Float in [-0.45, 0.05, 0.4] { b.ball(v(0.05, y, 0.5), 0.04, part: LIGHT, squash: v(0.8, 0.8, 1.5)) }
+        for k in 0..<3 { b.ball(v(0.05, 0.05, 0.2 - 0.6 * Float(k)), 0.035, part: LIGHT, squash: v(0.7, 0.7, 1.7)) }
+    }
+
+    /// A panel of the fly between two seams, rippling: its hem along y, rising to +z, facing +x.
+    static let flap = make { b in
+        let ny = 8, nz = 5
+        var pos: [SIMD3<Float>] = []
+        var tri: [UInt32] = []
+        for j in 0...nz {
+            for i in 0...ny {
+                let y = -0.8 + 1.6 * Float(i) / Float(ny), z = -0.6 + 1.2 * Float(j) / Float(nz)
+                let w = 1 - abs(y) / 0.8
+                pos.append(v(0.14 * w * sin(3.4 * y + 2.2 * z) * Float(j) / Float(nz), y * (1 - 0.25 * Float(j) / Float(nz)), z))
+            }
+        }
+        for j in 0..<nz {
+            for i in 0..<ny {
+                let a = UInt32(j * (ny + 1) + i), c = a + UInt32(ny + 1)
+                tri += [a, a + 1, c, a + 1, c + 1, c, a, c, a + 1, a + 1, c, c + 1]
+            }
+        }
+        b.smooth(pos, tri, part: MID)
+        b.path([v(0, -0.8, -0.6), v(0, 0.8, -0.6)], 0.025, segs: 4, part: LIGHT)
+        b.path([v(0, -0.8, -0.6), v(0, -0.6, 0.6)], 0.018, segs: 4, part: LIGHT)
+        b.path([v(0, 0.8, -0.6), v(0, 0.6, 0.6)], 0.018, segs: 4, part: LIGHT)
+    }
+
+    /// A length of the tent's pole bending up from its foot (at the origin) to +x, a ferrule at
+    /// the joint and the peg ring at the foot.
+    static let pole = make { b in
+        var pts: [SIMD3<Float>] = []
+        for i in 0...10 {
+            let u = Float(i) / 10
+            pts.append(v(0.9 * (1 - cos(u * 1.3)) / (1 - cos(1.3)), 0, -0.5 + 1.1 * sin(u * 1.3) / sin(1.3)))
+        }
+        b.path(pts, 0.03, segs: 6, part: LIGHT)
+        b.rod(pts[6] - v(0.03, 0, 0.04), pts[6] + v(0.03, 0, 0.04), 0.045, segs: 8, part: MID)
+        b.hoop(0.08, 0.018, segs: 12, part: DARK, at: M4.move(v(0, 0, -0.5)))
+        b.rod(v(0, 0, -0.5), v(0, 0, -0.75), 0.02, 0.005, segs: 4, part: DARK)
+    }
+
+    /// A reach of the mountain stream along x: stones in it and the water's riffles between them.
+    static let brook = make { b in
+        var rng = SeededGenerator(0xB0)
+        for _ in 0..<6 {
+            var r = MeshBuilder()
+            let sz = 0.1 + 0.14 * rng.next()
+            r.rock(seed: UInt64(1 + rng.next() * 90), bumps: 0.14, squash: v(sz * 1.3, sz, sz * 0.6), part: MID)
+            b.add(r, M4.move(v(-0.9 + 1.8 * rng.next(), -0.28 + 0.56 * rng.next(), 0)))
+        }
+        for k in 0..<3 {
+            let y = -0.2 + 0.2 * Float(k)
+            var pts: [SIMD3<Float>] = []
+            for i in 0...12 { let x = -1 + 2 * Float(i) / 12; pts.append(v(x, y + 0.05 * sin(5 * x + Float(k) * 1.9), 0.04)) }
+            b.path(pts, 0.012, segs: 4, part: Part.water)
+        }
+    }
+
+    /// The sleeping bag the listener lies in, a mummy along +x from the shoulders (the origin)
+    /// to the feet, its hood about the head behind.
+    static let sleepingBag = make { b in
+        b.lathe([(-0.45, 0.02, 0.02, 0), (-0.38, 0.3, 0.16, 0), (-0.1, 0.36, 0.2, 0), (0.6, 0.32, 0.17, 0), (1.3, 0.22, 0.13, 0),
+                 (1.6, 0.14, 0.1, 0), (1.66, 0.02, 0.02, 0)], segs: 10, part: LIGHT)
+        b.hoop(0.3, 0.035, segs: 14, part: MID, at: M4.move(v(-0.38, 0, 0.02)) * M4.rotY(.pi / 2) * M4.scale(v(0.55, 1, 1)))
+        for x: Float in [0.2, 0.5, 0.8, 1.1] {
+            b.hoop(0.3 - 0.06 * x, 0.012, segs: 12, from: 0.3, to: .pi - 0.3, part: MID,
+                   at: M4.move(v(x, 0, 0)) * M4.rotY(.pi / 2) * M4.rotZ(-.pi / 2) * M4.scale(v(0.55, 1, 1)))
+        }
+    }
+
+    /// The door's zip: its curve on the inner tent (facing +x) and the pull hanging from the slider.
+    static let zipper = make { b in
+        var pts: [SIMD3<Float>] = []
+        for i in 0...12 {
+            let a = Float.pi * Float(i) / 12
+            pts.append(v(0, 0.6 * cos(a), -0.7 + 1.3 * sin(a)))
+        }
+        b.path(pts, 0.022, segs: 4, part: DARK)
+        let at = pts[4]
+        b.box(at + v(0.03, 0, 0), v(0.05, 0.1, 0.1), part: LIGHT)
+        b.rod(at + v(0.05, 0, -0.04), at + v(0.06, 0.02, -0.3), 0.012, segs: 4, part: LIGHT)
+        b.box(at + v(0.06, 0.02, -0.34), v(0.03, 0.08, 0.12), part: LIGHT)
     }
 
     // MARK: Body scan

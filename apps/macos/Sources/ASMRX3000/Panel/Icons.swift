@@ -93,6 +93,8 @@ enum Icon: Hashable {
     case surf
     // The night library.
     case book, pen, clock, house
+    // The tent in the rain.
+    case tent
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -200,6 +202,7 @@ enum Icon: Hashable {
         case "pen": return .pen
         case "clock": return .clock
         case "house": return .house
+        case "tent": return .tent
         case "fire": return .flame
         case "thunder", "storm": return .bolt
         case "temperature": return .thermometer
@@ -534,6 +537,15 @@ enum Icon: Hashable {
                 Stroke(d: "M19.5 9.5 Q21 12 19.5 14.5", opacity: 0.8),
                 Stroke(d: "M21.5 7 Q24 12 21.5 17", opacity: 0.5),
             ]
+        case .tent:
+            // A small dome tent on the ground, its pole crossing the top, rain slanting onto it.
+            let y = (t / 0.9).truncatingRemainder(dividingBy: 1) * 2.5
+            return [
+                Stroke(d: "M3.5 20 C4.5 12 8 9.5 12 9.5 C16 9.5 19.5 12 20.5 20"),
+                Stroke(d: "M2 20 H22", opacity: 0.6),
+                Stroke(d: "M12 9.5 C10 13 9.6 16.5 10 20 M12 9.5 C14 13 14.4 16.5 14 20", opacity: 0.65),
+                Stroke(d: "M8 \(f(1.5 + y)) L7 \(f(4.5 + y)) M13 \(f(1 + y)) L12 \(f(4 + y)) M18 \(f(1.5 + y)) L17 \(f(4.5 + y))", opacity: 0.55),
+            ]
         case .rumble:
             return [
                 Stroke(d: "M3 12 L5.5 8 L8 16 L10.5 8 L13 16 L15.5 8 L18 16 L20.5 12"),
@@ -727,6 +739,7 @@ extension Icon {
         case .surf: return 2 * .pi / 1.2
         case .wind: return 4.0 / 3.0
         case .rain: return 0.8
+        case .tent: return 0.9
         case .sun: return 12
         case .moon: return 2 * .pi / 2.1
         case .flame: return 2 * .pi

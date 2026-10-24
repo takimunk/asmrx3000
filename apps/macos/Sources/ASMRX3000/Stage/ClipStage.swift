@@ -270,6 +270,15 @@ struct ClipRule {
         ClipRule(files: ["shore_wave"], .prop(.surf)),
         ClipRule(files: ["shore_curlew"], .prop(.curlew)),
         ClipRule(group: "grass", model: "foliage", .prop(.duneGrass)),
+        // Tent in the rain
+        ClipRule(files: ["tent_fly"], .prop(.flyRain)),
+        ClipRule(files: ["tent_flap"], .prop(.flap)),
+        ClipRule(files: ["tent_pole"], .prop(.pole)),
+        ClipRule(files: ["tent_thunder"], .prop(.bolt)),
+        ClipRule(files: ["tent_bag"], .prop(.sleepingBag)),
+        ClipRule(files: ["tent_zipper"], .prop(.zipper)),
+        ClipRule(files: ["tent_drips"], .prop(.drip)),
+        ClipRule(group: "stream", .prop(.brook)),
         // Weather from the procedural models, anywhere.
         ClipRule(model: "wind", .prop(.wind)),
         ClipRule(model: "rain", .prop(.rain)),

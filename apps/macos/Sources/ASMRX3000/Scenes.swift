@@ -40,6 +40,7 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "cave_drips", key: N_("Cave"), file: "cave_drips.json"),
         SceneEntry(id: "sailboat_anchor", key: N_("Yacht at anchor"), file: "sailboat_anchor.json"),
         SceneEntry(id: "campfire_shore", key: N_("Campfire by the sea"), file: "campfire_shore.json"),
+        SceneEntry(id: "mountain_tent", key: N_("Tent in the rain"), file: "mountain_tent.json"),
     ]
 
     static let forest = all[0]
@@ -255,6 +256,10 @@ enum Scenes {
             ("tallwindow_squall", N_("rain lashing the windows")), ("tallwindow", N_("rain on the windows")),
             ("page_turn", N_("pages")), ("pen_scratch", N_("pen")), ("clock_tick", N_("clock")), ("clock_strike", N_("clock strikes")),
             ("floor_creak", N_("floorboards")), ("shelf_creak", N_("bookcase")), ("radiator", N_("radiator")), ("door_far", N_("distant door")),
+            // The tent in the rain.
+            ("tent_fly_", N_("rain on the fly")), ("tent_drips", N_("drips off the fly")), ("tent_flap", N_("flapping fly")), ("tent_pole_creak", N_("tent pole")),
+            ("tent_thunder_roll", N_("far thunder")), ("tent_creek", N_("mountain stream")),
+            ("tent_bag_rustle", N_("sleeping bag")), ("tent_zipper", N_("zipper")),
             // The singing ice, last: "bowl_strike" and "bowl_slide" hold "owl_".
             ("ice_sing", N_("singing ice")), ("ice_crack", N_("crack")), ("ice_run", N_("running crack")),
             ("ice_boom", N_("ice boom")), ("owl_", N_("owl")), ("skater", N_("skater")),
