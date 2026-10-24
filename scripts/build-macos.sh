@@ -2,6 +2,7 @@
 # Builds asmr-core (Rust) + the macOS menu bar app and assembles build/ASMR X3000.app.
 #   scripts/build-macos.sh          build and launch
 #   OPEN=0 scripts/build-macos.sh   build only
+#   LITE=1 scripts/build-macos.sh   the light build: procedural scenes only, no sound files
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,6 +29,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
+if [[ "${LITE:-0}" == "1" ]]; then
+  # Scenes.swift reads this and offers only the scenes made of physical models.
+  /usr/libexec/PlistBuddy -c "Add :ASMRProceduralOnly bool true" "$APP/Contents/Info.plist"
+fi
 # The system permission prompts (microphone, motion) follow the macOS language.
 for l in en ru; do mkdir -p "$APP/Contents/Resources/$l.lproj"; cp "$APP_PKG/Support/$l.lproj/InfoPlist.strings" "$APP/Contents/Resources/$l.lproj/"; done
 cp "$APP_PKG/Resources/models.bin" "$APP/Contents/Resources/models.bin"
@@ -42,8 +47,10 @@ mkdir -p "$APP/Contents/Resources/scenes" "$APP/Contents/Resources/sounds"
 # kept in the repo for comparison but not shipped), and only the sound files they use.
 # The .wav files are not in git: fetch them first (assets/sounds/SOURCES.md, tools/).
 SCENES=(forest_river underwater_drift space_still lighthouse_gale night_train singing_ice tea_house body_scan cave_drips sailboat_anchor campfire_shore night_library body_scan mountain_tent demo_flyby open_country)
+# The light build carries only the procedural scenes, which need no sound files.
+[[ "${LITE:-0}" == "1" ]] && SCENES=(open_country)
 for s in "${SCENES[@]}"; do cp "$ROOT/core/scenes/$s.json" "$APP/Contents/Resources/scenes/"; done
-missing=$(cd "$APP/Contents/Resources/scenes" && grep -ho '"[^"]*\.wav"' *.json | tr -d '"' | sort -u | while read -r f; do
+missing=$(cd "$APP/Contents/Resources/scenes" && { grep -ho '"[^"]*\.wav"' *.json || true; } | tr -d '"' | sort -u | while read -r f; do
   if [[ -f "$ROOT/assets/sounds/$f" ]]; then
     mkdir -p "$APP/Contents/Resources/sounds/$(dirname "$f")"
     cp "$ROOT/assets/sounds/$f" "$APP/Contents/Resources/sounds/$f"

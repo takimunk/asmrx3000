@@ -27,8 +27,17 @@ struct SceneEntry: Identifiable, Equatable {
         self.id = id; titleKey = key; verbatim = false; self.file = file
     }
 
-    static let all: [SceneEntry] = [
-        SceneEntry(id: "forest", key: N_("Forest"), file: nil),
+    static let forest = SceneEntry(id: "forest", key: N_("Forest"), file: nil)
+
+    /// The light build (`LITE=1 scripts/build-macos.sh`) ships no sound files and sets
+    /// `ASMRProceduralOnly` in Info.plist: it offers only the scenes made of physical models.
+    static let proceduralOnly = Bundle.main.object(forInfoDictionaryKey: "ASMRProceduralOnly") as? Bool ?? false
+
+    static let all: [SceneEntry] = proceduralOnly ? [
+        forest,
+        SceneEntry(id: "open_country", key: N_("Meadow by the sea"), file: "open_country.json"),
+    ] : [
+        forest,
         SceneEntry(id: "underwater", key: N_("Underwater"), file: "underwater_drift.json"),
         SceneEntry(id: "space", key: N_("Space"), file: "space_still.json"),
         SceneEntry(id: "lighthouse", key: N_("Lighthouse"), file: "lighthouse_gale.json"),
@@ -42,8 +51,6 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "campfire_shore", key: N_("Campfire by the sea"), file: "campfire_shore.json"),
         SceneEntry(id: "mountain_tent", key: N_("Tent in the rain"), file: "mountain_tent.json"),
     ]
-
-    static let forest = all[0]
 
     static func with(id: String?) -> SceneEntry? { all.first { $0.id == id } }
 
