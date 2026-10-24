@@ -1,37 +1,159 @@
 [
- {"scene":"body_scan","name":"guide_brush","model":"el2","duration":22,"loop":true,"prompt_influence":0.65,"variations":2,
-  "prompt":"Close-up of a soft wide makeup brush slowly stroking a foam microphone cover, continuous gentle brushing, even and smooth, broadband soft swishing with airy high detail, no taps. Only the brush, no music, no voices, dry, single source."},
- {"scene":"body_scan","name":"guide_air","model":"el2","duration":22,"loop":true,"prompt_influence":0.6,"variations":2,
-  "prompt":"A very soft steady airy whoosh like slow calm breath passing over a microphone, continuous, smooth, no breathing rhythm, no mouth sounds, gentle broadband air. Only the air, no music, no voices, dry, single source."},
- {"scene":"body_scan","name":"guide_grain","model":"el2","duration":22,"loop":true,"prompt_influence":0.6,"variations":2,
-  "prompt":"A rainstick tilted very slowly, a continuous fine trickle of small seeds falling inside a bamboo tube, soft and even, close-up, no shaking. Only the rainstick, no music, no voices, dry, single source."},
- {"scene":"body_scan","name":"guide_warm","model":"el2","duration":22,"loop":true,"prompt_influence":0.6,"variations":2,
-  "prompt":"A warm soft low hum of a large singing bowl rubbed slowly with a suede mallet, steady sustained drone around 110 Hz with a faint shimmering overtone, no strikes, smooth. Only the bowl, no music, no voices, dry, single source."},
- {"scene":"body_scan","name":"bowl_strike","model":"el2","duration":12,"prompt_influence":0.65,"variations":3,
-  "prompt":"One gentle strike of a medium Tibetan singing bowl with a soft mallet, a single clear warm tone ringing out and decaying slowly to silence. Single sound, no music, no voices, dry."},
- {"scene":"body_scan","name":"tingsha","model":"el2","duration":6,"prompt_influence":0.65,"variations":2,
-  "prompt":"A pair of small Tibetan tingsha cymbals touched together very lightly once, one soft bright high ting that rings and fades to silence. Single sound, no music, no voices, dry."},
- {"scene":"body_scan","name":"room_tone","model":"sa25","duration":90,"variations":1,
-  "prompt":"Field recording, room tone of a quiet wooden room at night, very soft steady air, faint distant hum, nothing happening, constant, realistic, no music, no voices, no clicks."},
-
- {"scene":"tea_house","name":"kettle_simmer","model":"el2","duration":22,"loop":true,"prompt_influence":0.6,"variations":2,
-  "prompt":"A cast iron Japanese tea kettle simmering just below the boil over charcoal, a soft steady rushing hiss like wind in pine trees with faint bubbling, close-up in a quiet room. Only the kettle, no whistle, no music, no voices, dry, single source."},
- {"scene":"tea_house","name":"fukusa","model":"el2","duration":8,"prompt_influence":0.65,"variations":3,
-  "prompt":"A silk cloth being folded slowly and precisely and then wiping a small lacquered wooden tea caddy, soft crisp silk rustles and a faint snap of the cloth, close-up. Single action, no music, no voices, dry."},
- {"scene":"tea_house","name":"ladle_pour","model":"el2","duration":8,"prompt_influence":0.65,"variations":3,
-  "prompt":"A bamboo ladle dipped into hot water and slowly poured into a ceramic tea bowl, a gentle splash and a thin clear pouring stream, then the ladle rested on the kettle, close-up. Single action, no music, no voices, dry."},
- {"scene":"tea_house","name":"whisk","model":"el2","duration":15,"prompt_influence":0.65,"variations":3,
-  "prompt":"A bamboo whisk whisking matcha tea in a ceramic bowl, fast light rhythmic swishing and frothing, slowing down at the end with a few gentle strokes, close-up. Only the whisk and bowl, no music, no voices, dry."},
- {"scene":"tea_house","name":"tatami_shift","model":"el2","duration":8,"prompt_influence":0.65,"variations":3,
-  "prompt":"A person in a silk kimono shifting position while kneeling on tatami mats, soft fabric rustle and a gentle slide of fabric on woven straw. Single movement, no footsteps, no music, no voices, dry."},
- {"scene":"tea_house","name":"bowl_slide","model":"el2","duration":5,"prompt_influence":0.65,"variations":3,
-  "prompt":"A heavy ceramic tea bowl set down softly on a tatami mat and slid slowly forward a little, a muted knock and a gentle scrape on woven straw, close-up. Single action, no music, no voices, dry."},
- {"scene":"tea_house","name":"suikinkutsu","model":"el2","duration":10,"prompt_influence":0.65,"variations":3,
-  "prompt":"Suikinkutsu water koto: single water drops falling into a buried clay jar, each producing a clear resonant bell-like tone with a hollow echo from underground, sparse with silence between. Only the drips, no music, no voices, dry."},
- {"scene":"tea_house","name":"shishi_odoshi","model":"el2","duration":4,"prompt_influence":0.65,"variations":2,
-  "prompt":"A bamboo shishi-odoshi in a garden tipping and striking a stone once, a single hollow wooden knock with a little water splash, then silence. Single sound, no music, no voices, dry."},
- {"scene":"tea_house","name":"furin","model":"el2","duration":8,"prompt_influence":0.65,"variations":2,
-  "prompt":"A small glass Japanese wind chime stirred by a faint breeze, two or three delicate high glass tinkles, then still. Single sound, no music, no melody, no voices, dry."},
- {"scene":"tea_house","name":"temple_bell","model":"el2","duration":15,"prompt_influence":0.65,"variations":1,
-  "prompt":"One strike of a large Buddhist temple bell heard from far away across hills in the rain, a deep soft boom with a long slowly decaying hum. Single sound, no music, no voices, dry."}
+ {
+  "scene": "body_scan",
+  "name": "guide_brush",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "Close-up of a soft wide makeup brush making slow continuous circular strokes on a foam microphone cover, one long uninterrupted brushing with no pauses and a steady even level, soft broadband swishing hiss with crisp airy high detail, no taps. Only the brush, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "body_scan",
+  "name": "guide_air",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "A very soft continuous airy hiss of gentle air flowing past a microphone close to the ear, smooth steady broadband whoosh with airy high frequencies, constant level, no low rumble, no breathing rhythm, no mouth sounds. Only the air, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "body_scan",
+  "name": "guide_grain",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "A rainstick tilted very slowly, a continuous fine trickle of small seeds falling inside a bamboo tube, soft and even, close-up, no shaking. Only the rainstick, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "body_scan",
+  "name": "guide_warm",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "A warm soft low hum of a large singing bowl rubbed slowly with a suede mallet, steady sustained drone around 110 Hz with a faint shimmering overtone, constant level from the very start, no swell, no strikes, smooth. Only the bowl, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "body_scan",
+  "name": "bowl_strike",
+  "model": "el2",
+  "duration": 12,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "One gentle strike of a medium Tibetan singing bowl with a soft mallet, a single clear warm tone ringing out and decaying slowly to silence. Single sound, no music, no voices, dry."
+ },
+ {
+  "scene": "body_scan",
+  "name": "tingsha",
+  "model": "el2",
+  "duration": 6,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "A pair of small Tibetan tingsha cymbals touched together very lightly once, one soft bright high ting that rings and fades to silence. Single sound, no music, no voices, dry."
+ },
+ {
+  "scene": "body_scan",
+  "name": "room_tone",
+  "model": "sa25",
+  "duration": 90,
+  "variations": 1,
+  "prompt": "Field recording, room tone of a quiet wooden room at night, very soft steady air, faint distant hum, nothing happening, constant, realistic, no music, no voices, no clicks."
+ },
+ {
+  "scene": "tea_house",
+  "name": "kettle_simmer",
+  "model": "el2",
+  "duration": 22,
+  "loop": true,
+  "prompt_influence": 0.6,
+  "variations": 2,
+  "prompt": "A cast iron Japanese tea kettle simmering just below the boil over charcoal, a soft steady rushing hiss like wind in pine trees with faint bubbling, constant level, close-up in a quiet room. Only the kettle, no whistle, no rising tone, no music, no voices, dry, single source."
+ },
+ {
+  "scene": "tea_house",
+  "name": "fukusa",
+  "model": "el2",
+  "duration": 8,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A silk cloth being folded slowly and precisely and then wiping a small lacquered wooden tea caddy, soft crisp silk rustles and a faint snap of the cloth, close-up. Single action, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "ladle_pour",
+  "model": "el2",
+  "duration": 8,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A bamboo ladle dipped into hot water and slowly poured into a ceramic tea bowl, a gentle splash and a thin clear pouring stream, then the ladle rested on the kettle, close-up. Single action, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "whisk",
+  "model": "el2",
+  "duration": 15,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A bamboo whisk whisking matcha tea in a ceramic bowl, fast light rhythmic swishing and frothing, slowing down at the end with a few gentle strokes, close-up. Only the whisk and bowl, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "tatami_shift",
+  "model": "el2",
+  "duration": 8,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A person in a silk kimono shifting position while kneeling on tatami mats, soft fabric rustle and a gentle slide of fabric on woven straw. Single movement, no footsteps, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "bowl_slide",
+  "model": "el2",
+  "duration": 5,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "A heavy ceramic tea bowl set down softly on a tatami mat and slid slowly forward a little, a muted knock and a gentle scrape on woven straw, close-up. Single action, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "suikinkutsu",
+  "model": "el2",
+  "duration": 10,
+  "prompt_influence": 0.65,
+  "variations": 3,
+  "prompt": "Suikinkutsu water koto: single water drops falling into a buried clay jar, each producing a clear resonant bell-like tone with a hollow echo from underground, sparse with silence between. Only the drips, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "shishi_odoshi",
+  "model": "el2",
+  "duration": 4,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "A bamboo shishi-odoshi in a garden tipping and striking a stone once, a single hollow wooden knock with a little water splash, then silence. Single sound, no music, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "furin",
+  "model": "el2",
+  "duration": 8,
+  "prompt_influence": 0.65,
+  "variations": 2,
+  "prompt": "A small glass Japanese wind chime stirred by a faint breeze, two or three delicate high glass tinkles, then still. Single sound, no music, no melody, no voices, dry."
+ },
+ {
+  "scene": "tea_house",
+  "name": "temple_bell",
+  "model": "el2",
+  "duration": 15,
+  "prompt_influence": 0.65,
+  "variations": 1,
+  "prompt": "One strike of a large Buddhist temple bell heard from far away across hills in the rain, a deep soft boom with a long slowly decaying hum. Single sound, no music, no voices, dry."
+ }
 ]
