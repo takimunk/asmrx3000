@@ -59,6 +59,9 @@ pub struct ClipDesc {
     /// Seconds to the first event (or appearance).
     #[serde(default = "default_first")]
     pub first: f32,
+    /// `first` exactly, not drawn up to 20 % later (a timed accent in a scripted scene).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact: bool,
     /// Seconds between events (or appearances), drawn uniformly.
     #[serde(default = "default_interval")]
     pub interval: [f32; 2],
@@ -232,6 +235,15 @@ pub enum Motion {
         #[serde(default = "default_curve")]
         curve: f32,
     },
+    /// Follows keyframes `[t, x, y, z]` or `[t, x, y, z, gain]` (seconds from the scene's
+    /// start, metres about the head, gain ×, default 1) along a smooth Catmull–Rom curve:
+    /// a sound that travels a planned route (around the head, down an arm). Played once and
+    /// held at the last point, or looped with `repeat`. Present from the start.
+    Path {
+        points: Vec<Vec<f32>>,
+        #[serde(default)]
+        repeat: bool,
+    },
 }
 
 fn default_ahead() -> f32 {
@@ -290,14 +302,43 @@ impl ClipDesc {
             Motion::Orbit { period, radius, .. } if !(period.abs() > 0.5 && *radius > 0.0) => bad("orbit needs radius > 0, |period| > 0.5"),
             Motion::Sweep { duration, from_x, to_x, .. } if !(*duration > 0.5 && to_x > from_x) => bad("sweep needs duration > 0.5, to_x > from_x"),
             Motion::Portal { duration, .. } if *duration <= 0.1 => bad("portal needs duration > 0.1"),
+            Motion::Path { points, .. } => {
+                if points.len() < 2 || points.iter().any(|p| !(4..=5).contains(&p.len()) || p.iter().any(|v| !v.is_finite())) {
+                    return bad("path needs 2+ points of [t, x, y, z] or [t, x, y, z, gain]");
+                }
+                if points.windows(2).any(|w| w[1][0] <= w[0][0]) || points[0][0] < 0.0 {
+                    return bad("path times must start at >= 0 and increase");
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
 
     /// Continuous presence (no gaps between appearances).
     fn continuous(&self) -> bool {
-        matches!(self.motion, Motion::Fixed { .. } | Motion::Escort { .. } | Motion::Orbit { .. })
+        matches!(self.motion, Motion::Fixed { .. } | Motion::Escort { .. } | Motion::Orbit { .. } | Motion::Path { .. })
     }
+}
+
+/// Position and gain at `t` seconds along path keyframes (validated: 2+, increasing times).
+/// Catmull–Rom between keyframes (no corners: a moving source is easier to follow when it
+/// turns smoothly), gain linear.
+fn path_at(points: &[Vec<f32>], t: f32, repeat: bool) -> (Vec3, f32) {
+    let n = points.len();
+    let (t0, t1) = (points[0][0], points[n - 1][0]);
+    let t = if repeat && t > t1 { t0 + (t - t0).rem_euclid((t1 - t0).max(1e-3)) } else { t.clamp(t0, t1) };
+    let k = points.windows(2).position(|w| t <= w[1][0]).unwrap_or(n - 2);
+    let at = |i: isize| {
+        let p = &points[i.clamp(0, n as isize - 1) as usize];
+        Vec3::new(p[1], p[2], p[3])
+    };
+    let gain = |i: usize| points[i].get(4).copied().unwrap_or(1.0);
+    let u = ((t - points[k][0]) / (points[k + 1][0] - points[k][0]).max(1e-6)).clamp(0.0, 1.0);
+    let (p0, p1, p2, p3) = (at(k as isize - 1), at(k as isize), at(k as isize + 1), at(k as isize + 2));
+    let (u2, u3) = (u * u, u * u * u);
+    let pos = (p1 * 2.0 + (p2 - p0) * u + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * u2 + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * u3) * 0.5;
+    (pos, gain(k) + (gain(k + 1) - gain(k)) * u)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -717,6 +758,111 @@ pub struct GroupUi {
     pub params: Option<Vec<String>>,
 }
 
+/// A scene lever (`"levers"` in the scene): one slider with a meaning ("Ships", "Current")
+/// that moves several group parameters at once, each along its own curve. Its effect comes on
+/// top of the per-group values: dB added to `level`, added to `b`, the rest multiplied.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeverDesc {
+    pub key: String,
+    /// Panel name, English (the app translates).
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub min: f32,
+    #[serde(default = "one")]
+    pub max: f32,
+    /// Starting value (omitted: where every curve is neutral is not known, so `min`..`max` midpoint).
+    #[serde(default)]
+    pub default: Option<f32>,
+    #[serde(default)]
+    pub log: bool,
+    /// How the direction's energy steer moves it: −1..1, a share of half its range.
+    #[serde(default)]
+    pub lively: f32,
+    pub drives: Vec<DriveDesc>,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+/// What a lever moves: group parameter `param` (level, events, motion, distance, pitch, a, b)
+/// of `group`, piecewise linear through `at` = [[lever value, effect], ...].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriveDesc {
+    pub group: String,
+    pub param: String,
+    pub at: Vec<[f32; 2]>,
+}
+
+/// At most this many levers per scene.
+pub const MAX_LEVERS: usize = 16;
+
+impl LeverDesc {
+    pub fn default_value(&self) -> f32 {
+        self.default.unwrap_or(0.5 * (self.min + self.max))
+    }
+}
+
+/// Checks a scene's levers against its clip groups.
+pub fn validate_levers(desc: &SceneDesc) -> Result<(), String> {
+    let groups: Vec<&str> = desc.entities.iter().filter_map(|e| match e {
+        EntityDesc::Clip(c) => c.group.as_deref(),
+        _ => None,
+    }).collect();
+    if desc.levers.len() > MAX_LEVERS {
+        return Err(format!("levers: at most {MAX_LEVERS}"));
+    }
+    for (i, l) in desc.levers.iter().enumerate() {
+        let bad = |m: String| Err(format!("lever `{}`: {m}", l.key));
+        if l.key.is_empty() || desc.levers[..i].iter().any(|o| o.key == l.key) {
+            return Err(format!("levers: empty or repeated key `{}`", l.key));
+        }
+        if !(l.min.is_finite() && l.max.is_finite() && l.max > l.min) || l.log && l.min < 0.0 {
+            return bad("needs min < max (log: min >= 0)".into());
+        }
+        if l.default.is_some_and(|d| !(l.min..=l.max).contains(&d)) || !(-1.0..=1.0).contains(&l.lively) {
+            return bad("default within min..max, lively −1..1".into());
+        }
+        for d in &l.drives {
+            if !groups.contains(&d.group.as_str()) {
+                return bad(format!("no clip group `{}`", d.group));
+            }
+            if !PARAM_NAMES.contains(&d.param.as_str()) {
+                return bad(format!("unknown param `{}` (level, events, motion, distance, pitch, a, b)", d.param));
+            }
+            if d.at.is_empty() || d.at.windows(2).any(|w| w[1][0] <= w[0][0]) || d.at.iter().flatten().any(|v| !v.is_finite()) {
+                return bad(format!("`{}.{}`: `at` needs points with increasing lever values", d.group, d.param));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn curve(at: &[[f32; 2]], x: f32) -> f32 {
+    if x <= at[0][0] {
+        return at[0][1];
+    }
+    for w in at.windows(2) {
+        if x <= w[1][0] {
+            let u = (x - w[0][0]) / (w[1][0] - w[0][0]);
+            return w[0][1] + (w[1][1] - w[0][1]) * u;
+        }
+    }
+    at[at.len() - 1][1]
+}
+
+struct LeverSlot {
+    desc: LeverDesc,
+    /// (group index, parameter) of each drive, in `desc.drives` order.
+    targets: Vec<(usize, usize)>,
+    value: crate::engine::AtomicF32,
+}
+
 struct GroupSlot {
     id: String,
     title: String,
@@ -733,6 +879,7 @@ struct GroupSlot {
 /// [`Choreo::step`] every block. All groups of the scene, in order of first appearance.
 pub struct ClipGroups {
     slots: Vec<GroupSlot>,
+    levers: Vec<LeverSlot>,
 }
 
 /// One group's values for a block, in the units the choreography uses.
@@ -820,7 +967,43 @@ impl ClipGroups {
                 s.values[p].store(group_param_range(p as u32, s.model).2);
             }
         }
-        Self { slots }
+        let levers = desc
+            .levers
+            .iter()
+            .map(|l| LeverSlot {
+                targets: l
+                    .drives
+                    .iter()
+                    .map(|d| (slots.iter().position(|s| s.id == d.group).unwrap_or(usize::MAX), PARAM_NAMES.iter().position(|p| *p == d.param).unwrap_or(0)))
+                    .collect(),
+                value: crate::engine::AtomicF32::new(l.default_value()),
+                desc: l.clone(),
+            })
+            .collect();
+        Self { slots, levers }
+    }
+
+    pub fn lever_count(&self) -> usize {
+        self.levers.len()
+    }
+
+    pub fn lever(&self, i: usize) -> Option<&LeverDesc> {
+        self.levers.get(i).map(|l| &l.desc)
+    }
+
+    pub fn lever_value(&self, i: usize) -> f32 {
+        self.levers.get(i).map_or(0.0, |l| l.value.load())
+    }
+
+    /// Sets lever `i` (clamped; NaN = its default). Any thread.
+    pub fn set_lever(&self, i: usize, v: f32) {
+        if let Some(l) = self.levers.get(i) {
+            let d = &l.desc;
+            let v = if v.is_nan() { d.default_value() } else { v };
+            if v.is_finite() {
+                l.value.store(v.clamp(d.min, d.max));
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -883,15 +1066,30 @@ impl ClipGroups {
 
     fn vals(&self, i: Option<usize>) -> GroupVals {
         let Some(s) = i.and_then(|i| self.slots.get(i)) else { return GroupVals::NEUTRAL };
-        let v = |p: u32| s.values[p as usize].load();
+        let mut v: [f32; group_param::COUNT] = core::array::from_fn(|p| s.values[p].load());
+        // Scene levers on top: dB and `b` add, the rest multiply.
+        let gi = i.unwrap_or(usize::MAX);
+        for l in &self.levers {
+            let x = l.value.load();
+            for (d, &(g, p)) in l.desc.drives.iter().zip(&l.targets) {
+                if g == gi {
+                    let y = curve(&d.at, x);
+                    if p == group_param::LEVEL as usize || p == group_param::MODEL_B as usize {
+                        v[p] += y;
+                    } else {
+                        v[p] *= y.max(0.0);
+                    }
+                }
+            }
+        }
         GroupVals {
-            level: 10f32.powf(v(group_param::LEVEL) / 20.0),
-            events: v(group_param::EVENTS),
-            motion: v(group_param::MOTION),
-            distance: v(group_param::DISTANCE),
-            pitch: v(group_param::PITCH),
-            a: v(group_param::MODEL_A),
-            b: v(group_param::MODEL_B),
+            level: 10f32.powf(v[group_param::LEVEL as usize].max(-80.0) / 20.0),
+            events: v[group_param::EVENTS as usize],
+            motion: v[group_param::MOTION as usize],
+            distance: v[group_param::DISTANCE as usize].max(0.05),
+            pitch: v[group_param::PITCH as usize].max(0.1),
+            a: v[group_param::MODEL_A as usize],
+            b: v[group_param::MODEL_B as usize].max(0.0),
         }
     }
 }
@@ -959,6 +1157,9 @@ struct Track {
     wander_mid: Vec3,
     wander_target: Vec3,
     angle: f32,
+    /// Seconds along a `path` motion, and its gain there.
+    path_t: f32,
+    path_gain: f32,
     cue: u32,
 }
 
@@ -981,7 +1182,7 @@ impl Choreo {
             let entity = &world.entities[i];
             let crate::scene::Geometry::Clip { bank } = &entity.geometry else { continue };
             let mut rng = Rng::new(seed.next_u64());
-            let first = c.first + rng.range(0.0, 0.2 * c.first);
+            let first = if c.exact { c.first } else { c.first + rng.range(0.0, 0.2 * c.first) };
             let group = c.group.as_deref().and_then(|g| groups.index_of(g));
             tracks.push(Track {
                 group,
@@ -1003,6 +1204,8 @@ impl Choreo {
                 wander_mid: Vec3::default(),
                 wander_target: Vec3::default(),
                 angle: 0.0,
+                path_t: 0.0,
+                path_gain: 1.0,
                 cue: 0,
             });
         }
@@ -1119,6 +1322,12 @@ impl Track {
                     self.angle = (self.angle + core::f32::consts::TAU * dt * motion / period).rem_euclid(core::f32::consts::TAU);
                     centre = v3(center) + Vec3::new(radius * self.angle.cos(), radius * self.angle.sin(), height);
                 }
+                Motion::Path { ref points, repeat } => {
+                    self.path_t += dt * motion;
+                    let (p, gain) = path_at(points, self.path_t, repeat);
+                    centre = p;
+                    self.path_gain = gain;
+                }
                 _ => {}
             }
             if !self.active {
@@ -1131,7 +1340,7 @@ impl Track {
                 }
             }
             self.t += dt;
-            env = (self.t / fade).min(1.0);
+            env = (self.t / fade).min(1.0) * self.path_gain;
             if self.desc.playback == Playback::Events {
                 self.next_cue -= dt * rate;
                 if self.next_cue <= 0.0 {

@@ -67,10 +67,9 @@
 "Accent" = "Акцент";
 "Accent colour" = "Акцентный цвет";
 "Settings" = "Настройки";
-"close" = "закрыть";
 "language, accent, keys, microphone" = "язык, акцент, ключи, микрофон";
 "Close settings" = "Закрыть настройки";
-"Open settings" = "Открыть настройки";
+"Settings: language, accent, keys, microphone" = "Настройки: язык, акцент, ключи, микрофон";
 "violet" = "фиолетовый";
 "blue" = "синий";
 "teal" = "бирюзовый";
@@ -108,3 +107,6 @@
 "⌘Z restore" = "⌘Z вернуть как было";
 "⌘Z undo" = "⌘Z отменить";
 "release or click again" = "отпустите или нажмите ещё раз";
+"Start over" = "Начать заново";
+"finished" = "готово";
+"%@ left" = "осталось %@";

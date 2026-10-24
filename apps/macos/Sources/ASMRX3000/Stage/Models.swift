@@ -21,6 +21,8 @@ struct MeshVertex {
 enum Part {
     static let wood: Float = 0, foliage: Float = 1, feathers: Float = 2, wingL: Float = 3, wingR: Float = 4
     static let stone: Float = 5, beak: Float = 6, ground: Float = 7, water: Float = 8, section: Float = 9
+    /// A clip scene's place (ClipSets.swift): pale linework that takes no contour or selection.
+    static let set: Float = 10
 }
 
 final class Mesh {

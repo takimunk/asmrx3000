@@ -11,12 +11,26 @@
 //! Regularisation: one common minimum distance R_MIN_NFC = 0.2 m for all orders (the
 //! expansion is only valid outside the head, and clamping orders separately would give them
 //! inconsistent phases).
+//!
+//! Low frequencies of orders >= 2: there the true HRTF coefficients are tiny (~(ka)^m) and the
+//! measured ones are mostly fitting error, which the extrapolation's DC gain (R/r)^m (+31 dB
+//! for order 2, +47 dB for order 3 at 0.2 m) blew up: a source 0.3 m to the left was louder in
+//! the right ear at 110 Hz, and 0.2 m ahead came out +10..+17 dB over the point-source law.
+//! So orders >= 2 are extrapolated only above SPLIT_HZ, through a Linkwitz-Riley crossover
+//! (LP4 + HP4 = a 2nd-order all-pass): below it they stay as measured at R. Orders 0-1 go
+//! through that same all-pass (always, near or far, so nothing jumps at the zone's edge), so
+//! every order keeps one common phase and they sum coherently. Orders 0-1 carry the
+//! low-frequency near field (level and interaural gradient), which then follows the
+//! 1/distance-to-each-ear law within ~1 dB (test `near_field_table`).
 
 use crate::ambisonics::ORDER;
 use crate::num::{poly_roots, C64};
 
 /// Closest distance the extrapolation is applied for (must stay outside the head).
 pub const R_MIN_NFC: f64 = 0.2;
+
+/// Crossover below which orders >= 2 are not extrapolated, Hz.
+pub const SPLIT_HZ: f64 = 400.0;
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Biquad {
@@ -72,6 +86,11 @@ pub struct NfcDesign {
     pub ref_radius: f64,
     fs: f64,
     c: f64,
+    /// Crossover biquads (Butterworth, Q = 1/sqrt 2): low-pass, high-pass, and the all-pass
+    /// their 4th-order Linkwitz-Riley sum equals.
+    lp: [f32; 5],
+    hp: [f32; 5],
+    ap: [f32; 5],
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -100,7 +119,15 @@ impl NfcDesign {
                 idx += 1;
             }
         }
-        Self { sections, ref_radius, fs: sample_rate as f64, c: 343.0 }
+        let fs = sample_rate as f64;
+        let w = 2.0 * core::f64::consts::PI * SPLIT_HZ / fs;
+        let (cw, alpha) = (w.cos(), w.sin() / (2.0 * core::f64::consts::FRAC_1_SQRT_2));
+        let a0 = 1.0 + alpha;
+        let q = |b: [f64; 3]| [(b[0] / a0) as f32, (b[1] / a0) as f32, (b[2] / a0) as f32, (-2.0 * cw / a0) as f32, ((1.0 - alpha) / a0) as f32];
+        let lp = q([(1.0 - cw) / 2.0, 1.0 - cw, (1.0 - cw) / 2.0]);
+        let hp = q([(1.0 + cw) / 2.0, -(1.0 + cw), (1.0 + cw) / 2.0]);
+        let ap = q([1.0 - alpha, -2.0 * cw, 1.0 + alpha]);
+        Self { sections, ref_radius, fs, c: 343.0, lp, hp, ap }
     }
 
     pub fn set_speed_of_sound(&mut self, c: f64) {
@@ -152,6 +179,11 @@ impl NfcDesign {
 #[derive(Clone, Default)]
 pub struct NearField {
     sec: [[Biquad; 2]; ORDER + 1],
+    /// Per order >= 2: the crossover's two low-pass and two high-pass stages.
+    xo: [[Biquad; 4]; ORDER + 1],
+    /// The all-pass every order goes through (kept across the near zone's edge).
+    ap: Biquad,
+    ap_ready: bool,
     active: bool,
 }
 
@@ -168,28 +200,68 @@ impl NearField {
                 b.reset();
             }
         }
+        for o in self.xo.iter_mut() {
+            for b in o.iter_mut() {
+                b.reset();
+            }
+        }
         self.active = false;
     }
 
-    /// Fills `orders[m]` (m = 1..=3) with the order-m filtered version of `x`.
+    /// Puts `x` through the crossover's all-pass (every order's common phase) and, near the
+    /// head, fills `orders[m]` (m = 1..=3) with the order-m extrapolated version of it.
     /// Returns false (and leaves `orders` untouched) when the source is beyond R, i.e. all
     /// orders equal `x`.
-    pub fn process(&mut self, design: &NfcDesign, r: f64, x: &[f32], orders: &mut [[f32; crate::engine::BLOCK]; ORDER]) -> bool {
+    pub fn process(&mut self, design: &NfcDesign, r: f64, x: &mut [f32], orders: &mut [[f32; crate::engine::BLOCK]; ORDER]) -> bool {
+        let n = x.len();
+        let mut dry = [0.0f32; crate::engine::BLOCK];
+        dry[..n].copy_from_slice(x);
+        if !self.ap_ready {
+            self.ap.set(design.ap);
+            self.ap_ready = true;
+        }
+        self.ap.process(x, design.ap);
         let near = r < design.ref_radius;
         if !near && !self.active {
             return false;
         }
-        let n = x.len();
         for m in 1..=ORDER {
             let c = design.coeffs(m, r);
+            let fresh = !self.active;
             let buf = &mut orders[m - 1][..n];
-            buf.copy_from_slice(x);
+            let mut low = [0.0f32; crate::engine::BLOCK];
+            if m >= 2 {
+                // Crossover: below SPLIT_HZ the order stays as measured, above it is extrapolated.
+                let low = &mut low[..n];
+                low.copy_from_slice(&dry[..n]);
+                buf.copy_from_slice(&dry[..n]);
+                let [l1, l2, h1, h2] = &mut self.xo[m];
+                for (b, c) in [(l1, design.lp), (l2, design.lp)] {
+                    if fresh {
+                        b.set(c);
+                    }
+                    b.process(low, c);
+                }
+                for (b, c) in [(h1, design.hp), (h2, design.hp)] {
+                    if fresh {
+                        b.set(c);
+                    }
+                    b.process(buf, c);
+                }
+            } else {
+                buf.copy_from_slice(x);
+            }
             for (s, cs) in self.sec[m].iter_mut().zip(c) {
-                if !self.active {
+                if fresh {
                     // Fresh start: no ramp from identity across the first block.
                     s.set(cs);
                 }
                 s.process(buf, cs);
+            }
+            if m >= 2 {
+                for (b, l) in buf.iter_mut().zip(&low[..n]) {
+                    *b += l;
+                }
             }
         }
         // Stay active for one block after leaving the near zone so the filters settle onto

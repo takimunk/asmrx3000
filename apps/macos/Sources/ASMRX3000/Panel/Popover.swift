@@ -12,13 +12,22 @@ struct StillFrames {
     var showAll = false
     var spectrogramOpen = false
     var scenesOpen = false
+    /// Sections the snapshot shows open (the user's defaults: world open, sound folded).
+    var soundOpen = false
+    var worldOpen = true
+    var settingsOpen = false
+    /// Cap the panel at the screen's room, as the live panel does (default: the whole content).
+    var fixedHeight = false
 }
 
-/// The popover, top to bottom: the scene (most of it, with the scene picker in its corner), one
-/// transport row, the prompt, the levers in two sections (sound: loudness per group; world: what
-/// happens in the forest) or one group's drawer, and the spectrogram as a quiet strip. A clip
-/// scene (underwater, space) has its own levers and no prompt (it only knows the forest's
-/// knobs). All text is Russian, in Coppice Mono.
+/// The popover, top to bottom: the scene (with the scene picker in its corner), one transport
+/// row (settings at its end), the prompt, the levers in two sections (world: what happens in the
+/// forest, open; sound: loudness per group, folded to a strip of mute buttons) or one group's
+/// drawer or the settings, and the spectrogram as a quiet strip. A clip scene (underwater, space)
+/// has its own levers and no prompt (it only knows the forest's knobs).
+///
+/// The panel is as tall as its content, up to the screen's room; only past that do the levers
+/// scroll under the stage, the transport and the prompt.
 struct Popover: View {
     @ObservedObject var model: AppModel
     @ObservedObject var audio: AudioEngine
@@ -27,9 +36,26 @@ struct Popover: View {
     var stills: StillFrames?
     /// What the hovered transport control does, shown over the scene's bottom-right corner.
     @State private var hint: String?
+    /// The settings stand in for the levers while open (not remembered: the panel opens on the levers).
+    @State private var settingsOpenState = false
+    /// Measured heights: the fixed top (stage, transport, prompt) and the levers' content.
+    @State private var topHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+
+    private var settingsOpen: Bool { stills?.settingsOpen ?? settingsOpenState }
 
     static let width: CGFloat = 540
-    static let sceneHeight: CGFloat = 336
+    static let sceneHeight: CGFloat = 232
+    /// The tallest the panel gets: the menu bar screen's usable height, less the 6 pt gap under
+    /// the menu bar and a margin above the Dock. Content up to this height shows whole.
+    static var maxHeight: CGFloat {
+        let room = roomOverride ?? (NSScreen.screens.first?.visibleFrame.height ?? 800)
+        return max(420, room - 18)
+    }
+    /// A pretend screen height (snapshots: `--room`).
+    static var roomOverride: CGFloat?
+    /// The levers' area never shrinks below this before it scrolls (a small screen).
+    static let minScroll: CGFloat = 120
     static let gutter: CGFloat = Grid.x4
     /// Pictograms: 18 pt (1.1 pt line) for buttons and levers, 16 pt (1 pt line) for compact
     /// rows, drawer parameters and chips.
@@ -55,6 +81,8 @@ struct Popover: View {
     static let headerHeight: CGFloat = 20
     static let volumeWidth: CGFloat = 48
     static let sceneMenuWidth: CGFloat = 236
+    /// The plates over the scene that are buttons (scene picker, settings): one height.
+    static let chipHeight: CGFloat = 26
     static let spectrogramClosed: CGFloat = 24
     static let spectrogramOpen: CGFloat = 96
     /// The levers' slider width (the track scopes are drawn to it).
@@ -70,8 +98,41 @@ struct Popover: View {
     }
 
     var body: some View {
+        Group {
+            if let stills {
+                // ImageRenderer draws no ScrollView and lays out once: the whole content, or with
+                // --fixed the top of it in the frame the live panel would get.
+                VStack(spacing: 0) { top; scrolled }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxHeight: stills.fixedHeight ? Self.maxHeight : nil, alignment: .top)
+                    .clipped()
+            } else {
+                VStack(spacing: 0) {
+                    top.background(Measure { topHeight = $0 })
+                    ScrollView(.vertical) { scrolled.background(Measure { contentHeight = $0 }) }
+                        .scrollIndicators(.automatic)
+                        .frame(height: scrollHeight)
+                }
+            }
+        }
+        .frame(width: Self.width)
+        .background(Ink.panel)
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// The levers' area: all of it while the panel fits the screen, else what is left under the top.
+    private var scrollHeight: CGFloat {
+        guard contentHeight > 0 else { return Self.minScroll }
+        return min(contentHeight, max(Self.minScroll, Self.maxHeight - topHeight))
+    }
+
+    /// What never scrolls: the stage, the transport and, in the forest, the prompt.
+    private var top: some View {
         VStack(spacing: 0) {
-            SceneArea(model: model, stills: stills, hint: hint)
+            SceneArea(model: model, stills: stills, hint: $hint, settingsOpen: settingsOpen) {
+                if Motion.reduced { settingsOpenState.toggle() } else { withAnimation(.easeOut(duration: 0.16)) { settingsOpenState.toggle() } }
+                model.stage.focusScene?()
+            }
                 .arrival(0)
             Transport(model: model, audio: audio, head: head, labels: model.stage.labels, meters: model.stage.meters,
                       controls: controls, hint: $hint)
@@ -82,23 +143,42 @@ struct Popover: View {
                     .padding(.top, Grid.x1)
                     .arrival(2)
             }
-            LeverPanel(model: model, controls: controls, stills: stills)
-                .padding(.horizontal, Self.gutter)
-                .padding(.top, Grid.x3)
-                .arrival(3)
+        }
+    }
+
+    /// Everything under the prompt: the levers, a drawer or the settings, then the spectrogram.
+    private var scrolled: some View {
+        VStack(spacing: 0) {
+            Group {
+                if settingsOpen {
+                    SettingsDrawer { settingsOpenState = false }
+                } else {
+                    LeverPanel(model: model, controls: controls, stills: stills)
+                }
+            }
+            .padding(.horizontal, Self.gutter)
+            .padding(.top, audio.scene.isClip ? Grid.x1 : Grid.x3)
+            .arrival(3)
             SpectrogramStrip(stage: model.stage, stills: stills)
                 .padding(.horizontal, Self.gutter)
                 .padding(.top, Grid.x3)
+                .padding(.bottom, Grid.x4)
                 .arrival(4)
-            PanelSettings(stills: stills)
-                .padding(.horizontal, Self.gutter)
-                .padding(.top, Grid.x3)
-                .padding(.bottom, Grid.x3)
-                .arrival(5)
         }
         .frame(width: Self.width)
-        .background(Ink.panel)
-        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Reports the height of the view it is the background of.
+private struct Measure: View {
+    let changed: (CGFloat) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { changed(geo.size.height) }
+                .onChange(of: geo.size.height) { _, h in changed(h) }
+        }
     }
 }
 
@@ -107,7 +187,9 @@ struct Popover: View {
 private struct SceneArea: View {
     let model: AppModel
     var stills: StillFrames?
-    var hint: String?
+    @Binding var hint: String?
+    let settingsOpen: Bool
+    let toggleSettings: () -> Void
     @ObservedObject private var lang = Language.shared
     @State private var hovering = false
 
@@ -146,9 +228,102 @@ private struct SceneArea: View {
             ScenePicker(model: model, audio: model.audio, forceOpen: stills?.scenesOpen ?? false)
                 .padding(Grid.x3)
         }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: Grid.x2) {
+                SessionChip(audio: model.audio, hint: $hint)
+                SettingsChip(open: settingsOpen, hint: $hint, toggle: toggleSettings)
+            }
+            .padding(Grid.x3)
+        }
         .frame(width: Popover.width, height: Popover.sceneHeight)
         .clipped()
         .onHover { hovering = $0 }
+    }
+}
+
+/// A timed session (a scene with a script, such as the body scan): time gone and left, and a
+/// button that starts it over. Polled once a second; absent in scenes without a script.
+private struct SessionChip: View {
+    let audio: AudioEngine
+    @Binding var hint: String?
+    @ObservedObject private var lang = Language.shared
+    @State private var hovering = false
+
+    static func clock(_ s: Float) -> String {
+        let t = Swift.max(0, Int(s.rounded()))
+        return String(format: "%d:%02d", t / 60, t % 60)
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let d = audio.directionInfo()
+            if d.script_s > 0 {
+                let done = d.elapsed_s >= d.script_s
+                let name = tr("Start over")
+                HStack(spacing: Grid.x2) {
+                    Text(done ? tr("finished") : Self.clock(d.elapsed_s))
+                        .foregroundStyle(Ink.paper)
+                    if !done {
+                        Text(tr("%@ left", Self.clock(d.script_s - d.elapsed_s)))
+                            .foregroundStyle(Ink.ash)
+                    }
+                    Button { audio.restartScene() } label: {
+                        Text("↺")
+                            .foregroundStyle(hovering ? Ink.paper : Ink.paper.opacity(0.8))
+                            .frame(width: Grid.x4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .onHover { h in
+                        hovering = h
+                        hint = h ? name : nil
+                    }
+                    .help(name)
+                    .accessibilityLabel(name)
+                }
+                .font(Ink.text(Ink.Size.caption).monospacedDigit())
+                .lineLimit(1)
+                .padding(.horizontal, Grid.x3)
+                .frame(height: Popover.chipHeight)
+                .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.88)))
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}
+
+/// The settings, in the scene's top-right corner opposite the scene picker: a plate of the same
+/// height with the rails pictogram; raised while the settings stand in for the levers. ⌘,
+private struct SettingsChip: View {
+    let open: Bool
+    @Binding var hint: String?
+    let toggle: () -> Void
+    @ObservedObject private var lang = Language.shared
+    @State private var hovering = false
+
+    var body: some View {
+        let name = open ? tr("Close settings") : tr("Settings: language, accent, keys, microphone")
+        Button(action: toggle) {
+            IconView(icon: .settings, color: hovering || open ? Ink.paper : Ink.paper.opacity(0.85), size: Popover.smallIconSize,
+                     animating: hovering, lineWidth: 1)
+                .frame(width: Popover.chipHeight + Grid.x1, height: Popover.chipHeight)
+                .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous)
+                    .fill(open ? Ink.raised.opacity(0.94) : hovering ? Ink.raised.opacity(0.9) : Ink.panel.opacity(0.88)))
+                .overlay(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous)
+                    .strokeBorder(open ? Ink.hairline : .clear, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .keyboardShortcut(",", modifiers: .command)
+        .onHover { h in
+            hovering = h
+            hint = h ? "\(name)   ⌘," : nil
+        }
+        .help(name)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(open ? .isSelected : [])
     }
 }
 
@@ -272,9 +447,16 @@ private struct ScenePicker: View {
                 .accessibilityLabel(tr("Scene: %@", audio.scene.title))
 
                 if open {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(SceneEntry.all) { e in row(e) }
+                    Group {
+                        if forceOpen {
+                            list
+                        } else {
+                            ScrollView(.vertical) { list }.scrollIndicators(.never)
+                        }
                     }
+                    .frame(height: min(CGFloat(SceneEntry.all.count) * (Grid.x6 + Grid.x1),
+                                       Popover.sceneHeight - 2 * Grid.x3 - 40))
+                    .clipped()
                     .padding(.vertical, Grid.x1)
                     .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.94)))
                     .overlay(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
@@ -288,6 +470,12 @@ private struct ScenePicker: View {
             }
         }
         .animation(Motion.reduced ? nil : .easeOut(duration: 0.12), value: open)
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(SceneEntry.all) { e in row(e) }
+        }
     }
 
     private func row(_ e: SceneEntry) -> some View {

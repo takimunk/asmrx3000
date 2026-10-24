@@ -214,6 +214,8 @@ pub(crate) struct DirectionView {
     pub segment: String,
     /// Machine name of the planned next episode.
     pub next: String,
+    /// The scene's episodes in order: `direction.cue` index k ≥ 2 asks for episode k − 2.
+    pub episodes: Vec<String>,
 }
 
 impl View<'_> {
@@ -786,6 +788,26 @@ fn compass_deg(s: &str) -> Option<f32> {
     None
 }
 
+/// `direction.cue` by name against the scene's own episodes (a clip scene has its own:
+/// "whales_near", "convoy"); forest words map through the built-in names. None = not a name
+/// of this scene: the generic parser takes it.
+fn scene_cue(episodes: &[String], val: &Value) -> Option<Op> {
+    let Value::String(raw) = val else { return None };
+    let s = norm(raw);
+    let mut names: Vec<&str> = vec!["none", "next"];
+    names.extend(episodes.iter().map(String::as_str));
+    let at = |n: &str| names.iter().position(|o| *o == n);
+    if let Some(k) = at(&s) {
+        return Some(Op::Abs(k as f32));
+    }
+    let containing: Vec<usize> = (2..names.len()).filter(|&k| s.len() >= 3 && (names[k].contains(s.as_str()) || s.contains(names[k]))).collect();
+    if let Some(&k) = containing.first() {
+        return Some(Op::Abs(k as f32));
+    }
+    let builtin = match_option(controls::id::DIRECTION_CUE, raw).ok().and_then(|k| controls::options(controls::id::DIRECTION_CUE).get(k).copied())?;
+    at(builtin).map(|k| Op::Abs(k as f32))
+}
+
 fn parse_value(i: usize, val: &Value) -> Result<Op, (String, String)> {
     let m = controls::meta(i);
     if let (Value::String(s), "env.wind_direction") = (val, m.key) {
@@ -1048,6 +1070,8 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
                     Ok(Op::Reset)
                 } else if let Some(rel) = parse_relative(o) {
                     Ok(rel)
+                } else if controls::meta(i).id == controls::id::DIRECTION_CUE && v.direction.is_some() {
+                    scene_cue(&v.direction.as_ref().unwrap().episodes, value.unwrap_or(&Value::Null)).map_or_else(|| parse_value(i, value.unwrap_or(&Value::Null)), Ok)
                 } else {
                     parse_value(i, value.unwrap_or(&Value::Null))
                 };

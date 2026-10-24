@@ -1009,6 +1009,77 @@ mod tests {
         assert!(near > far + 3.0, "near ILD {near} dB vs far {far} dB");
     }
 
+    /// Impulse responses at the two ears for a source at `pos`, head straight.
+    fn ears_ir(features: Features, pos: Vec3) -> (Vec<f32>, Vec<f32>) {
+        let mut ac = Acoustics::new(FS, 1);
+        ac.set_features(features);
+        let head = Mat3::from_head(0.0, 0.0, 0.0);
+        let (mut la, mut ra) = (Vec::new(), Vec::new());
+        let (mut l, mut r) = ([0.0f32; BLOCK], [0.0f32; BLOCK]);
+        for b in 0..96 {
+            let x: [f32; BLOCK] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+            let mut bus = [[0.0f32; BLOCK]; CHANNELS];
+            ac.propagate(0, &Emitter::at(pos, 1.0), &x, &mut bus);
+            ac.render(&mut bus, &head, BLOCK, &mut l, &mut r);
+            la.extend_from_slice(&l);
+            ra.extend_from_slice(&r);
+        }
+        (la, ra)
+    }
+
+    /// Prints ear levels by distance against the point-source reference (1/distance to each
+    /// ear; at 110 Hz the head is acoustically small, ka ≈ 0.18). `cargo test --release
+    /// near_field_table -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn near_field_table() {
+        let a = 0.0875f32;
+        for (name, dir) in [("left", Vec3::new(0.0, 1.0, 0.0)), ("front", Vec3::new(1.0, 0.0, 0.0))] {
+            let (l2, r2) = ears_ir(Features { near_field: true, ..quiet() }, dir * 2.0);
+            for f in [110.0, 300.0, 1000.0] {
+                eprintln!("{name} {f} Hz        L     R    ref L  ref R   (dB re 2 m)");
+                for d in [2.0f32, 1.0, 0.5, 0.3, 0.2, 0.12] {
+                    let (l, r) = ears_ir(Features { near_field: true, ..quiet() }, dir * d);
+                    let gl = level_db(&l, f) - level_db(&l2, f);
+                    let gr = level_db(&r, f) - level_db(&r2, f);
+                    let ear = |y: f32| (dir * d - Vec3::new(0.0, y, 0.0)).length();
+                    let ref2 = |y: f32| (dir * 2.0 - Vec3::new(0.0, y, 0.0)).length();
+                    let rl = 20.0 * (ref2(a) / ear(a)).log10();
+                    let rr = 20.0 * (ref2(-a) / ear(-a)).log10();
+                    eprintln!("  {d:4.2} m  {gl:6.1} {gr:6.1}  {rl:6.1} {rr:6.1}");
+                }
+            }
+        }
+    }
+
+    /// Near the head, low frequencies follow 1/distance to each ear (the head is small at
+    /// 110 Hz): no bass boost beyond it, the near ear louder, a front source equal in both.
+    /// (Orders >= 2 extrapolated at low frequencies once gave +10..+17 dB and an inverted ILD.)
+    #[test]
+    fn near_field_low_frequencies_follow_the_point_source() {
+        let a = 0.0875f32;
+        let f = 110.0;
+        for dir in [Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 0.0, 0.0)] {
+            let (l2, r2) = ears_ir(Features { near_field: true, ..quiet() }, dir * 2.0);
+            for d in [1.0f32, 0.5, 0.3, 0.2] {
+                let (l, r) = ears_ir(Features { near_field: true, ..quiet() }, dir * d);
+                let ear = |y: f32, at: f32| (dir * at - Vec3::new(0.0, y, 0.0)).length();
+                for (h, h2, y) in [(&l, &l2, a), (&r, &r2, -a)] {
+                    let got = level_db(h, f) - level_db(h2, f);
+                    let want = 20.0 * (ear(y, 2.0) / ear(y, d)).log10() as f64;
+                    assert!((got - want).abs() < 2.5, "{dir:?} at {d} m, ear {y}: {got:.1} dB vs {want:.1} dB");
+                }
+                // ILD change from 2 m (the measured head is not perfectly symmetric).
+                let ild = (level_db(&l, f) - level_db(&r, f)) - (level_db(&l2, f) - level_db(&r2, f));
+                if dir.y > 0.5 {
+                    assert!(ild > 0.0, "left source at {d} m: ILD grew by {ild:.1} dB");
+                } else {
+                    assert!(ild.abs() < 1.5, "front source at {d} m: ILD changed by {ild:.1} dB");
+                }
+            }
+        }
+    }
+
     /// Turning the head 90 degrees left puts a source in front on the right (SH rotation).
     #[test]
     fn head_rotation_moves_the_image() {

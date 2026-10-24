@@ -230,6 +230,93 @@ pub unsafe extern "C" fn asmr_get_mix(engine: *const Engine, out: *mut mix::MixI
     }
 }
 
+/// Number of scene levers (`AsmrSceneLeverInfo`).
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_scene_lever_count(engine: *const Engine) -> u32 {
+    engine.as_ref().map_or(0, |e| e.scene_lever_count() as u32)
+}
+
+unsafe fn lever_str(engine: *const Engine, lever: u32, out: *mut c_char, max: u32, pick: fn(&clips::LeverDesc) -> &str) -> u32 {
+    match engine.as_ref().and_then(|e| e.scene_lever(lever as usize)) {
+        Some(l) => put_str(pick(l), out, max),
+        None => 0,
+    }
+}
+
+/// Machine name of a scene lever, NUL-terminated; returns its length.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` valid for `max` bytes (or NULL).
+#[no_mangle]
+pub unsafe extern "C" fn asmr_scene_lever_key(engine: *const Engine, lever: u32, out: *mut c_char, max: u32) -> u32 {
+    lever_str(engine, lever, out, max, |l| &l.key)
+}
+
+/// Panel title of a scene lever (English, as authored).
+///
+/// # Safety
+/// As `asmr_scene_lever_key`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_scene_lever_title(engine: *const Engine, lever: u32, out: *mut c_char, max: u32) -> u32 {
+    lever_str(engine, lever, out, max, |l| &l.title)
+}
+
+/// Icon key of a scene lever.
+///
+/// # Safety
+/// As `asmr_scene_lever_key`.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_scene_lever_icon(engine: *const Engine, lever: u32, out: *mut c_char, max: u32) -> u32 {
+    lever_str(engine, lever, out, max, |l| &l.icon)
+}
+
+/// Mirrors `AsmrSceneLeverInfo` in asmr.h.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SceneLeverInfo {
+    pub min: f32,
+    pub max: f32,
+    pub def: f32,
+    pub log: u32,
+    pub group: u32,
+}
+
+/// Range and default of a scene lever.
+///
+/// # Safety
+/// `engine` must be a live engine pointer, `out` NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_scene_lever_info(engine: *const Engine, lever: u32, out: *mut SceneLeverInfo) {
+    let Some(e) = engine.as_ref() else { return };
+    if let (Some(l), false) = (e.scene_lever(lever as usize), out.is_null()) {
+        let group = l.drives.first().and_then(|d| e.clip_groups().index_of(&d.group)).map_or(u32::MAX, |g| g as u32);
+        *out = SceneLeverInfo { min: l.min, max: l.max, def: l.default_value(), log: l.log as u32, group };
+    }
+}
+
+/// Current value of a scene lever (the direction moves it).
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_get_scene_lever(engine: *const Engine, lever: u32) -> f32 {
+    engine.as_ref().map_or(0.0, |e| e.scene_lever_value(lever as usize))
+}
+
+/// Sets a scene lever by hand (NaN hands it back). Any thread.
+///
+/// # Safety
+/// `engine` must be a live engine pointer.
+#[no_mangle]
+pub unsafe extern "C" fn asmr_set_scene_lever(engine: *const Engine, lever: u32, value: f32) {
+    if let Some(e) = engine.as_ref() {
+        e.set_scene_lever(lever as usize, value);
+    }
+}
+
 /// Direction telemetry (`AsmrDirectionInfo`). Any thread.
 ///
 /// # Safety
@@ -291,8 +378,12 @@ pub unsafe extern "C" fn asmr_set_control(engine: *const Engine, id: u32, value:
 /// # Safety
 /// `out` must point to `max` writable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn asmr_get_control_option(_engine: *const Engine, id: u32, index: u32, out: *mut c_char, max: u32) -> u32 {
-    let Some(name) = controls::option_name(id, index) else { return 0 };
+pub unsafe extern "C" fn asmr_get_control_option(engine: *const Engine, id: u32, index: u32, out: *mut c_char, max: u32) -> u32 {
+    let name = match engine.as_ref() {
+        Some(e) => e.control_option(id, index as usize),
+        None => controls::option_name(id, index),
+    };
+    let Some(name) = name else { return 0 };
     if out.is_null() || max == 0 {
         return 0;
     }

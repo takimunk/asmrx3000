@@ -78,6 +78,20 @@ const TAU: [f32; CHANNELS] = [0.0, 45.0, 90.0, 60.0, 60.0, 90.0, 600.0, 300.0, 6
 /// Remembered corrections fade with this time constant, s.
 const LEARN_TAU: f32 = 7200.0;
 
+/// Scene levers the direction can drive (clips.rs `MAX_LEVERS`).
+pub const MAX_LEVERS: usize = crate::clips::MAX_LEVERS;
+/// Time constant of a lever towards its target, s.
+const LEVER_TAU: f32 = 40.0;
+
+/// A scene lever as the direction sees it.
+#[derive(Clone, Copy, Debug)]
+struct LeverSpec {
+    min: f32,
+    max: f32,
+    def: f32,
+    lively: f32,
+}
+
 /// What the `direction.*` controls ask for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Steer {
@@ -121,11 +135,15 @@ pub struct Input {
     /// The user handed the channel back (reset).
     pub released: [bool; CHANNELS],
     pub cue: Option<Cue>,
+    /// Scene levers: current values, and bit i = the user set / handed back lever i.
+    pub levers: [f32; MAX_LEVERS],
+    pub lever_touched: u32,
+    pub lever_released: u32,
 }
 
 impl Input {
     pub fn new(steer: Steer, current: [f32; CHANNELS]) -> Self {
-        Self { steer, current, touched: [false; CHANNELS], released: [false; CHANNELS], cue: None }
+        Self { steer, current, touched: [false; CHANNELS], released: [false; CHANNELS], cue: None, levers: [0.0; MAX_LEVERS], lever_touched: 0, lever_released: 0 }
     }
 }
 
@@ -139,6 +157,9 @@ pub struct Output {
     pub release: [bool; CHANNELS],
     /// How lively the animals' encounters should be (1 = as directed by the scene).
     pub liveliness: f32,
+    /// Scene levers: values, and bit i = write lever i.
+    pub levers: [f32; MAX_LEVERS],
+    pub lever_write: u32,
 }
 
 /// Where the direction stands, for the UI and the prompt.
@@ -161,6 +182,14 @@ pub struct Info {
     pub change: f32,
     /// Bit per channel left to the user right now.
     pub held: u32,
+    /// It drives time and weather (else only the scene levers).
+    pub climate: bool,
+    /// Bit per scene lever left to the user right now.
+    pub held_levers: u32,
+    /// Seconds the direction has run (scene time: it stands while paused).
+    pub elapsed_s: f32,
+    /// Length of the scene's script, s (0 = no script): a timed session (the body scan).
+    pub script_s: f32,
 }
 
 /// The scene's own values: what the climate is anchored to and `amount` blends from.
@@ -220,6 +249,9 @@ pub struct Direction {
     next: usize,
     next_scale: f32,
     next_fixed: bool,
+    /// The current / next episode is a script step (keeps its written length).
+    scripted_now: bool,
+    next_scripted: bool,
     cued: bool,
     /// After a bridge: the episode asked for.
     after_bridge: Option<usize>,
@@ -236,6 +268,16 @@ pub struct Direction {
     liveliness: f32,
     bird_mult: f32,
     out: Output,
+    climate: bool,
+    elapsed: f64,
+    script_s: f32,
+    lever_spec: Vec<LeverSpec>,
+    /// Per episode, per segment: (lever index, target range).
+    lever_plan: Vec<Vec<Vec<(usize, Span)>>>,
+    lever_target: [Option<f32>; MAX_LEVERS],
+    lever_auto: [f32; MAX_LEVERS],
+    lever_mode: [Mode; MAX_LEVERS],
+    lever_ou: [Ou; MAX_LEVERS],
 }
 
 const OU_WIND: usize = 0;
@@ -304,7 +346,34 @@ impl Direction {
             season: env.season,
         };
         let start = d.start.as_deref().and_then(index);
+        let lever_spec: Vec<LeverSpec> = desc.levers.iter().map(|l| LeverSpec { min: l.min, max: l.max, def: l.default_value(), lively: l.lively }).collect();
+        let mut lever_plan = Vec::with_capacity(n);
+        for e in &eps {
+            let mut segs = Vec::new();
+            for s in &e.segments {
+                let mut v = Vec::new();
+                for (k, r) in &s.levers {
+                    let i = desc.levers.iter().position(|l| &l.key == k).ok_or_else(|| format!("direction: episode `{}`: no scene lever `{k}`", e.name))?;
+                    v.push((i, *r));
+                }
+                segs.push(v);
+            }
+            lever_plan.push(segs);
+        }
+        let mut lever_auto = [0.0; MAX_LEVERS];
+        for (a, l) in lever_auto.iter_mut().zip(&lever_spec) {
+            *a = l.def;
+        }
         let mut me = Self {
+            climate: d.climate,
+            elapsed: 0.0,
+            script_s: 0.0,
+            lever_spec,
+            lever_plan,
+            lever_target: [None; MAX_LEVERS],
+            lever_auto,
+            lever_mode: [Mode::Auto; MAX_LEVERS],
+            lever_ou: [Ou::default(); MAX_LEVERS],
             follows,
             then,
             script,
@@ -324,6 +393,8 @@ impl Direction {
             next: 0,
             next_scale: 1.0,
             next_fixed: false,
+            scripted_now: false,
+            next_scripted: false,
             cued: false,
             after_bridge: None,
             since: vec![f32::INFINITY; n],
@@ -346,15 +417,24 @@ impl Direction {
         let first = if let Some(&(i, m)) = me.script.first() {
             me.script_pos = 1;
             me.scale = me.script_scale(i, m);
+            me.scripted_now = true;
             i
         } else if let Some(i) = start {
             i
         } else {
             me.draw(None, &steer, true)
         };
+        let scripted = !me.script.is_empty();
+        me.script_s = me.script.iter().map(|&(i, m)| {
+            let mean: f32 = me.eps[i].segments.iter().map(|s| s.minutes.map_or(20.0, |r| 0.5 * (r.0[0] + r.0[1]))).sum();
+            mean * 60.0 * me.script_scale(i, m)
+        }).sum();
         me.begin(first, &steer);
-        // Start somewhere inside it, not always at its very beginning.
-        me.seg_left *= me.rng.range(0.3, 1.0);
+        // Start somewhere inside it, not always at its very beginning (a script starts at its
+        // beginning: a timed session must not lose its first minute).
+        if !scripted {
+            me.seg_left *= me.rng.range(0.3, 1.0);
+        }
         Ok(Some(me))
     }
 
@@ -439,6 +519,7 @@ impl Direction {
     /// How the next episode is decided: forced (`then`, a bridge's target, the script) or drawn.
     fn plan_next(&mut self, steer: &Steer) {
         self.next_scale = 1.0;
+        self.next_scripted = false;
         self.cued = false;
         if let Some(j) = self.after_bridge.take() {
             self.next = j;
@@ -459,6 +540,7 @@ impl Direction {
             self.next = j;
             self.next_scale = self.script_scale(j, m);
             self.next_fixed = true;
+            self.next_scripted = true;
             return;
         }
         self.next = self.draw(Some(self.cur), steer, false);
@@ -469,8 +551,9 @@ impl Direction {
     fn begin(&mut self, i: usize, steer: &Steer) {
         self.cur = i;
         self.wrapping = false;
-        // A steady direction lets the calm spells last; an eventful one moves on sooner.
-        if self.eps[i].drama < 0.4 {
+        // A steady direction lets the calm spells last; an eventful one moves on sooner. A
+        // scripted step keeps the length it was written with.
+        if self.eps[i].drama < 0.4 && !self.scripted_now {
             self.scale *= 1.6 - steer.change.clamp(0.0, 1.0);
         }
         self.start_segment(0);
@@ -496,6 +579,10 @@ impl Direction {
         if let Some(v) = draw(&s.veer, rng) {
             self.wind_dir = (self.wind_dir + v).rem_euclid(360.0);
         }
+        self.lever_target = [None; MAX_LEVERS];
+        for &(i, r) in &self.lever_plan[self.cur][k] {
+            self.lever_target[i] = Some(rng.range(r.0[0], r.0[1].max(r.0[0])));
+        }
         self.seg_left = (minutes * 60.0 * self.scale).max(TICK);
     }
 
@@ -504,6 +591,7 @@ impl Direction {
         self.since[self.cur] = 0.0;
         let next = self.next;
         self.scale = self.next_scale;
+        self.scripted_now = self.next_scripted;
         self.begin(next, steer);
     }
 
@@ -571,9 +659,12 @@ impl Direction {
             if self.started {
                 // Switched off: the children go back to their own curves (temperature and
                 // humidity follow the clock again, storm follows the rain).
-                self.out.release = [false, false, false, true, false, true, true, true, false, false];
+                if self.climate {
+                    self.out.release = [false, false, false, true, false, true, true, true, false, false];
+                }
                 self.started = false;
             }
+            self.out.lever_write = 0;
             self.out.liveliness = 1.0;
             return &self.out;
         }
@@ -583,6 +674,9 @@ impl Direction {
             self.hour = input.current[HOUR].rem_euclid(24.0) as f64;
             self.wind_dir = input.current[WIND_DIR];
             self.mode = [Mode::Auto; CHANNELS];
+            let nl = self.lever_spec.len();
+            self.lever_auto[..nl].copy_from_slice(&input.levers[..nl]);
+            self.lever_mode = [Mode::Auto; MAX_LEVERS];
             self.started = true;
         }
         let (w_axis, e_axis, c_axis) = self.effective(&s);
@@ -605,6 +699,21 @@ impl Direction {
             }
             self.mode[c] = match self.mode[c] {
                 Mode::Held(left) if left - dt <= 0.0 => Mode::Returning { from: input.current[c], t: 0.0 },
+                Mode::Held(left) => Mode::Held(left - dt),
+                Mode::Returning { t, .. } if t + dt >= RETURN_S => Mode::Auto,
+                Mode::Returning { from, t } => Mode::Returning { from, t: t + dt },
+                m => m,
+            };
+        }
+        for i in 0..self.lever_spec.len() {
+            let bit = 1 << i;
+            if input.lever_released & bit != 0 {
+                self.lever_mode[i] = Mode::Returning { from: input.levers[i], t: 0.0 };
+            } else if input.lever_touched & bit != 0 {
+                self.lever_mode[i] = Mode::Held(s.hold_s.max(1.0));
+            }
+            self.lever_mode[i] = match self.lever_mode[i] {
+                Mode::Held(left) if left - dt <= 0.0 => Mode::Returning { from: input.levers[i], t: 0.0 },
                 Mode::Held(left) => Mode::Held(left - dt),
                 Mode::Returning { t, .. } if t + dt >= RETURN_S => Mode::Auto,
                 Mode::Returning { from, t } => Mode::Returning { from, t: t + dt },
@@ -718,6 +827,29 @@ impl Direction {
             self.out.value[c] = v;
             self.out.write[c] = write;
         }
+        if !self.climate {
+            self.out.write = [false; CHANNELS];
+        }
+        // Scene levers: the segment's target (or the default), the energy steer, texture.
+        self.out.lever_write = 0;
+        for i in 0..self.lever_spec.len() {
+            let l = self.lever_spec[i];
+            let half = 0.5 * (l.max - l.min);
+            let wander = self.lever_ou[i].step(dt, 240.0, 0.06 * half * vary, &mut self.rng);
+            let target = (self.lever_target[i].unwrap_or(l.def) + l.lively * e_axis * half + wander).clamp(l.min, l.max);
+            let tau = t.ease.unwrap_or(LEVER_TAU);
+            self.lever_auto[i] += (target - self.lever_auto[i]) * (1.0 - (-dt / tau).exp());
+            let v = l.def + a * (self.lever_auto[i] - l.def);
+            let (v, write) = match self.lever_mode[i] {
+                Mode::Auto => (v, true),
+                Mode::Held(_) => (input.levers[i], false),
+                Mode::Returning { from, t } => (from + smoothstep(0.0, RETURN_S, t) * (v - from), true),
+            };
+            self.out.levers[i] = v;
+            if write {
+                self.out.lever_write |= 1 << i;
+            }
+        }
         // Encounters follow the birds' mood: fewer fly-bys in a downpour, more after it.
         self.liveliness = (self.bird_mult.max(0.05).powf(0.8) * (0.5 * e_axis).exp()).clamp(0.2, 3.0);
         self.out.liveliness = 1.0 + a * (self.liveliness - 1.0);
@@ -738,6 +870,7 @@ impl Direction {
     /// Advance by `dt` seconds of audio, planning in `TICK` steps; `input` is read on each.
     /// Returns true when the output changed (a step ran).
     pub fn advance(&mut self, dt: f32, input: &Input) -> bool {
+        self.elapsed += dt as f64;
         self.acc += dt;
         if self.acc < TICK {
             return false;
@@ -758,6 +891,12 @@ impl Direction {
                 held |= 1 << c;
             }
         }
+        let mut held_levers = 0;
+        for (i, m) in self.lever_mode.iter().enumerate() {
+            if matches!(m, Mode::Held(_)) {
+                held_levers |= 1 << i;
+            }
+        }
         Info {
             active: steer.amount > 0.0,
             episode: self.cur,
@@ -773,6 +912,10 @@ impl Direction {
             energy,
             change,
             held,
+            climate: self.climate,
+            held_levers,
+            elapsed_s: self.elapsed as f32,
+            script_s: self.script_s,
         }
     }
 

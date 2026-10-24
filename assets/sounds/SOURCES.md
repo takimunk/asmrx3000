@@ -46,3 +46,39 @@ All NASA entries: NASA-media (generally not subject to copyright; credit NASA). 
 - Not found / excluded: a clean ship-free open-ocean ambience bed with a confirmed license (the Samoa reef clip is the only bed); NPS sound-library pages returned 404; University of Iowa space-audio.org clips (Voyager/Jupiter) are marked "All rights reserved", so they are not used; Parker Solar Probe clips (JHU/APL) have no stated license, not used; Freesound CC0 shrimp not found. Commons files that are CC BY-SA (e.g. Peru scuba, PASSENGER ambience) excluded.
 - The 10x blue/fin whale files are sped up 10x to be audible; the engine may pitch them down.
 - Trimmed-out sources with source clipping: Risso's dolphin clicks and Garland S3 humpback were dropped.
+
+## Generated (assets/sounds/generated/)
+
+AI-generated through fal.ai (`tools/fal/gen.py`). Prompts are in `tools/fal/prompts_v2.json` (file name = `<prompt name>_<model>_<n>.wav`). Models: `el2` = ElevenLabs Sound Effects v2 (fal-ai/elevenlabs/sound-effects/v2), `sa25` = Stable Audio 2.5. Spend is logged in `tools/fal/spend.log`. Post-processing: 25 Hz high-pass (DC and subsonic rumble), a low-pass for sounds that come through the hull (ticks 6 kHz, RCS puffs 4 kHz, arm servo 5 kHz, airlock 10 kHz, the rest of the space set 12 kHz, which removes a 15.6 kHz whine the model leaves in), trimming of leading and trailing silence (event files only), peak-normalised to -3 dBFS with at most 8x gain, 48 kHz mono 16-bit. The loops `hull_hum_sa25_1` (cut to 60 s) and `rain_on_surface_sa25_1` were crossfaded so they loop cleanly.
+
+Generated 2026-10-23:
+
+| Files | Model | Prompt name | Used in |
+|---|---|---|---|
+| space/hull_hum_el2_1..2, space/hull_hum_sa25_1 | el2, sa25 | hull_hum | space_still `station` bed |
+| space/life_support_fans_el2_1..2 | el2 | life_support_fans | `station` |
+| space/distant_pump_el2_1..2 | el2 | distant_pump | `station` |
+| space/hull_creak_el2_1..3, space/hull_ticks_el2_1..3 | el2 | hull_creak, hull_ticks | `station` |
+| space/freighter_pass_el2_1..3, medium_ship_pass_el2_1..3, convoy_distant_el2_1..2 | el2 | same | `ships` |
+| space/shuttle_turbine_el2_1..2, shuttle_pass_el2_1, shuttle_pass_el2_3 | el2 | shuttle_turbine, shuttle_pass | `ships` |
+| space/rcs_puff_el2_1..3, clamp_engage_el2_1..3, airlock_cycle_el2_1..2, robot_arm_servo_el2_1..3 | el2 | same | `docking` |
+| space/radio_hiss_el2_1..2 | el2 | radio_hiss | `radio` |
+| space/console_beep_synth_1..3 | synthesised (sine at 1150/940 Hz with a weak 3rd harmonic, 4 ms ramps, one 31 ms reflection) | - | `radio` |
+| underwater/reef_crackle_el2_1..2, fish_grunts_el2_1..3, reef_chorus_el2_1..2 | el2 | same | underwater_drift `reef` |
+| underwater/rain_on_surface_el2_1..2 | el2 | rain_on_surface | `rain_above` |
+
+Rejected (generated, not used in a scene): space/radio_static_el2_1..2 and telemetry_beeps_el2_1 (nearly silent with a 200 Hz buzz), telemetry_beeps_el2_2..3 (shrill 6-7 kHz tones, not console beeps), shuttle_whine_el2_1..3 and shuttle_pass_el2_2 (low rumble only, no drive whine), underwater/rain_on_surface_sa25_1 (uneven, with bursts of up to 35 dB, not a steady bed).
+Earlier generations (space whooshes, orbit hum, shimmer, energy beams; the underwater whales, dolphins and bubbles) came from `tools/fal/prompts.json` and `tools/fal/whale_prompts.json`.
+
+## Body scan and Tea house (assets/sounds/generated/body_scan/, assets/sounds/generated/tea_house/)
+
+Generated on 2026-10-23 with fal.ai (ElevenLabs Sound Effects v2 `el2`; Stable Audio 2.5 `sa25` for `body_scan/room_tone_sa25_1.wav`) from the prompts in `tools/fal/prompts_scenes_a.json`, by `tools/fal/gen.py`. No third-party recordings. Each take was measured (duration, RMS, peak, DC and energy below 25 Hz, leading/trailing silence, level stability, spectral centroid, persistent tonal lines), then high-passed at 25 Hz (2nd order; run cyclically on loops so the loop seam stays clean), trimmed of silence (one-shots only) and peak-normalised to -3 dBFS, 48 kHz mono 16-bit. `guide_warm_el2_1` also lost its first 5.5 s (a slow swell-in). Re-rolled after rejection (the current files are the re-rolls): guide_brush 1 and 2 (stroke gaps 20..30 dB deep), guide_air 1 and 2 (sub-25 Hz rumble, centroid ~40 Hz), kettle_simmer 1 (a 1.35 kHz whistle line and a 33 dB level step), whisk 1 and tatami_shift 1 (near-silent), shishi_odoshi 2 (faint, muffled). Not used: a second air, a second kettle and a second warm take (all re-rolls breathed or swelled by 20..26 dB), so `guide_air`, `guide_warm` and `kettle_simmer` have one file each.
+- body_scan: guide_brush_el2_1..2, guide_air_el2_1, guide_grain_el2_1..2 (take 1 = left arm and leg, take 2 = the right-leg twin), guide_warm_el2_1, bowl_strike_el2_1..3, tingsha_el2_1..2, room_tone_sa25_1.
+- tea_house: kettle_simmer_el2_2, fukusa_el2_1..3, ladle_pour_el2_1..3, whisk_el2_1..3, tatami_shift_el2_1..3, bowl_slide_el2_1..3, suikinkutsu_el2_1..3, shishi_odoshi_el2_1..2, furin_el2_1..2, temple_bell_el2_1.
+
+### Body scan guide (synthesised, replaces the generated brush/air/grain/warm takes)
+`generated/body_scan/guide_{brush,air,grain,warm}_el2_*.wav` are now clean singing-bowl tones made by
+`tools/synth/bowl_tones.py` (partials 1 : 2.71 : 5.15 : 8.3 as doublets, f0 110/165/220/330 Hz,
+24 s seamless loops, no noise). The file names are kept so the scene's path layers stay as built.
+The generated takes hissed as they moved ("like Parseltongue", in the user's words). The room tone
+and breeze beds were removed from the scene.

@@ -31,6 +31,11 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "forest", key: N_("Forest"), file: nil),
         SceneEntry(id: "underwater", key: N_("Underwater"), file: "underwater_drift.json"),
         SceneEntry(id: "space", key: N_("Space"), file: "space_still.json"),
+        SceneEntry(id: "lighthouse", key: N_("Lighthouse"), file: "lighthouse_gale.json"),
+        SceneEntry(id: "night_train", key: N_("Night train"), file: "night_train.json"),
+        SceneEntry(id: "singing_ice", key: N_("Singing ice"), file: "singing_ice.json"),
+        SceneEntry(id: "tea_house", key: N_("Tea house"), file: "tea_house.json"),
+        SceneEntry(id: "body_scan", key: N_("Body scan"), file: "body_scan.json"),
     ]
 
     static let forest = all[0]
@@ -165,7 +170,8 @@ struct SceneInfo {
         let look: Look
         if clips.isEmpty {
             look = .forest
-        } else if env["medium"] as? String == "water" || entry.id.hasPrefix("underwater") {
+        } else if entry.id.hasPrefix("underwater") || (root["name"] as? String ?? "").lowercased().contains("underwater") {
+            // Not the medium alone: the lighthouse is muffled like water but stands on a rock.
             look = .underwater
         } else if entry.id.hasPrefix("space") || (root["name"] as? String ?? "").lowercased().contains("space") {
             look = .space
@@ -208,6 +214,32 @@ enum Scenes {
             ("black_hole", N_("black hole")), ("m87", N_("black hole")), ("sgra", N_("black hole")), ("shimmer", N_("shimmer")),
             ("swell", N_("cosmic swell")), ("saturn", N_("Saturn")), ("voyager", N_("interstellar plasma")),
             ("plasma", N_("plasma")), ("drone", N_("drone")),
+            // The station, its ships and docking.
+            ("hull_hum", N_("station hull")), ("life_support", N_("life support")), ("distant_pump", N_("pump")),
+            ("hull_creak", N_("hull creak")), ("hull_tick", N_("hull ticks")), ("freighter", N_("freighter")),
+            ("medium_ship", N_("ship")), ("shuttle", N_("shuttle")), ("convoy", N_("convoy")), ("rcs_", N_("thrusters")),
+            ("clamp", N_("docking clamp")), ("airlock", N_("airlock")), ("robot_arm", N_("robot arm")),
+            ("radio_hiss", N_("radio")), ("console_beep", N_("console")),
+            // The lighthouse.
+            ("optic", N_("lens")), ("clockwork", N_("clockwork")), ("rain_on_glass", N_("rain on the glass")),
+            ("surf_crash", N_("surf")), ("bell_buoy", N_("bell buoy")), ("foghorn", N_("foghorn")),
+            ("pane_rattle", N_("rattling pane")), ("stair", N_("stairs")),
+            // The night train.
+            ("car_interior", N_("carriage")), ("rolling_noise", N_("wheels on rails")), ("bogie", N_("bogie")),
+            ("crossing", N_("level crossing")), ("passing_train", N_("passing train")), ("bridge", N_("bridge")),
+            ("tunnel", N_("tunnel")), ("rain_window", N_("rain on the window")), ("tea_glass", N_("tea glass")),
+            ("panel_creak", N_("creaking panel")), ("vent_hum", N_("vent")), ("loco_horn", N_("horn")),
+            ("station_pass", N_("station")),
+            // The body scan.
+            ("guide_", N_("guide")), ("bowl_strike", N_("singing bowl")), ("tingsha", N_("tingsha")),
+            // The tea house.
+            ("kettle", N_("kettle")), ("fukusa", N_("silk cloth")), ("ladle", N_("ladle")), ("whisk", N_("whisk")),
+            ("tatami", N_("host")), ("bowl_slide", N_("tea bowl")), ("suikinkutsu", N_("water basin")),
+            ("shishi", N_("bamboo knocker")), ("furin", N_("wind chime")), ("temple_bell", N_("temple bell")),
+            ("rain_on_surface", N_("rain on the surface")), ("fish_grunt", N_("fish")),
+            // The singing ice, last: "bowl_strike" and "bowl_slide" hold "owl_".
+            ("ice_sing", N_("singing ice")), ("ice_crack", N_("crack")), ("ice_run", N_("running crack")),
+            ("ice_boom", N_("ice boom")), ("owl_", N_("owl")), ("skater", N_("skater")),
         ]
         if let hit = words.first(where: { text.contains($0.0) }) { return hit.1 }
         switch cls {
@@ -225,4 +257,7 @@ enum Scenes {
 enum ClipGroupLabels {
     static var titles: [String: String] = [:]
     static var icons: [String: String] = [:]
+    /// The scene levers' titles and icon keys, by lever key.
+    static var leverTitles: [String: String] = [:]
+    static var leverIcons: [String: String] = [:]
 }
