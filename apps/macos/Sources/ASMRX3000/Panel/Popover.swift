@@ -12,6 +12,11 @@ struct StillFrames {
     var showAll = false
     var spectrogramOpen = false
     var scenesOpen = false
+    /// Sections the snapshot shows open (collapsed is the default for the user).
+    var soundOpen = false
+    var worldOpen = false
+    /// Lay the panel out at its fixed height with the scroll area (default: the whole content).
+    var fixedHeight = false
 }
 
 /// The popover, top to bottom: the scene (most of it, with the scene picker in its corner), one
@@ -29,7 +34,13 @@ struct Popover: View {
     @State private var hint: String?
 
     static let width: CGFloat = 540
-    static let sceneHeight: CGFloat = 336
+    static let sceneHeight: CGFloat = 232
+    /// The panel's fixed height: the stage, the transport and the prompt stay put, the levers
+    /// scroll below them. Never taller than the menu bar screen's usable area.
+    static var height: CGFloat {
+        let room = (NSScreen.screens.first?.visibleFrame.height ?? 800) - 16
+        return max(420, min(600, room))
+    }
     static let gutter: CGFloat = Grid.x4
     /// Pictograms: 18 pt (1.1 pt line) for buttons and levers, 16 pt (1 pt line) for compact
     /// rows, drawer parameters and chips.
@@ -82,6 +93,30 @@ struct Popover: View {
                     .padding(.top, Grid.x1)
                     .arrival(2)
             }
+            if stills != nil {
+                // ImageRenderer draws no ScrollView: a snapshot shows the top of the content in
+                // the fixed frame (--fixed) or all of it.
+                if stills?.fixedHeight == true {
+                    Color.clear.frame(maxHeight: .infinity)
+                        .overlay(alignment: .top) { scrolled.fixedSize(horizontal: false, vertical: true) }
+                        .clipped()
+                } else {
+                    scrolled
+                }
+            } else {
+                ScrollView(.vertical) { scrolled }
+                    .scrollIndicators(.automatic)
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: Self.width, height: stills == nil || stills?.fixedHeight == true ? Self.height : nil)
+        .background(Ink.panel)
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// Everything under the prompt: the levers or a drawer, the spectrogram, the settings.
+    private var scrolled: some View {
+        VStack(spacing: 0) {
             LeverPanel(model: model, controls: controls, stills: stills)
                 .padding(.horizontal, Self.gutter)
                 .padding(.top, Grid.x3)
@@ -97,8 +132,6 @@ struct Popover: View {
                 .arrival(5)
         }
         .frame(width: Self.width)
-        .background(Ink.panel)
-        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -272,9 +305,16 @@ private struct ScenePicker: View {
                 .accessibilityLabel(tr("Scene: %@", audio.scene.title))
 
                 if open {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(SceneEntry.all) { e in row(e) }
+                    Group {
+                        if forceOpen {
+                            list
+                        } else {
+                            ScrollView(.vertical) { list }.scrollIndicators(.never)
+                        }
                     }
+                    .frame(height: min(CGFloat(SceneEntry.all.count) * (Grid.x6 + Grid.x1),
+                                       Popover.sceneHeight - 2 * Grid.x3 - 40))
+                    .clipped()
                     .padding(.vertical, Grid.x1)
                     .background(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).fill(Ink.panel.opacity(0.94)))
                     .overlay(RoundedRectangle(cornerRadius: Grid.chipRadius, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
@@ -288,6 +328,12 @@ private struct ScenePicker: View {
             }
         }
         .animation(Motion.reduced ? nil : .easeOut(duration: 0.12), value: open)
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(SceneEntry.all) { e in row(e) }
+        }
     }
 
     private func row(_ e: SceneEntry) -> some View {

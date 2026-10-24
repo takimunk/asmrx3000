@@ -641,7 +641,8 @@ enum Shaders {
                 if (along <= 0.0) continue;
                 float radial = length(w - along * dirB);
                 float wd = along * spread + 0.12;
-                float fall = exp(-along / 10.0) * smoothstep(0.0, 0.6, along);
+                // In the void of a clip scene the camera sits close: a short beam, not a column.
+                float fall = exp(-along / (mat == M_VOID ? 2.5 : 10.0)) * smoothstep(0.0, 0.6, along);
                 beam += exp(-(radial * radial) / (wd * wd)) * fall / (wd * 1.6) * dt;
                 beam += exp(-(radial * radial) / (0.0225 + 0.0025 * along * along)) * fall * 0.8 * dt;
             }
@@ -650,7 +651,8 @@ enum Shaders {
             float2 hp = F.gaze.xy;
             float ppm = F.gaze.z;
             float d = length(px - hp);
-            float core = max(0.12 * ppm, 2.8 * s);
+            // A point, as in the forest: it does not swell when the camera comes close.
+            float core = clamp(0.12 * ppm, 2.8 * s, 4.5 * s);
             float hidden = (mat != M_VOID && dist < F.listener.w - 0.3) ? 0.3 : 1.0;
             float halo = (exp(-pow(d / (core * 4.0), 2.0)) * 0.7 + exp(-d / (core * 9.0)) * 0.25) * hidden;
             float disc = smoothstep(core + s, core - s, d) * hidden;

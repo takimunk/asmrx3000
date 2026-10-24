@@ -416,3 +416,8 @@
 "tunnels and bridges" = "туннели и мосты";
 "whales close" = "киты рядом";
 "whisking the tea" = "взбиваем чай";
+
+"levels" = "громкость";
+"levers" = "рычаги";
+"Fold %@" = "Свернуть: %@";
+"Unfold %@" = "Развернуть: %@";

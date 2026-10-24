@@ -34,6 +34,9 @@ struct LeverPanel: View {
     @ObservedObject var audio: AudioEngine
     var stills: StillFrames?
     @AppStorage("levers.showAll") private var showAllStored = false
+    /// The two sections start folded (new keys, so everyone starts folded).
+    @AppStorage("section.sound.open") private var soundOpenStored = false
+    @AppStorage("section.world.open") private var worldOpenStored = false
     @ObservedObject private var lang = Language.shared
 
     static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT,
@@ -52,6 +55,8 @@ struct LeverPanel: View {
     }
 
     private var showAll: Bool { stills.map(\.showAll) ?? showAllStored }
+    private var soundOpen: Bool { stills.map(\.soundOpen) ?? soundOpenStored }
+    private var worldOpen: Bool { stills.map(\.worldOpen) ?? worldOpenStored }
     private var drawer: UInt32? { stills != nil ? stills?.drawer : controls.expanded }
 
     /// The world levers in display order: (always shown, behind "more").
@@ -118,7 +123,7 @@ struct LeverPanel: View {
     var body: some View {
         let hour = controls.controls.first { $0.key == "env.time_of_day" }?.value
         if let id = drawer, let macro = controls.controls.first(where: { $0.id == id }) {
-            Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: stills == nil,
+            Drawer(macro: macro, children: drawerChildren(of: id), hour: hour, scrolls: false,
                    status: Int(macro.group) == ASMR_GROUP_DIRECTION ? { Self.directionStatus(audio) } : nil,
                    set: set, close: { controls.expanded = nil })
         } else if audio.scene.isClip {
@@ -151,10 +156,12 @@ struct LeverPanel: View {
     static func directionStatus(_ audio: AudioEngine) -> String? {
         let d = audio.directionInfo()
         guard d.available != 0, d.active != 0 else { return nil }
-        var now = ControlText.option("cue." + audio.directionEpisodeName(d.episode))
+        let episode = audio.directionEpisodeName(d.episode)
+        var now = ControlText.option("cue." + episode)
         let segment = audio.directionSegmentLabel(episode: d.episode, segment: d.segment)
-        // A stretch that only repeats the spell's name is left out ("a calm watch" in "calm watch").
-        if !segment.isEmpty, ControlText.segment(segment) != now { now += " · " + ControlText.segment(segment) }
+        // A stretch that only repeats the spell's name is left out ("quiet shift" in "quiet_shift").
+        let same = segment.replacingOccurrences(of: " ", with: "_") == episode
+        if !segment.isEmpty, !same, ControlText.segment(segment) != now { now += " · " + ControlText.segment(segment) }
         let next = ControlText.option("cue." + audio.directionEpisodeName(d.next))
         let minutes = Swift.max(1, Int((d.episode_left_s / 60).rounded()))
         return now + " — " + tr("then: %@, ~%d min", next, minutes)
@@ -168,9 +175,11 @@ struct LeverPanel: View {
         let mix = only == nil ? controls.macros.first { Int($0.group) == ASMR_GROUP_MIX } : nil
         // Without level controls (an older core) the section keeps only the mix's clarity.
         if !levels.isEmpty || mix != nil {
-            SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : tr("group levels, dB"))
+            SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : soundOpen ? tr("group levels, dB") : tr("levels"),
+                          open: soundOpen) { soundOpenStored.toggle() }
             let cells: [SoundCell.Kind] = levels.map { .level($0) } + (mix.map { [.mix($0)] } ?? [])
             let rows = stride(from: 0, to: cells.count, by: 2).map { Array(cells[$0..<Swift.min($0 + 2, cells.count)]) }
+            if soundOpen {
             VStack(spacing: 0) {
                 ForEach(rows.indices, id: \.self) { r in
                     HStack(spacing: Popover.soundColumnGap) {
@@ -184,6 +193,7 @@ struct LeverPanel: View {
                 }
             }
             .padding(.bottom, Grid.x3)
+            }
         }
     }
 
@@ -209,14 +219,21 @@ struct LeverPanel: View {
         return VStack(alignment: .leading, spacing: 0) {
             // Polled once a second: in a journey the biome under the listener changes as it flies.
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                SectionHeader(title: tr("World"), note: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest"))
+                SectionHeader(title: tr("World"), note: worldNote(plain: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest")),
+                              open: worldOpen) { worldOpenStored.toggle() }
             }
-            rows(shown, hour: hour)
-            if !split.more.isEmpty {
+            if worldOpen { rows(shown, hour: hour) }
+            if worldOpen, !split.more.isEmpty {
                 MoreRow(more: split.more, hour: hour, showAll: showAll) { showAllStored.toggle() }
                     .frame(height: Popover.leverHeight)
             }
         }
+    }
+
+    /// The world header's note: open, what the section is; folded, what is going on in it
+    /// (the direction's spell and what follows), else the same words.
+    private func worldNote(plain: String) -> String {
+        worldOpen ? plain : Self.directionStatus(audio) ?? plain
     }
 
     /// The lever rows over the live waveforms of their groups.
@@ -264,12 +281,15 @@ struct LeverPanel: View {
         let more = Self.sceneLevers(controls.macros)
         return VStack(alignment: .leading, spacing: 0) {
             if !world.isEmpty || more.isEmpty {
-                SectionHeader(title: tr("World"), note: plain)
-                rows(world, hour: hour, stillRows: world.count + (showAll ? more.count : 0))
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    SectionHeader(title: tr("World"), note: worldNote(plain: plain), open: worldOpen) { worldOpenStored.toggle() }
+                }
+                if worldOpen { rows(world, hour: hour, stillRows: world.count + (showAll ? more.count : 0)) }
             } else {
-                SectionHeader(title: tr("Scene"), note: tr("group levels; “all” moves every group"))
+                SectionHeader(title: tr("Scene"), note: worldOpen ? tr("group levels; “all” moves every group") : tr("levers"),
+                              open: worldOpen) { worldOpenStored.toggle() }
             }
-            if !more.isEmpty {
+            if worldOpen, !more.isEmpty {
                 MoreRow(more: more, hour: hour, showAll: showAll, compact: true) { showAllStored.toggle() }
                     .frame(height: Popover.leverHeight)
                 if showAll { rows(more, hour: hour, stillRow: world.count, stillRows: world.count + more.count) }
@@ -288,21 +308,36 @@ struct LeverPanel: View {
 private struct SectionHeader: View {
     let title: String
     let note: String
+    let open: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: Grid.x2) {
-            Text(title)
-                .font(Ink.text(Ink.Size.body))
-                .foregroundStyle(Ink.paper)
-                .fixedSize()
-            Rectangle().fill(Ink.hairline).frame(height: 1)
-            Text(note)
-                .font(Ink.text(Ink.Size.caption))
-                .foregroundStyle(Ink.ash)
-                .lineLimit(1)
+        Button {
+            if Motion.reduced { toggle() } else { withAnimation(.easeOut(duration: 0.16)) { toggle() } }
+        } label: {
+            HStack(spacing: Grid.x2) {
+                Text(title)
+                    .font(Ink.text(Ink.Size.body))
+                    .foregroundStyle(Ink.paper)
+                    .fixedSize()
+                Rectangle().fill(Ink.hairline).frame(height: 1)
+                    .frame(minWidth: Grid.x4)
+                Text(note)
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.graphite, size: 12, lineWidth: 1)
+                    .rotationEffect(.degrees(open ? -90 : 90))
+            }
+            .frame(height: Popover.headerHeight)
+            .contentShape(Rectangle())
         }
-        .frame(height: Popover.headerHeight)
-        .accessibilityElement(children: .combine)
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(open ? tr("Fold %@", title) : tr("Unfold %@", title))
         .accessibilityAddTraits(.isHeader)
     }
 }
@@ -545,7 +580,10 @@ enum ControlText {
         "whisking the tea": N_("whisking the tea"),
     ]
 
-    static func segment(_ raw: String) -> String { segments[raw].map(tr) ?? raw }
+    /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
+    static func segment(_ raw: String) -> String {
+        segments[raw].map(tr) ?? options["cue." + raw.replacingOccurrences(of: " ", with: "_")].map(tr) ?? raw
+    }
 
     /// A scene's own spells may be any snake_case word: the rest are humanised.
     static func option(_ raw: String) -> String {
