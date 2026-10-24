@@ -41,11 +41,11 @@ enum ClipSet: Equatable {
         switch self {
         case .lighthouse:
             // Down into the lantern room and over the gallery to the sea below.
-            c.target = SIMD3(1.2, 0, -1.4); c.elevation = 0.36; c.distance = 18
+            c.target = SIMD3(1.2, 0, -1.2); c.elevation = 0.36; c.distance = 15
         case .train:
             // From behind the right shoulder into the cut-open compartment: the window on the left
             // wall facing the eye, the night going past beyond it.
-            c.target = SIMD3(0.8, 0.1, -0.7); c.azimuth = .pi + 0.45; c.elevation = 0.42; c.distance = 15
+            c.target = SIMD3(0.7, 0.0, -0.6); c.azimuth = .pi + 0.45; c.elevation = 0.42; c.distance = 9
         case .ice:
             // Low over the ice so the shore stands on the horizon.
             c.target = SIMD3(2.0, 0, -0.6); c.elevation = 0.2; c.distance = 15
@@ -53,7 +53,7 @@ enum ClipSet: Equatable {
             // From behind the left shoulder: the room, the host across, the garden on the right.
             c.target = SIMD3(1.0, -0.9, -1.0); c.azimuth = .pi - 0.38; c.elevation = 0.46; c.distance = 13
         case .bodyScan:
-            c.target = SIMD3(0.5, 0, -0.6); c.elevation = 0.5; c.distance = 11
+            c.target = SIMD3(0.4, 0, -0.6); c.elevation = 0.5; c.distance = 7
         case .underwater:
             // Under the surface: the eye stays below it.
             c.target = SIMD3(1.2, 0, -0.6); c.elevation = 0.22; c.distance = 17
@@ -77,6 +77,30 @@ enum ClipSet: Equatable {
     }
 
     var planet: Bool { self == .space }
+
+    /// The station module's radius and length (world metres), shared by the set and the sounds
+    /// placed on its hull.
+    static let module = (radius: Float(3.3), from: Float(-5), to: Float(4.6))
+    /// The compartment's partition (y) and ceiling (z), metres.
+    static let partition: Float = -1.0, ceiling: Float = 1.0
+
+    /// Where a sound is drawn: where it sounds, except the station's own creaks and ticks, put
+    /// on the module's hull in their direction (the open top arc avoided), so they read as the
+    /// station's.
+    func drawnAt(_ kind: ClipKind, raw: SIMD3<Float>) -> SIMD3<Float> {
+        if self == .train, case .prop(.panel) = kind {
+            // On the partition to the corridor.
+            return SIMD3(min(max(raw.x, -1.0), 1.4), Self.partition, min(raw.z, Self.ceiling - 0.3))
+        }
+        guard self == .space, case .prop(.panel) = kind else { return raw }
+        let m = Self.module
+        var a = atan2(raw.z, raw.y)
+        let top = Float.pi / 2, half: Float = 1.15
+        let off = atan2(sin(a - top), cos(a - top))
+        if abs(off) < half { a = top + (off < 0 ? -half : half) }
+        let x = min(max(raw.x, m.from + 0.5), m.to - 0.3)
+        return SIMD3(x, m.radius * cos(a), m.radius * sin(a))
+    }
 
     /// Whether the sounds that are part of the place (a pane, a window, the eaves) are drawn on
     /// the set rather than as things of their own.
@@ -192,8 +216,11 @@ enum ClipSet: Equatable {
         k.line([SIMD3(xa, yl, lo), SIMD3(xe, yl, lo), SIMD3(xe, yl, hi), SIMD3(xa, yl, hi), SIMD3(xa, yl, lo)], 0.03)
         k.line([SIMD3(xa, yl, 0.18), SIMD3(xe, yl, 0.18)], 0.016)
         k.line([SIMD3(0.2, yl, -0.47), SIMD3(0.2, 0.15, -0.47), SIMD3(0.9, 0.15, -0.47), SIMD3(0.9, yl, -0.47)], 0.022)
-        // The edge of the corridor side.
+        // The partition to the corridor (its foot, top and far post) and the ceiling's edge,
+        // which the creaking panel and the vent sit on.
         k.line([SIMD3(xb, yr, floor), SIMD3(xf, yr, floor), SIMD3(xf, yl, floor)], 0.016)
+        k.line([SIMD3(xf, yr, floor), SIMD3(xf, yr, Self.ceiling)], 0.014)
+        k.line([SIMD3(xb, yr, Self.ceiling), SIMD3(xf, yr, Self.ceiling), SIMD3(xf, yl, Self.ceiling), SIMD3(-0.4, yl, Self.ceiling)], 0.012)
     }
 
     /// The frozen lake to the horizon and its wooded shore all round, the shore nearer on the
@@ -289,7 +316,7 @@ enum ClipSet: Equatable {
     /// A pressurised module around the listener, its ribs and longerons; a truss out to the
     /// solar wings on both sides; the planet below and the stars are the engraver's (sky).
     private static func space(_ k: inout SetKit) {
-        let r: Float = 3.3, xa: Float = -1.2, xe: Float = 4.6
+        let r = Self.module.radius, xa: Float = -1.2, xe = Self.module.to
         // The module ahead of the listener, its upper arc left out so the sky stays open.
         let open: (Float, Float) = (.pi / 2, 1.1)
         for x in stride(from: xa, through: xe, by: 1.45) {
@@ -298,7 +325,7 @@ enum ClipSet: Equatable {
         for i in 0..<8 {
             let a = 2 * Float.pi * (Float(i) + 0.5) / 8
             if SetKit.inside(a, open) { continue }
-            k.line([SIMD3(-5, r * cos(a), r * sin(a)), SIMD3(xe, r * cos(a), r * sin(a))], 0.011)
+            k.line([SIMD3(Self.module.from, r * cos(a), r * sin(a)), SIMD3(xe, r * cos(a), r * sin(a))], 0.011)
         }
         k.ring(centre: SIMD2(xe + 0.4, 0), radius: 0.9, about: .x, w: 0.022)
         // The truss and the wings.

@@ -293,7 +293,7 @@ final class SceneRenderer {
             let set = ClipSet.of(scene)
             u.haze.y = set.stars
             u.haze.z = set.planet ? 1 : 0
-            u.haze.w = 1
+            u.haze.w = set == .ice ? 2 : 1
             return list
         } else if let terrain {
             list.append((terrain, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, flags(.river), 0, 0), anim: .zero)))
@@ -464,16 +464,21 @@ final class SceneRenderer {
 
         var rings: [(SIMD3<Float>, Float)] = []
         clipBoxes.removeAll(keepingCapacity: true)
+        var drawn: [UInt32: SIMD3<Float>] = [:]
+        defer { stage.clipDrawn = drawn }
         labelCandidates.removeAll(keepingCapacity: true)
         if labelsFor != scene.entry.id { labelsFor = scene.entry.id; labels.reset() }
         let clock = Float(stage.time.truncatingRemainder(dividingBy: 3600))
         for t in stage.things where t.kind == .clip {
             guard let id = t.ids.first, let clip = scene.clips[id] else { continue }
-            let p = ClipSpace.map(t.anchor)
             let level = clipLevel(near: t.anchor, spread: clip.spread)
             let info = SIMD4<Float>(Float(id), flags(t.key), 0, 0)
             let kind = actors.kind(of: id, in: scene)
-            let made = actors.pieces(kind, clip: clip, raw: t.anchor, trail: stage.trails[id] ?? [], time: clock, level: level,
+            // Where it is drawn: where it sounds, or for a sound of the place on the place itself.
+            let at = set.drawnAt(kind, raw: t.anchor)
+            let p = ClipSpace.map(at)
+            drawn[id] = p
+            let made = actors.pieces(kind, clip: clip, raw: at, trail: stage.trails[id] ?? [], time: clock, level: level,
                                      screen: (scr.distance, scr.width))
             for piece in made.pieces { list.append((piece.mesh, Instance(model: piece.model, info: info, anim: SIMD4(0, piece.ghost, 0, 0)))) }
             clipBoxes[id] = (p, made.extent)

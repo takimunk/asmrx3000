@@ -12,9 +12,15 @@ import simd
 /// a radially compressed space around the head (`ClipSpace.map`): directions are true, near
 /// things get room, far ones stay in view. Each scene's place and framing: `ClipSet`.
 enum ClipSpace {
-    /// Mapped radius: 1.6 m · ln(1 + r / 0.15 m). 0.6 m → 2.6, 3 m → 4.9, 10 m → 6.8, 30 m → 8.5,
-    /// 100 m → 10.4.
-    static func radius(_ r: Float) -> Float { 1.6 * log(1 + r / 0.15) }
+    /// Mapped radius: linear (× `zoom`) out to `linear` metres, so a room about the listener
+    /// keeps straight walls; beyond it logarithmic, joining smoothly (same slope at the seam).
+    /// 1 m → 1.5, 4 m → 6.0, 10 m → 8.6, 30 m → 10.2, 100 m → 11.8, 1 km → 14.6.
+    static let linear: Float = 4, zoom: Float = 1.5, far: Float = 1.2
+    static func radius(_ r: Float) -> Float {
+        if r <= linear { return r * zoom }
+        let knee = far / zoom
+        return linear * zoom + far * log(1 + (r - linear) / knee)
+    }
 
     static func map(_ p: SIMD3<Float>) -> SIMD3<Float> {
         let r = simd_length(p)
@@ -715,7 +721,7 @@ final class ClipActors {
             out.append(ClipPiece(mesh: lens, model: M4.move(c) * M4.rotZ(a) * M4.scale(0.75 * pulse)))
             // Its light going out over the sea where the lens faces.
             if let beam = PropMeshes.lightBeam {
-                out.append(ClipPiece(mesh: beam, model: M4.move(c) * M4.rotZ(a) * M4.rotY(0.05) * M4.scale(SIMD3(10, 10, 10)),
+                out.append(ClipPiece(mesh: beam, model: M4.move(c) * M4.rotZ(a) * M4.rotY(0.05) * M4.scale(SIMD3(7, 5, 5)),
                                      ghost: ClipPiece.veryFaint))
             }
             return (out, simd_distance(c, p) + 0.5)

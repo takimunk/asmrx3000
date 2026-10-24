@@ -99,6 +99,9 @@ final class Stage {
     private(set) var things: [Thing] = []
     /// Clip scenes: where each moving sound was over the last seconds, oldest first (ClipStage.swift).
     private(set) var trails: [UInt32: [SIMD3<Float>]] = [:]
+    /// Clip scenes: where each sound is drawn (mapped), when the renderer moved it onto the place
+    /// (a hull creak on the hull): picking follows the drawing.
+    var clipDrawn: [UInt32: SIMD3<Float>] = [:]
     private var trailClock: Double = 0
     static let trailStep = 0.15
     static let trailLength = 40
@@ -401,7 +404,7 @@ final class Stage {
             // Clips are drawn as glyphs at their mapped place: the nearest within a few cells.
             var best: (Thing.Key, Float)?
             for t in things where t.kind == .clip {
-                guard let s = proj.project(ClipSpace.map(t.anchor)) else { continue }
+                guard let s = proj.project(t.ids.first.flatMap { clipDrawn[$0] } ?? ClipSpace.map(t.anchor)) else { continue }
                 let d = simd_distance(s.point, point)
                 if d < 14, best == nil || d < best!.1 { best = (t.key, d) }
             }

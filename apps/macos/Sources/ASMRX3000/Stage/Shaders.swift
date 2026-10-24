@@ -48,7 +48,7 @@ enum Shaders {
         float4 env;          // daylight 0..1, wetness 0..1, lightning flash 0..1, -
         float4 gaze;         // listener point screen x, y px, px per metre, live 1 / resting 0
         float4 gazeHead;     // head forward direction xyz (world), visible
-        float4 haze;         // horizon y px (where the level ground meets the sky), stars 0..1, planet 0/1, clip scene 0/1
+        float4 haze;         // horizon y px (where the level ground meets the sky), stars 0..1, planet 0/1, clip scene 1 (ice 2)
         float4 listener;     // head position xyz, its distance from the eye
         float4x4 invViewProj;
         float4 world;        // flight relief: snow cover, sand cover, bare rock above this slope, flying 0/1
@@ -452,6 +452,20 @@ enum Shaders {
             // Sun glints on the water.
             if (mat == M_WATER) v += max(tone - 1.0, 0.0) * 0.35 * dim;
             if (mat == M_GROUND) v *= 1.0 - 0.25 * F.env.y;      // wet ground darkens
+            if (mat == M_GROUND && F.haze.w > 1.5) {
+                // Ice (haze.w = 2): a sheen of the sky's last light rising towards the horizon,
+                // and fine engraved strokes across the view, closing up with distance as they
+                // would on a plate; faded out before they are too close to draw.
+                float rr = length(b.xy);
+                v += 0.06 * smoothstep(2.0, 14.0, rr);
+                float across = b.x + 0.25 * sin(b.y * 0.7) + 0.1 * sin(b.y * 2.3 + b.x);
+                float step_ = 0.45;
+                float d = abs(fract(across / step_ + 0.5) - 0.5) * step_ / pxWorld;
+                float room = step_ / pxWorld;
+                float stroke = cut(d, 0.9 * s) * smoothstep(3.0 * s, 8.0 * s, room)
+                             * (0.6 + 0.4 * step(0.35, hash21(float2(floor(across / step_), floor(b.y * 0.8)))));
+                v += 0.045 * stroke;
+            }
             // Distance fog: clear around the herm, the far land dissolves into the sky (flight
             // sees further: mountains stand in the haze).
             float fd = dist / max(F.precip.z, 1.0);
