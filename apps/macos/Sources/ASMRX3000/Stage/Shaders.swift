@@ -60,7 +60,7 @@ enum Shaders {
     struct Inst {
         float4x4 model;
         float4 info;         // id (-1 none, 100 river), flags (1 selected, 2 hovered), lean m, height m
-        float4 anim;         // wing angle, phase, local wind, kind (0 thing, 1 tree)
+        float4 anim;         // wing angle, phase (things: ghost), local wind, kind (0 thing, 1 tree)
     };
 
     // Data buffer layout (mirrors SceneRenderer).
@@ -121,12 +121,18 @@ enum Shaders {
         return w;
     }
 
+    // How see-through an instance is: 0 solid, 0.5 faint, 0.75 very faint. Clip pieces (not
+    // trees, anim.w = 0) carry it in anim.y; drawn as a screen door in the G-buffer.
+    inline float ghostOf(constant Inst& I) { return I.anim.w < 0.5 ? I.anim.y : 0.0; }
+
     vertex float4 shadowVert(uint vid [[vertex_id]], const device Vtx* V [[buffer(0)]],
                              constant Inst& I [[buffer(1)]], constant FrameU& F [[buffer(2)]]) {
         Vtx v = V[vid];
         float3 n;
         float3 p = deform(float3(v.p), float3(v.n), v.part, I, F.cam.w, n);
         float3 w = sway((I.model * float4(p, 1)).xyz, p, v.part, I, F.cam.w);
+        // Ghosts (effects: wind, rain, a glow) cast no shadow: collapsed outside the clip box.
+        if (ghostOf(I) > 0.0) return float4(2, 2, 2, 1);
         return F.sunViewProj * float4(w, 1);
     }
 
@@ -151,6 +157,13 @@ enum Shaders {
     fragment GBuf gbufFrag(GOut in [[stage_in]], bool front [[front_facing]],
                            constant Inst& I [[buffer(1)]], constant FrameU& F [[buffer(2)]],
                            depth2d<float> shadowMap [[texture(0)]]) {
+        // Screen door: a ghost keeps only some pixels (4x4 Bayer), the scene shows between them.
+        float ghost = ghostOf(I);
+        if (ghost > 0.0) {
+            constexpr int BAYER[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+            uint2 c = uint2(in.pos.xy) % 4;
+            if ((float(BAYER[c.y * 4 + c.x]) + 0.5) / 16.0 < ghost) discard_fragment();
+        }
         constexpr sampler cmp(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::less_equal);
         float3 n = normalize(in.normal) * (front ? 1.0 : -1.0);
         float3 eye = F.cam.xyz;
@@ -288,7 +301,7 @@ enum Shaders {
         if (mat == M_GROUND || mat == M_SECTION) { id = -1.0; flags = 0.0; }
 
         GBuf o;
-        o.a = float4(clamp(tone, 0.0, 1.5), float(mat) + 32.0 * flags, mat == M_GROUND ? albedo : angle, dist / 60.0);
+        o.a = float4(clamp(tone, 0.0, 1.5), float(mat) + 32.0 * flags + (ghost > 0.0 ? 128.0 : 0.0), mat == M_GROUND ? albedo : angle, dist / 60.0);
         o.b = float4(in.world, id);
         return o;
     }
@@ -336,6 +349,7 @@ enum Shaders {
         int mat = code & 31;
         bool sel = (code & 32) != 0;
         bool hov = (code & 64) != 0;
+        bool ghost = (code & 128) != 0;
         float dist = a.w * 60.0;
         float pxWorld = dist * F.view.w;      // metres per pixel at this depth
         if (DEBUG_VIEW) {
@@ -393,11 +407,13 @@ enum Shaders {
         // Contours: a soft line where the next pixel is farther away or another kind of thing.
         int cls = contourClass(mat);
         float edge = 0.0;
-        if (cls > 1) {
+        // A ghost's screen door would draw a line round every hole: no contours on or against it.
+        if (cls > 1 && !ghost) {
             int2 dirs[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
             for (int k = 0; k < 4; k++) {
                 int2 q = clamp(int2(ip) + dirs[k] * int(max(s * 0.5, 1.0)), int2(0), int2(size) - 1);
                 float4 n = ga.read(uint2(q));
+                if ((int(n.y + 0.5) & 128) != 0) continue;
                 int nm = int(n.y + 0.5) & 31;
                 int nc = contourClass(nm);
                 float jump = (mat == M_FOLIAGE && nm == M_FOLIAGE) ? 1.12 : 1.03;

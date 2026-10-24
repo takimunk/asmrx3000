@@ -454,7 +454,7 @@ final class SceneRenderer {
             let kind = actors.kind(of: id, in: scene)
             let made = actors.pieces(kind, clip: clip, raw: t.anchor, trail: stage.trails[id] ?? [], time: clock, level: level,
                                      screen: (scr.distance, scr.width))
-            for piece in made.pieces { list.append((piece.mesh, Instance(model: piece.model, info: info, anim: .zero))) }
+            for piece in made.pieces { list.append((piece.mesh, Instance(model: piece.model, info: info, anim: SIMD4(0, piece.ghost, 0, 0)))) }
             clipBoxes[id] = (p, made.extent)
             // A bed or texture spread over several emitters: a pebble at each.
             if kind == .generic && clip.emitters > 1 && clip.spread > 0 && clip.sweep == nil {
@@ -466,6 +466,8 @@ final class SceneRenderer {
             }
             if level > 0.05 { rings.append((p, level)) }
         }
+        // The scene's still things (the ice, the seated listener), once the clips are known.
+        for piece in actors.scenery { list.append((piece.mesh, Instance(model: piece.model, info: stone, anim: SIMD4(0, piece.ghost, 0, 0)))) }
         let focal = proj.size.y * 0.5 / tan(proj.camera.fovY / 2)
         for (p, level) in rings.sorted(by: { $0.1 > $1.1 }).prefix(4) {
             guard let sp = proj.project(p) else { continue }
