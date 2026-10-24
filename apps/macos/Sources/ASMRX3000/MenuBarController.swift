@@ -145,7 +145,7 @@ final class MenuBarController: NSObject, NSWindowDelegate {
     private func makePanel() -> MenuPanel {
         let host = NSHostingController(rootView: Popover(model: model))
         host.sizingOptions = [.preferredContentSize]
-        let panel = MenuPanel(contentRect: NSRect(x: 0, y: 0, width: Popover.width, height: Popover.height),
+        let panel = MenuPanel(contentRect: NSRect(x: 0, y: 0, width: Popover.width, height: Popover.maxHeight),
                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.contentViewController = host
         panel.level = .popUpMenu

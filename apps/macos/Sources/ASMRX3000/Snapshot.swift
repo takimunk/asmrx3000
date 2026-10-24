@@ -5,7 +5,7 @@ import simd
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|clip|none] [--seconds s] [--scenes] [--expand water|wind|none] [--more] [--sound] [--world] [--all] [--fixed] [--spectrogram] [--orbit 0..1]
+/// `ASMRX3000 --snapshot out.png [--select tree|bird|river|clip|none] [--seconds s] [--scenes] [--expand water|wind|none] [--more] [--sound] [--fold-world] [--settings] [--all] [--fixed] [--room pt] [--spectrogram] [--orbit 0..1]
 ///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
 ///  [--flight speed] [--seed n] [--steer yaw°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
@@ -137,8 +137,11 @@ enum Snapshot {
                                  drawer: drawer, showAll: showAll, spectrogramOpen: spectrogramOpen,
                                  scenesOpen: args.contains("--scenes"),
                                  soundOpen: args.contains("--sound") || args.contains("--all"),
-                                 worldOpen: args.contains("--world") || showAll || args.contains("--all") || expand != "none",
-                                 fixedHeight: args.contains("--fixed"))
+                                 worldOpen: !args.contains("--fold-world") || showAll || args.contains("--all") || expand != "none",
+                                 settingsOpen: args.contains("--settings"),
+                                 fixedHeight: args.contains("--fixed") || value("--room") != nil)
+        // --room <pt>: a screen of that usable height (a small laptop), so --fixed shows the cap.
+        Popover.roomOverride = value("--room").flatMap(Double.init).map { CGFloat($0) }
         let renderer = ImageRenderer(content: Popover(model: model, stills: stills))
         renderer.scale = CGFloat(scale)
         guard let image = renderer.cgImage,

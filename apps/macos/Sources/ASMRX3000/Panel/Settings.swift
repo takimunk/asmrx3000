@@ -244,50 +244,53 @@ struct TextButton: View {
     }
 }
 
-/// The bottom of the panel: "Settings" folded; open, the accent, the keys and the microphone.
-struct PanelSettings: View {
-    var stills: StillFrames?
-    @AppStorage("settings.open") private var openStored = false
+/// The settings in the levers' place, opened from the transport's settings button (⌘,): a
+/// drawer like a group's, "‹ Settings ───── language, accent, keys, microphone", then the rows.
+struct SettingsDrawer: View {
+    let close: () -> Void
     @ObservedObject private var lang = Language.shared
-    @State private var hovering = false
-
-    private var open: Bool { stills == nil && openStored }
+    @State private var hoveringBack = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Grid.x1) {
-            Button { openStored.toggle() } label: {
-                HStack(spacing: Grid.x2) {
-                    Text(tr("Settings"))
-                        .font(Ink.text(Ink.Size.body))
-                        .foregroundStyle(Ink.paper)
-                        .fixedSize()
-                    Rectangle().fill(Ink.hairline).frame(height: 1)
-                    Text(open ? tr("close") : tr("language, accent, keys, microphone"))
-                        .font(Ink.text(Ink.Size.caption))
-                        .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
-                        .fixedSize()
-                    Text(open ? "⌃" : "⌄")
-                        .font(Ink.text(Ink.Size.caption))
-                        .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+            HStack(spacing: Grid.x2) {
+                Button(action: close) {
+                    HStack(spacing: Grid.x1) {
+                        IconView(icon: .back, color: hoveringBack ? Ink.paper : Ink.graphite, size: 14, lineWidth: 1)
+                        Text(tr("Settings"))
+                            .font(Ink.text(Ink.Size.body))
+                            .foregroundStyle(Ink.paper)
+                            .fixedSize()
+                    }
+                    .padding(.leading, Grid.x1)
+                    .padding(.trailing, Grid.x2)
+                    .frame(height: Popover.headerHeight)
+                    .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous)
+                        .fill(hoveringBack ? Ink.raised : .clear))
+                    .contentShape(Rectangle())
                 }
-                .frame(height: Popover.headerHeight)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .focusable(false)
+                .padding(.leading, -Grid.x1)
+                .onHover { hoveringBack = $0 }
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+                .help(tr("Back   ⌘←"))
+                .accessibilityLabel(tr("Close settings"))
+                Rectangle().fill(Ink.hairline).frame(height: 1)
+                Text(tr("language, accent, keys, microphone"))
+                    .font(Ink.text(Ink.Size.caption))
+                    .foregroundStyle(Ink.ash)
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .onHover { hovering = $0 }
-            .accessibilityLabel(open ? tr("Close settings") : tr("Open settings"))
-            if open {
-                VStack(alignment: .leading, spacing: Grid.x1) {
-                    LanguageRow()
-                    AccentRow()
-                    KeyRow(account: .typesafe, name: "TypeSafe AI", placeholder: N_("Add your TypeSafe AI key"),
-                           help: KeyRow.typesafeHelp)
-                    KeyRow(account: .fal, name: "fal.ai", placeholder: N_("Add your fal key"), help: KeyRow.falHelp)
-                    MicrophoneRow()
-                }
-                .padding(.top, Grid.x1)
-                .transition(.opacity)
+            .frame(height: Popover.headerHeight)
+            VStack(alignment: .leading, spacing: Grid.x1) {
+                LanguageRow()
+                AccentRow()
+                KeyRow(account: .typesafe, name: "TypeSafe AI", placeholder: N_("Add your TypeSafe AI key"),
+                       help: KeyRow.typesafeHelp)
+                KeyRow(account: .fal, name: "fal.ai", placeholder: N_("Add your fal key"), help: KeyRow.falHelp)
+                MicrophoneRow()
             }
         }
     }

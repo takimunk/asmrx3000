@@ -34,9 +34,10 @@ struct LeverPanel: View {
     @ObservedObject var audio: AudioEngine
     var stills: StillFrames?
     @AppStorage("levers.showAll") private var showAllStored = false
-    /// The two sections start folded (new keys, so everyone starts folded).
-    @AppStorage("section.sound.open") private var soundOpenStored = false
-    @AppStorage("section.world.open") private var worldOpenStored = false
+    /// The world's levers are open by default; the sound section folds to its strip of mutes.
+    /// (New keys: the earlier "section.*.open" started both folded.)
+    @AppStorage("levers.sound.open") private var soundOpenStored = false
+    @AppStorage("levers.world.open") private var worldOpenStored = true
     @ObservedObject private var lang = Language.shared
 
     static let primary = [ASMR_GROUP_WATER, ASMR_GROUP_WIND, ASMR_GROUP_BIRDS, ASMR_GROUP_RAIN, ASMR_GROUP_ENVIRONMENT,
@@ -128,13 +129,13 @@ struct LeverPanel: View {
                    set: set, close: { controls.expanded = nil })
         } else if audio.scene.isClip {
             VStack(alignment: .leading, spacing: 0) {
-                sound(hour: hour, only: audio.scene.groups)
                 clipScene(hour: hour)
+                sound(hour: hour, only: audio.scene.groups)
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                sound(hour: hour)
                 world(hour: hour)
+                sound(hour: hour)
             }
         }
     }
@@ -175,8 +176,17 @@ struct LeverPanel: View {
         let mix = only == nil ? controls.macros.first { Int($0.group) == ASMR_GROUP_MIX } : nil
         // Without level controls (an older core) the section keeps only the mix's clarity.
         if !levels.isEmpty || mix != nil {
-            SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : soundOpen ? tr("group levels, dB") : tr("levels"),
-                          open: soundOpen) { soundOpenStored.toggle() }
+            if soundOpen {
+                SectionHeader(title: tr("Sound"), note: levels.isEmpty ? tr("mix") : tr("group levels, dB"),
+                              open: true) { soundOpenStored.toggle() }
+            } else {
+                // Folded, the header is the mixer at a glance: every group's pictogram (lit while
+                // it sounds, struck through when muted; a click mutes), and the mix's clarity.
+                SoundStrip(levels: levels, mix: mix, hour: hour, meters: model.stage.meters, set: set,
+                           openMix: { if let mix { controls.expanded = mix.id } }) {
+                    soundOpenStored.toggle()
+                }
+            }
             let cells: [SoundCell.Kind] = levels.map { .level($0) } + (mix.map { [.mix($0)] } ?? [])
             let rows = stride(from: 0, to: cells.count, by: 2).map { Array(cells[$0..<Swift.min($0 + 2, cells.count)]) }
             if soundOpen {
@@ -192,7 +202,6 @@ struct LeverPanel: View {
                     .frame(height: Popover.soundRowHeight)
                 }
             }
-            .padding(.bottom, Grid.x3)
             }
         }
     }
@@ -228,12 +237,13 @@ struct LeverPanel: View {
                     .frame(height: Popover.leverHeight)
             }
         }
+        .padding(.bottom, worldOpen ? Grid.x2 : 0)
     }
 
-    /// The world header's note: open, what the section is; folded, what is going on in it
-    /// (the direction's spell and what follows), else the same words.
+    /// The world header's note: what is going on in it (the direction's spell and what follows),
+    /// else what the section is. In flight the landscape under the listener says more.
     private func worldNote(plain: String) -> String {
-        worldOpen ? plain : Self.directionStatus(audio) ?? plain
+        audio.flying ? plain : Self.directionStatus(audio) ?? plain
     }
 
     /// The lever rows over the live waveforms of their groups.
@@ -295,6 +305,7 @@ struct LeverPanel: View {
                 if showAll { rows(more, hour: hour, stillRow: world.count, stillRows: world.count + more.count) }
             }
         }
+        .padding(.bottom, worldOpen ? Grid.x2 : 0)
     }
 
     private func set(_ id: UInt32, _ value: Float) {
@@ -339,6 +350,111 @@ private struct SectionHeader: View {
         .onHover { hovering = $0 }
         .accessibilityLabel(open ? tr("Fold %@", title) : tr("Unfold %@", title))
         .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// The sound section folded: "Звук" and, in the hairline's place, one pictogram per group (a
+/// click mutes or unmutes it; lit while it sounds, struck through when muted), the mix's clarity
+/// (opens its drawer), then what is muted and the chevron. Anywhere else on the line unfolds.
+private struct SoundStrip: View {
+    @ObservedObject private var lang = Language.shared
+    let levels: [Control]
+    let mix: Control?
+    var hour: Float?
+    @ObservedObject var meters: Meters
+    let set: (UInt32, Float) -> Void
+    let openMix: () -> Void
+    let toggle: () -> Void
+    @State private var hovering = false
+    @State private var hoveredCell: UInt32?
+    /// What each mute toggles back to.
+    @State private var unmuted: [UInt32: Float] = [:]
+
+    var body: some View {
+        let muted = levels.filter(\.isMuted)
+        HStack(spacing: Grid.x2) {
+            Text(tr("Sound"))
+                .font(Ink.text(Ink.Size.body))
+                .foregroundStyle(Ink.paper)
+                .fixedSize()
+                .padding(.trailing, Grid.x1)
+            HStack(spacing: 0) {
+                ForEach(levels, id: \.id) { c in cell(c) }
+            }
+            if let mix {
+                Button(action: openMix) {
+                    HStack(spacing: Grid.x1) {
+                        IconView(icon: Icon.forControl(mix, hour: hour), color: hoveredCell == mix.id ? Ink.paper : Ink.graphite,
+                                 size: Popover.smallIconSize, lineWidth: 1)
+                        Text(ControlText.value(mix))
+                            .font(Ink.text(Ink.Size.caption))
+                            .foregroundStyle(hoveredCell == mix.id ? Ink.paper : Ink.graphite)
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, Grid.x1)
+                    .frame(height: Popover.headerHeight + Grid.x1)
+                    .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous)
+                        .fill(hoveredCell == mix.id ? Ink.raised : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .onHover { hoveredCell = $0 ? mix.id : (hoveredCell == mix.id ? nil : hoveredCell) }
+                .help(tr("%@: details", ControlText.lever(mix)))
+                .accessibilityLabel(tr("Mix: details"))
+                .accessibilityValue(ControlText.value(mix))
+            }
+            Rectangle().fill(Ink.hairline).frame(height: 1)
+                .frame(minWidth: Grid.x4)
+            Text(muted.isEmpty ? tr("levels") : tr("muted: %@", muted.count == 1 ? ControlText.group(muted[0]).lowercased() : String(muted.count)))
+                .font(Ink.text(Ink.Size.caption))
+                .foregroundStyle(hovering ? Ink.graphite : Ink.ash)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            IconView(icon: .chevron, color: hovering ? Ink.paper : Ink.graphite, size: 12, lineWidth: 1)
+                .rotationEffect(.degrees(90))
+        }
+        .frame(height: Popover.headerHeight + Grid.x1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if Motion.reduced { toggle() } else { withAnimation(.easeOut(duration: 0.16)) { toggle() } }
+        }
+        .onHover { hovering = $0 }
+        .help(tr("Unfold %@", tr("Sound")))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(tr("Sound"))
+        .accessibilityAction(named: tr("Unfold %@", tr("Sound"))) { toggle() }
+    }
+
+    private func cell(_ c: Control) -> some View {
+        let muted = c.isMuted
+        let audible = Track(group: c.group).map { meters.audible.contains($0) } ?? false
+        let lit = hoveredCell == c.id
+        let name = ControlText.group(c)
+        return Button { mute(c) } label: {
+            IconView(icon: Icon.forControl(c, hour: hour),
+                     color: muted ? Ink.ash : lit ? Ink.paper : audible ? Ink.paper.opacity(0.85) : Ink.graphite,
+                     size: Popover.smallIconSize, animating: lit && meters.live && !muted, struck: muted, lineWidth: 1)
+                .frame(width: Grid.x6, height: Popover.headerHeight + Grid.x1)
+                .background(RoundedRectangle(cornerRadius: Grid.innerRadius, style: .continuous).fill(lit ? Ink.raised : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { hoveredCell = $0 ? c.id : (hoveredCell == c.id ? nil : hoveredCell) }
+        .help((muted ? tr("unmute %@", name.lowercased()) : tr("mute %@", name.lowercased())) + "   " + ControlText.value(c))
+        .accessibilityLabel(muted ? tr("Unmute: %@", name) : tr("Mute: %@", name))
+        .accessibilityValue(ControlText.value(c))
+    }
+
+    private func mute(_ c: Control) {
+        if c.isMuted {
+            let back = unmuted[c.id] ?? 0
+            set(c.id, back > c.min + 0.01 ? back : 0)
+        } else {
+            unmuted[c.id] = c.value
+            set(c.id, c.min)
+        }
     }
 }
 

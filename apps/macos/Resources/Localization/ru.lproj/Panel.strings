@@ -67,10 +67,9 @@
 "Accent" = "Акцент";
 "Accent colour" = "Акцентный цвет";
 "Settings" = "Настройки";
-"close" = "закрыть";
 "language, accent, keys, microphone" = "язык, акцент, ключи, микрофон";
 "Close settings" = "Закрыть настройки";
-"Open settings" = "Открыть настройки";
+"Settings: language, accent, keys, microphone" = "Настройки: язык, акцент, ключи, микрофон";
 "violet" = "фиолетовый";
 "blue" = "синий";
 "teal" = "бирюзовый";

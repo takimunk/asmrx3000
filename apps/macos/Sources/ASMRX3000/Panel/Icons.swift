@@ -73,7 +73,7 @@ enum SVGPath {
 enum Icon: Hashable {
     case water, wind, birds, flight, volume
     case play, pause, recenter, headphones, head, quit
-    case power, chevron, back, more
+    case power, chevron, back, more, settings
     case tree, bird, river
     // Child parameters and the newer groups.
     case flow, depth, character, speed, gust, rain, dot
@@ -309,6 +309,13 @@ enum Icon: Hashable {
             return [Stroke(d: "M14.5 6 L8.5 12 L14.5 18")]
         case .more:
             return [Stroke(d: Icon.circle(6, 12, 0.9)), Stroke(d: Icon.circle(12, 12, 0.9)), Stroke(d: Icon.circle(18, 12, 0.9))]
+        case .settings:
+            // Three of the panel's own rails, each with its knob: the settings are more levers.
+            let drift = sin(t * 2.4) * 1.5
+            return [
+                Stroke(d: "M3.5 6.5 H20.5 M3.5 12 H20.5 M3.5 17.5 H20.5", opacity: 0.55),
+                Stroke(d: "M\(f(8 + drift)) 3.8 V9.2 M\(f(15.5 - drift)) 9.3 V14.7 M\(f(10.5 + drift * 0.6)) 14.8 V20.2"),
+            ]
         case .flow:
             return [Stroke(d: "M3 13 C6.5 10 9.5 16 13 13 C15 11.3 17 11.6 20 13 M17 10 L20.5 13 L17 16")]
         case .depth:
@@ -603,6 +610,7 @@ extension Icon {
         case .cricket: return 2 * .pi / 8
         case .bubbles: return 2 * .pi / 4
         case .tone: return 2 * .pi / 3
+        case .settings: return 2 * .pi / 2.4
         case .play, .pause, .headphones, .quit, .power, .chevron, .back, .more, .flow, .depth, .character, .speed, .gust, .dot,
              .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma,
              .ship, .station, .docking, .radio, .reef, .course,
