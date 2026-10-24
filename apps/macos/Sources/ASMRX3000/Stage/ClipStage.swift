@@ -231,6 +231,12 @@ struct ClipRule {
         ClipRule(group: "guide", .prop(.bead)),
         ClipRule(files: ["bowl_strike"], .prop(.singingBowl)),
         ClipRule(files: ["tingsha"], .prop(.tingsha)),
+        // Cave
+        ClipRule(files: ["cave_plink", "cave_deepdrip"], .prop(.pool)),
+        ClipRule(files: ["cave_slowdrip"], .prop(.stalactite)),
+        ClipRule(files: ["cave_rockdrip"], .prop(.stalagmite)),
+        ClipRule(files: ["cave_pebbles"], .prop(.pebbles)),
+        ClipRule(files: ["cave_stream", "cave_runnel"], .prop(.stream)),
         // Weather from the procedural models, anywhere.
         ClipRule(model: "wind", .prop(.wind)),
         ClipRule(model: "rain", .prop(.rain)),

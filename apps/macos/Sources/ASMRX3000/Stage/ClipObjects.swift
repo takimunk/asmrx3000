@@ -21,6 +21,8 @@ enum Prop: CaseIterable {
     case kettle, brazier, cloth, ladle, whisk, host, teaBowl, eaves, basin, shishi, chime, templeBell
     // Body scan
     case bead, singingBowl, tingsha
+    // Cave
+    case pool, stalactite, stalagmite, pebbles, stream
     /// A bed that is no object (a hum, a room tone): a small gimbal of two hoops.
     case marker
 }
@@ -106,6 +108,11 @@ enum PropMeshes {
         case .bead: return bead
         case .singingBowl: return singingBowl
         case .tingsha: return tingsha
+        case .pool: return pool
+        case .stalactite: return stalactite
+        case .stalagmite: return stalagmite
+        case .pebbles: return pebbles
+        case .stream: return stream
         case .marker: return marker
         }
     }
@@ -904,6 +911,58 @@ enum PropMeshes {
                    at: M4.move(v(0, 0.3 * s, 0)) * M4.rotX(-s * .pi / 2 * 0.85))
         }
         b.path([v(0, 0.4, 0), v(0, 0.35, 0.35), v(0, 0, 0.5), v(0, -0.35, 0.35), v(0, -0.4, 0)], 0.015, segs: 4, part: MID)
+    }
+
+    // MARK: Cave
+
+    /// A still pool: a disc of water in a ring of rim stones (its rings spread in `ClipPose`).
+    static let pool = make { b in
+        b.turn([v2(0.0, 0.0), v2(0.62, 0.0)], segs: 18, part: Part.water)
+        var rng = SeededGenerator(0x9001)
+        for k in 0..<9 {
+            let a = 2 * Float.pi * (Float(k) + 0.3 * rng.next()) / 9
+            let r = 0.66 + 0.08 * rng.next()
+            b.ball(v(r * cos(a), r * sin(a), 0.0), 0.08 + 0.05 * rng.next(), part: MID, squash: v(1.3, 1, 0.55))
+        }
+    }
+
+    /// The slow drip: a stalactite hanging over a little basin in the ledge (its drop falls in `ClipPose`).
+    static let stalactite = make { b in
+        b.turn([v2(0.0, 0.0), v2(0.42, 0.0)], segs: 14, part: Part.water)
+        b.hoop(0.45, 0.05, segs: 16, part: MID)
+        b.rod(v(0, 0, 3.1), v(0, 0, 1.9), 0.2, 0.0, segs: 6, part: LIGHT)
+        b.rod(v(0.08, 0.05, 3.1), v(0.1, 0.07, 2.5), 0.12, 0.0, segs: 5, part: LIGHT)
+        b.box(v(0, 0, 3.15), v(0.9, 0.7, 0.1), part: MID)
+    }
+
+    /// A drop striking rock: a flat shelf with a stub of stalagmite and a crown of spray.
+    static let stalagmite = make { b in
+        b.rock(seed: 17, bumps: 0.18, squash: v(0.75, 0.6, 0.18), part: MID)
+        b.rod(v(-0.25, 0.1, 0.1), v(-0.25, 0.1, 0.62), 0.14, 0.03, segs: 6, part: LIGHT)
+        for k in 0..<6 {
+            let a = 2 * Float.pi * Float(k) / 6
+            b.rod(v(0.15, 0, 0.18), v(0.15 + 0.22 * cos(a), 0.22 * sin(a), 0.38), 0.022, 0.006, segs: 3, part: LIGHT)
+        }
+    }
+
+    /// A handful of small stones tumbling together.
+    static let pebbles = make { b in
+        var rng = SeededGenerator(0x5701)
+        for k in 0..<6 {
+            let o = v(0.5 * (rng.next() - 0.5), 0.5 * (rng.next() - 0.5), 0.35 * (rng.next() - 0.5))
+            var r = MeshBuilder()
+            r.rock(seed: UInt64(20 + k), bumps: 0.25, squash: v(1, 0.85, 0.7) * (0.12 + 0.08 * rng.next()), part: LIGHT)
+            b.add(r, M4.move(o))
+        }
+    }
+
+    /// A reach of the stream along x: water between two low banks, a few streaks of current.
+    static let stream = make { b in
+        b.box(v(0, 0, -0.03), v(2.0, 0.7, 0.02), part: Part.water)
+        for s: Float in [1, -1] { b.rod(v(-1, 0.38 * s, 0), v(1, 0.38 * s, 0), 0.03, segs: 4, part: MID) }
+        for (x, y) in [(-0.6, 0.12), (0.1, -0.1), (0.6, 0.15), (-0.2, 0.0)] as [(Float, Float)] {
+            b.rod(v(x - 0.18, y, 0.0), v(x + 0.18, y, 0.0), 0.012, segs: 3, part: LIGHT)
+        }
     }
 
     /// Two hoops at right angles about a pip.

@@ -529,3 +529,27 @@ fn a_path_motion_passes_its_keyframes() {
     let p = pos(2);
     assert!(p.1.abs() < 0.15 && p.0 < -0.5, "{p:?}");
 }
+
+/// The cave (core/scenes/cave_drips.json): its levers fit its groups, and over a long session
+/// the direction visits every episode and moves every lever.
+#[test]
+fn the_cave_is_directed_through_all_its_spells() {
+    let desc = SceneDesc::from_json(include_str!("../../scenes/cave_drips.json")).unwrap();
+    crate::clips::validate_levers(&desc).unwrap();
+    let steer = Steer::from_desc(desc.direction.as_ref().unwrap());
+    let mut seen = std::collections::BTreeSet::new();
+    let (mut lo, mut hi) = ([f32::MAX; MAX_LEVERS], [f32::MIN; MAX_LEVERS]);
+    let d = run(&desc, steer, 24.0, |_, d, out| {
+        seen.insert(d.info(&steer).episode);
+        for i in 0..desc.levers.len() {
+            if out.lever_write >> i & 1 != 0 {
+                lo[i] = lo[i].min(out.levers[i]);
+                hi[i] = hi[i].max(out.levers[i]);
+            }
+        }
+    });
+    assert_eq!(seen.len(), d.episodes().len(), "episodes seen: {seen:?}");
+    for (i, l) in desc.levers.iter().enumerate() {
+        assert!(hi[i] - lo[i] > 0.2, "lever {} stays within {}..{}", l.key, lo[i], hi[i]);
+    }
+}

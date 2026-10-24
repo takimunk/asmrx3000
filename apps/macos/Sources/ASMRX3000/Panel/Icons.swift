@@ -85,6 +85,8 @@ enum Icon: Hashable {
     case course
     // The newer scenes: lighthouse, night train, singing ice, tea house.
     case light, lamp, tower, bell, fog, horn, rumble, rail, train, bridge, tunnel, cup, tea, ice, crack, owl, distance
+    // The cave.
+    case drip, ripple, cave, pebbles
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -194,6 +196,10 @@ enum Icon: Hashable {
         case "reef": return .reef
         case "rain": return .rain
         case "depth": return .depth
+        case "drip": return .drip
+        case "ripple": return .ripple
+        case "cave": return .cave
+        case "pebbles": return .pebbles
         default: return nil
         }
     }
@@ -574,6 +580,33 @@ enum Icon: Hashable {
                 Stroke(d: "M9.5 8.6 C8.3 8.6 7.7 9.5 7.7 10.4 C7.7 11.5 8.5 12.2 9.5 12.2 C10.6 12.2 11.3 11.4 11.3 10.4 C11.3 9.5 10.6 8.6 9.5 8.6 Z M14.5 8.6 C13.4 8.6 12.7 9.5 12.7 10.4 C12.7 11.4 13.4 12.2 14.5 12.2 C15.5 12.2 16.3 11.5 16.3 10.4 C16.3 9.5 15.7 8.6 14.5 8.6 Z"),
                 Stroke(d: "M11.3 13 L12 14.4 L12.7 13", opacity: 0.8),
             ]
+        case .drip:
+            return [
+                Stroke(d: "M8 2.5 H16 L12.6 8 H11.4 Z", opacity: 0.8),
+                Stroke(d: "M12 10.2 C12 10.2 10.4 12.4 10.4 13.5 C10.4 14.4 11.1 15.1 12 15.1 C12.9 15.1 13.6 14.4 13.6 13.5 C13.6 12.4 12 10.2 12 10.2 Z"),
+                Stroke(d: "M5.5 19.5 C5.5 18.1 18.5 18.1 18.5 19.5 C18.5 20.9 5.5 20.9 5.5 19.5 Z", opacity: 0.6),
+            ]
+        case .ripple:
+            return [
+                Stroke(d: "M12 3.5 C12 3.5 10.9 5 10.9 5.8 C10.9 6.4 11.4 6.9 12 6.9 C12.6 6.9 13.1 6.4 13.1 5.8 C13.1 5 12 3.5 12 3.5 Z", opacity: 0.8),
+                Stroke(d: "M10.4 15 C10.4 14.4 13.6 14.4 13.6 15 C13.6 15.6 10.4 15.6 10.4 15 Z"),
+                Stroke(d: "M6.5 15 C6.5 13.3 17.5 13.3 17.5 15 C17.5 16.7 6.5 16.7 6.5 15 Z", opacity: 0.75),
+                Stroke(d: "M2.5 15 C2.5 12 21.5 12 21.5 15 C21.5 18 2.5 18 2.5 15 Z", opacity: 0.45),
+            ]
+        case .cave:
+            return [
+                Stroke(d: "M3 20 C3.4 15 2.8 11 5 8 C7.5 4.6 16.5 4.6 19 8 C21.2 11 20.6 15 21 20"),
+                Stroke(d: "M8 6.4 L9 10.2 L10.2 5.6 M14 5.6 L15 9.2 L16.2 6.4", opacity: 0.7),
+                Stroke(d: "M2 20 H22", opacity: 0.7),
+                Stroke(d: "M9.5 20 C9.5 18.8 14.5 18.8 14.5 20", opacity: 0.5),
+            ]
+        case .pebbles:
+            return [
+                Stroke(d: "M3.5 19.6 C3.5 17.7 6 16.7 7.7 17.3 C9.3 17.9 9.7 19.6 8.3 20.3 C6.8 21 3.5 20.9 3.5 19.6 Z"),
+                Stroke(d: "M11 19.9 C11 18.3 13 17.5 14.4 18 C15.8 18.5 16 19.9 14.9 20.5 C13.6 21.1 11 21.1 11 19.9 Z"),
+                Stroke(d: "M15.6 12.4 C15.6 11.3 17 10.8 17.9 11.2 C18.8 11.6 18.9 12.6 18.1 13 C17.3 13.4 15.6 13.4 15.6 12.4 Z", opacity: 0.85),
+                Stroke(d: "M12.6 8.6 C12.6 8.1 13.4 8 13.4 8.6 C13.4 9.1 12.6 9.2 12.6 8.6 Z M10.6 4.6 C10.6 4.1 11.4 4 11.4 4.6 C11.4 5.1 10.6 5.2 10.6 4.6 Z", opacity: 0.7),
+            ]
         case .distance:
             return [
                 Stroke(d: "M2 11 H22", opacity: 0.6),
@@ -615,7 +648,7 @@ extension Icon {
              .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma,
              .ship, .station, .docking, .radio, .reef, .course,
              .light, .lamp, .tower, .bell, .fog, .horn, .rumble, .rail, .train, .bridge, .tunnel, .cup, .tea, .ice, .crack, .owl,
-             .distance: return nil
+             .distance, .drip, .ripple, .cave, .pebbles: return nil
         }
     }
 }

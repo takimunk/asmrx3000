@@ -36,6 +36,7 @@ struct SceneEntry: Identifiable, Equatable {
         SceneEntry(id: "singing_ice", key: N_("Singing ice"), file: "singing_ice.json"),
         SceneEntry(id: "tea_house", key: N_("Tea house"), file: "tea_house.json"),
         SceneEntry(id: "body_scan", key: N_("Body scan"), file: "body_scan.json"),
+        SceneEntry(id: "cave_drips", key: N_("Cave"), file: "cave_drips.json"),
     ]
 
     static let forest = all[0]
@@ -240,6 +241,10 @@ enum Scenes {
             // The singing ice, last: "bowl_strike" and "bowl_slide" hold "owl_".
             ("ice_sing", N_("singing ice")), ("ice_crack", N_("crack")), ("ice_run", N_("running crack")),
             ("ice_boom", N_("ice boom")), ("owl_", N_("owl")), ("skater", N_("skater")),
+            // The cave.
+            ("cave_plink", N_("drip into a pool")), ("cave_slowdrip", N_("slow drip")), ("cave_deepdrip", N_("far drip")),
+            ("cave_rockdrip", N_("drip on rock")), ("cave_pebbles", N_("pebbles")), ("cave_stream", N_("underground stream")),
+            ("cave_runnel", N_("runnel")),
         ]
         if let hit = words.first(where: { text.contains($0.0) }) { return hit.1 }
         switch cls {

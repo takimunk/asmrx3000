@@ -13,7 +13,7 @@ import simd
 /// and far. The wall nearest the camera is left out (a cutaway), so the room never hides the
 /// listener.
 enum ClipSet: Equatable {
-    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan
+    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan, cave
 
     static func of(_ scene: SceneInfo) -> ClipSet {
         let id = scene.entry.id
@@ -26,6 +26,7 @@ enum ClipSet: Equatable {
         if has("singing_ice") { return .ice }
         if has("tea_house") { return .teaHouse }
         if has("body_scan") { return .bodyScan }
+        if has("cave_drips") { return .cave }
         switch scene.look {
         case .space: return .space
         case .underwater: return .underwater
@@ -54,6 +55,9 @@ enum ClipSet: Equatable {
             c.target = SIMD3(1.0, -0.9, -1.0); c.azimuth = .pi - 0.38; c.elevation = 0.46; c.distance = 13
         case .bodyScan:
             c.target = SIMD3(0.4, 0, -0.6); c.elevation = 0.5; c.distance = 7
+        case .cave:
+            // From behind, a little above the ledge: the floor and its pools below, the vault over all.
+            c.target = SIMD3(1.6, 0, -1.3); c.elevation = 0.4; c.distance = 15
         case .underwater:
             // Under the surface: the eye stays below it.
             c.target = SIMD3(1.2, 0, -0.6); c.elevation = 0.22; c.distance = 17
@@ -120,6 +124,7 @@ enum ClipSet: Equatable {
         case .teaHouse: Self.teaHouse(&k, &ground)
         case .space: Self.space(&k)
         case .bodyScan: Self.bodyScan(&k, &ground, z: groundZ)
+        case .cave: Self.cave(&k, &ground, &water, z: groundZ)
         case .underwater, .none: break
         }
         var out: [ClipPiece] = []
@@ -347,6 +352,118 @@ enum ClipSet: Equatable {
                 }
             }
         }
+    }
+
+    /// The cave's pools (x, y, radius): where the plinks fall (cave_drips.json, groups pools and deep).
+    static let cavePools: [(Float, Float, Float)] = {
+        let ring: [(Float, Float, Float)] = [(35, 5.2, 1.1), (-40, 8.5, 1.5), (120, 6.5, 1.3), (-70, 4.0, 0.9), (10, 13.0, 2.0), (-145, 7.5, 1.4)]
+        return ring.map { (az, r, size) in (r * cos(az * .pi / 180), r * sin(az * .pi / 180), size) } + [(16, -7, 2.4), (11, 12, 2.2)]
+    }()
+    /// Where drops land on rock (the rock group's places), for the stalactites above them.
+    static let caveRockDrips: [SIMD3<Float>] = [SIMD3(1.0, 1.1, -0.9), SIMD3(-1.5, 2.6, 2.8), SIMD3(2.6, -1.8, 4.6),
+                                               SIMD3(-4.0, -3.0, 1.0), SIMD3(5.5, 5.5, 1.6), SIMD3(-2.2, 0.4, 5.8)]
+    /// The ledge you sit on (its top, and its x/y extent).
+    static let caveLedge = (z: Float(-0.9), x: (Float(-1.3), Float(1.25)), y: (Float(-1.3), Float(1.4)))
+
+    /// The vault over the cave about (2, 0): its wall radius at each height, floor to crown.
+    private static let vault: [(r: Float, z: Float)] = [(16, -3.6), (15.4, 0), (13.5, 3), (10.5, 5.5), (7, 7.5), (3.2, 8.8), (0, 9.2)]
+
+    /// Height of the vault's underside above the point (x, y).
+    static func caveCeiling(_ x: Float, _ y: Float) -> Float {
+        let r = ((x - 2) * (x - 2) + y * y).squareRoot()
+        for i in 0..<(vault.count - 1) where r <= vault[i].r && r >= vault[i + 1].r {
+            let u = (vault[i].r - r) / max(vault[i].r - vault[i + 1].r, 1e-3)
+            return vault[i].z + (vault[i + 1].z - vault[i].z) * u
+        }
+        return vault[0].z
+    }
+
+    /// A limestone hall: the ledge you sit on with its edge falling to the floor, the floor and
+    /// its still pools, the stream along the right, the vault drawn in contours and ribs (open
+    /// behind, where the passage runs back to the entrance), stalactites over the drips.
+    private static func cave(_ k: inout SetKit, _ ground: inout SetKit, _ water: inout SetKit, z floor: Float) {
+        let c = SIMD2<Float>(2, 0)
+        let L = caveLedge
+        ground.surface(centre: c, z: floor, from: 0, to: 16, rings: 12, part: Part.ground)
+        // The ledge: its top, the rim, and the rock face down to the floor in a few strokes.
+        ground.plane(x: L.x, y: L.y, z: L.z, part: Part.ground)
+        k.line([SIMD3(L.x.0, L.y.0, L.z), SIMD3(L.x.1, L.y.0, L.z), SIMD3(L.x.1, L.y.1, L.z), SIMD3(L.x.0, L.y.1, L.z)], 0.02)
+        var rng = SeededGenerator(0xCA7E)
+        for i in 0...6 {
+            let y = L.y.0 + (L.y.1 - L.y.0) * Float(i) / 6
+            let lean = 0.5 + 0.5 * rng.next()
+            k.line([SIMD3(L.x.1, y, L.z), SIMD3(L.x.1 + 0.3 * lean, y + 0.1, (L.z + floor) / 2), SIMD3(L.x.1 + 0.6 * lean, y, floor)], 0.011)
+        }
+        for x in [L.x.0, Float(0), L.x.1 - 0.3] {
+            for y in [L.y.0, L.y.1] {
+                let out: Float = y > 0 ? 0.5 : -0.5
+                k.line([SIMD3(x, y, L.z), SIMD3(x, y + out, floor)], 0.01)
+            }
+        }
+        // The small basin by the right knee that the slow drip falls into.
+        water.surface(centre: SIMD2(0.75, -0.85), z: L.z + 0.01, from: 0, to: 0.22, rings: 2, part: Part.water)
+        // The pools on the floor, each with its rim.
+        for (x, y, r) in cavePools {
+            water.surface(centre: SIMD2(x, y), z: floor + 0.03, from: 0, to: r, rings: 3, part: Part.water)
+            k.ring(centre: SIMD2(x, y), radius: r, z: floor + 0.04, w: 0.012)
+        }
+        // The stream along the floor on the right, from behind to far ahead, between its banks.
+        let course: [SIMD2<Float>] = [SIMD2(-10, -4.4), SIMD2(-4, -5.4), SIMD2(1, -6), SIMD2(5, -7.4), SIMD2(9, -10), SIMD2(14, -12), SIMD2(22, -13.5)]
+        var pos: [SIMD3<Float>] = []
+        var tri: [UInt32] = []
+        var banks: [[SIMD3<Float>]] = [[], []]
+        for (i, q) in course.enumerated() {
+            let a = course[max(i - 1, 0)], b = course[min(i + 1, course.count - 1)]
+            let d = simd_normalize(b - a)
+            let n = SIMD2(-d.y, d.x) * (0.55 + 0.04 * Float(i))
+            for (j, s) in [Float(1), -1].enumerated() {
+                let p = SIMD3(q.x + n.x * s, q.y + n.y * s, floor + 0.04)
+                pos.append(p)
+                banks[j].append(p + SIMD3(0, 0, 0.02))
+            }
+            if i > 0 {
+                let o = UInt32(2 * (i - 1))
+                tri += [o, o + 2, o + 1, o + 1, o + 2, o + 3]
+            }
+        }
+        var ribbon = MeshBuilder()
+        ribbon.smooth(pos, tri, part: Part.water)
+        water.b.add(ribbon.warped(ClipSpace.map), matrix_identity_float4x4)
+        for bank in banks { k.line(bank, 0.012) }
+        // The vault: contours at a few heights and ribs from the floor to the crown, left open
+        // behind the listener (the camera's side and the passage to the entrance).
+        let open: (Float, Float) = (.pi, 0.75)
+        for v in vault.dropFirst().dropLast() { k.ring(centre: c, radius: v.r, z: v.z, w: v.z > 6 ? 0.012 : 0.016, open: open) }
+        for i in 0..<14 {
+            let a = 2 * Float.pi * (Float(i) + 0.5) / 14
+            if SetKit.inside(a, open) { continue }
+            let wob = 0.6 * sin(Float(i) * 2.3)
+            k.line(vault.map { v in SIMD3(c.x + (v.r + (v.r > 1 ? wob : 0)) * cos(a), c.y + (v.r + (v.r > 1 ? wob : 0)) * sin(a), v.z) }, 0.01)
+        }
+        // Stalactites over the pools and the drops on rock, and a scatter of smaller ones.
+        var drops: [SIMD3<Float>] = cavePools.map { SIMD3($0.0, $0.1, 0) } + caveRockDrips
+        for _ in 0..<10 {
+            let a = 2 * Float.pi * rng.next(), r = 2 + 11 * rng.next()
+            let p = SIMD3(c.x + r * cos(a), c.y + r * sin(a), 0)
+            if !SetKit.inside(atan2(p.y, p.x), open) { drops.append(p) }
+        }
+        var tips = MeshBuilder()
+        for (i, d) in drops.enumerated() {
+            let top = caveCeiling(d.x, d.y)
+            let len: Float = i < cavePools.count ? 1.6 : 0.6 + 1.0 * rng.next()
+            tips.rod(SIMD3(d.x, d.y, top + 0.3), SIMD3(d.x, d.y, top - len), 0.16 + 0.06 * len, 0.0, segs: 5, part: Part.set)
+        }
+        k.b.add(tips.warped(ClipSpace.map), matrix_identity_float4x4)
+        // Boulders on the floor.
+        for _ in 0..<9 {
+            let a = 2 * Float.pi * rng.next(), r = 3 + 10 * rng.next()
+            let at = SIMD3(c.x + r * cos(a), c.y + r * sin(a), floor)
+            var s = MeshBuilder()
+            s.rock(seed: UInt64(1 + rng.next() * 90), bumps: 0.2, squash: SIMD3(0.5, 0.45, 0.3) * (0.6 + rng.next()), part: Part.set)
+            k.b.add(s.warped { ClipSpace.map($0 + at) }, matrix_identity_float4x4)
+        }
+        // The passage behind: its floor running back towards the entrance.
+        for y: Float in [-2.4, 2.4] { k.line([SIMD3(-11, y * 1.2, floor), SIMD3(-22, y, floor + 0.6), SIMD3(-40, y * 0.8, floor + 1.4)], 0.014) }
     }
 
     /// A round mat under the listener on a dark floor, one quiet ring about them.

@@ -602,6 +602,14 @@ enum ControlText {
         "cue.station": N_("a stop"),
         "cue.still_night": N_("still night"),
         "cue.whisking": N_("whisking"),
+        // The cave's episodes.
+        "cue.settling_in": N_("settling in"),
+        "cue.drip_by_drip": N_("drip by drip"),
+        "cue.dry_spell": N_("dry spell"),
+        "cue.rain_above": N_("rain above"),
+        "cue.deep_silence": N_("deep silence"),
+        "cue.air_from_outside": N_("air from outside"),
+        "cue.stones_settle": N_("stones settle"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -694,6 +702,16 @@ enum ControlText {
         "tunnels and bridges": N_("tunnels and bridges"),
         "whales close": N_("whales close"),
         "whisking the tea": N_("whisking the tea"),
+        // The cave's stretches ("drip by drip", "dry spell", "deep silence", "stones settle" are its spells' names).
+        "the cave settles around you": N_("the cave settles around you"),
+        "the drips thin out": N_("the drips thin out"),
+        "the first drips return": N_("the first drips return"),
+        "rain soaks in above": N_("rain soaks in above"),
+        "the cave is raining": N_("the cave is raining"),
+        "the water drains away": N_("the water drains away"),
+        "air from the entrance": N_("air from the entrance"),
+        "the air stills": N_("the air stills"),
+        "still again": N_("still again"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -758,6 +776,15 @@ enum ControlText {
         "Tower": N_("Tower"),
         "Tunnels": N_("Tunnels"),
         "Vastness": N_("Vastness"),
+        // The cave.
+        "Drips": N_("Drips"),
+        "Pools": N_("Pools"),
+        "Stream": N_("Stream"),
+        "Pebbles": N_("Pebbles"),
+        "Slow drip": N_("Slow drip"),
+        "Drips on rock": N_("Drips on rock"),
+        "Far drips": N_("Far drips"),
+        "Draught": N_("Draught"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {

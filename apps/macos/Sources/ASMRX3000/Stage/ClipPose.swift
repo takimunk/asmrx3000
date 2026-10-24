@@ -22,7 +22,8 @@ struct PropLook {
     /// Effects and phenomena (wind, rain, cracks, a far flash) are see-through; things are solid.
     static func ghost(_ p: Prop) -> Float {
         switch p {
-        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches:
+        case .wind, .rain, .rainGlass, .rainSurface, .plasma, .sea, .surf, .bolt, .iceStar, .zigzag, .boom, .marker, .bridge, .arches,
+             .stream:
             return ClipPiece.faint
         default:
             return 0
@@ -92,6 +93,11 @@ struct PropLook {
         case .singingBowl: return PropLook(size: 0.4, face: .still)
         case .tingsha: return PropLook(size: 0.22, face: .listener)
         case .marker: return PropLook(size: 0.13, face: .still)
+        case .pool: return PropLook(size: 0.42, face: .still)
+        case .stalactite: return PropLook(size: 0.28, face: .still)
+        case .stalagmite: return PropLook(size: 0.32, face: .still)
+        case .pebbles: return PropLook(size: 0.3, face: .motion)
+        case .stream: return PropLook(size: 0.8, face: .across)
         }
     }
 }
@@ -250,6 +256,34 @@ extension ClipActors {
 
         case .fish:
             put(PropMeshes.fish, root * M4.rotZ(0.12 * sin(t * 2.6 + ph)))
+
+        case .pool:
+            // The pool, and rings spreading on it while a drop sounds.
+            put(PropMeshes.pool, root)
+            if level > 0.02 {
+                for k in 0..<2 {
+                    let age = (t * 0.7 + Float(k) * 0.5 + ph).truncatingRemainder(dividingBy: 1)
+                    put(PropMeshes.hoop, M4.move(p + SIMD3(0, 0, 0.01)) * M4.scale(SIMD3(repeating: s * (0.12 + 0.55 * age))),
+                        ghost: ClipPiece.faint)
+                }
+            }
+
+        case .stalactite:
+            // A drop forms at the tip and falls into the basin, every ~6.5 s.
+            put(PropMeshes.stalactite, root)
+            let u = (t / 6.5 + ph).truncatingRemainder(dividingBy: 1)
+            let z: Float = u < 0.8 ? 1.85 : 1.85 * (1 - (u - 0.8) / 0.2) * (1 - (u - 0.8) / 0.2)
+            put(ClipProps.sphere, root * M4.move(SIMD3(0, 0, max(z, 0.05))) * M4.scale(SIMD3(0.07, 0.07, 0.1)))
+
+        case .pebbles:
+            put(PropMeshes.pebbles, root * M4.rotY(t * 2.2 + ph))
+
+        case .stream:
+            for (k, e) in emitters().enumerated() {
+                let q = ClipSpace.map(e)
+                let drift = (t * 0.25 + Float(k) * 0.3).truncatingRemainder(dividingBy: 1) * 0.4 - 0.2
+                put(PropMeshes.stream, M4.move(q) * facing(q) * M4.scale(s) * M4.move(SIMD3(drift, 0, 0)))
+            }
 
         case .bead:
             // A solid bead in a faint hoop of glow.
