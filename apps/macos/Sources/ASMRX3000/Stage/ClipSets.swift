@@ -3,7 +3,8 @@ import simd
 
 /// The place a clip scene happens in, drawn around the listener so they feel placed: the
 /// lantern room of a lighthouse over the sea, a sleeper compartment, a frozen lake under the
-/// stars, a station module in orbit, a tea room open to a rain garden. The place is the
+/// stars, a station module in orbit, a tea room open to a rain garden, a yacht's cabin at anchor
+/// in a bay. The place is the
 /// "set": quiet linework and surfaces in their own material (`Part.set`, a pale pencil grey
 /// that never takes a contour or the selection), always there, behind the sounds. The sounds'
 /// models stay brighter stone and come and go as they sound.
@@ -13,7 +14,7 @@ import simd
 /// and far. The wall nearest the camera is left out (a cutaway), so the room never hides the
 /// listener.
 enum ClipSet: Equatable {
-    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan, cave
+    case none, space, underwater, lighthouse, train, ice, teaHouse, bodyScan, cave, yacht
 
     static func of(_ scene: SceneInfo) -> ClipSet {
         let id = scene.entry.id
@@ -27,6 +28,7 @@ enum ClipSet: Equatable {
         if has("tea_house") { return .teaHouse }
         if has("body_scan") { return .bodyScan }
         if has("cave_drips") { return .cave }
+        if has("sailboat") { return .yacht }
         switch scene.look {
         case .space: return .space
         case .underwater: return .underwater
@@ -58,6 +60,10 @@ enum ClipSet: Equatable {
         case .cave:
             // From behind, a little above the ledge: the floor and its pools below, the vault over all.
             c.target = SIMD3(1.6, 0, -1.3); c.elevation = 0.4; c.distance = 15
+        case .yacht:
+            // From over the stern: the cabin under the deck, the mast going up through it, the
+            // bow and its chain ahead, the bay around.
+            c.target = SIMD3(0.6, -0.9, 1.2); c.azimuth = .pi + 0.35; c.elevation = 0.34; c.distance = 22
         case .underwater:
             // Under the surface: the eye stays below it.
             c.target = SIMD3(1.2, 0, -0.6); c.elevation = 0.22; c.distance = 17
@@ -75,6 +81,7 @@ enum ClipSet: Equatable {
         case .space: return 1
         case .ice: return 0.8
         case .train: return 0.45
+        case .yacht: return 0.6
         case .bodyScan: return 0.0
         default: return 0
         }
@@ -87,6 +94,10 @@ enum ClipSet: Equatable {
     static let module = (radius: Float(3.3), from: Float(-5), to: Float(4.6))
     /// The compartment's partition (y) and ceiling (z), metres.
     static let partition: Float = -1.0, ceiling: Float = 1.0
+    /// The yacht about the listener in its port berth (core/scenes/sailboat_anchor.json):
+    /// centreline (y), waterline, deck and keel (z), bow and transom (x), the mast's foot.
+    static let boat = (centre: Float(-0.9), halfBeam: Float(1.55), waterline: Float(-0.35), deck: Float(0.55),
+                        keel: Float(-1.3), bow: Float(5.0), stern: Float(-4.6), mast: SIMD2<Float>(1.2, -0.9))
 
     /// Where a sound is drawn: where it sounds, except the station's own creaks and ticks, put
     /// on the module's hull in their direction (the open top arc avoided), so they read as the
@@ -125,6 +136,7 @@ enum ClipSet: Equatable {
         case .space: Self.space(&k)
         case .bodyScan: Self.bodyScan(&k, &ground, z: groundZ)
         case .cave: Self.cave(&k, &ground, &water, z: groundZ)
+        case .yacht: Self.yacht(&k, &ground, &water)
         case .underwater, .none: break
         }
         var out: [ClipPiece] = []
@@ -464,6 +476,86 @@ enum ClipSet: Equatable {
         }
         // The passage behind: its floor running back towards the entrance.
         for y: Float in [-2.4, 2.4] { k.line([SIMD3(-11, y * 1.2, floor), SIMD3(-22, y, floor + 0.6), SIMD3(-40, y * 0.8, floor + 1.4)], 0.014) }
+    }
+
+    /// The yacht at anchor: its hull in outline (sheer, waterline, keel, transom), the cabin sole
+    /// and the berth the listener lies in, the coachroof, the mast through the cabin with its
+    /// spreaders, shrouds and stays, the boom; the chain from the bow down to the anchor on the
+    /// sand; the bay's water out to the horizon and its low shore on three sides.
+    private static func yacht(_ k: inout SetKit, _ ground: inout SetKit, _ water: inout SetKit) {
+        let y = Self.boat
+        let c = y.centre, wl = y.waterline
+        // Half beam along the boat: full aft of amidships, a fine bow.
+        func half(_ x: Float) -> Float {
+            let u = (x - y.stern) / (y.bow - y.stern)
+            return y.halfBeam * (u < 0.55 ? 0.82 + 0.18 * sin(Float.pi / 2 * u / 0.55) : max(cos(Float.pi / 2 * (u - 0.55) / 0.45), 0))
+        }
+        func outline(_ z: Float, _ scale: Float, _ w: Float, from x0: Float? = nil) {
+            let xs = stride(from: x0 ?? y.stern, through: y.bow, by: 0.35).map { $0 } + [y.bow]
+            for s: Float in [1, -1] { k.line(xs.map { SIMD3($0, c + s * scale * half($0), z) }, w) }
+        }
+        // The sheer (deck edge), the waterline, the bilge between, and the transom.
+        outline(y.deck, 1, 0.02)
+        outline(wl, 0.94, 0.012)
+        outline((wl + y.keel) / 2, 0.7, 0.008)
+        k.line([SIMD3(y.stern, c + half(y.stern), y.deck), SIMD3(y.stern, c + 0.94 * half(y.stern), wl),
+                SIMD3(y.stern + 0.4, c, y.keel + 0.25), SIMD3(y.stern, c - 0.94 * half(y.stern), wl),
+                SIMD3(y.stern, c - half(y.stern), y.deck)], 0.016)
+        // The keel line and the fin keel under it.
+        k.line([SIMD3(y.stern + 0.4, c, y.keel + 0.25), SIMD3(-1.0, c, y.keel), SIMD3(3.2, c, y.keel + 0.1),
+                SIMD3(y.bow, c, y.deck)], 0.014)
+        k.line([SIMD3(-0.4, c, y.keel), SIMD3(-0.7, c, y.keel - 1.1), SIMD3(0.5, c, y.keel - 1.1), SIMD3(1.0, c, y.keel)], 0.014)
+        // Inside: the cabin sole, the berth under the listener, the bulkhead ahead.
+        ground.plane(x: (-2.2, 2.4), y: (c - 0.45, c + 0.45), z: -0.95, part: Part.section)
+        k.plane(x: (-1.4, 0.75), y: (0.0, 0.6), z: -0.22, part: Part.section)
+        k.line([SIMD3(2.4, c - 1.2, -0.95), SIMD3(2.4, c - 1.2, y.deck), SIMD3(2.4, c + 1.3, y.deck), SIMD3(2.4, c + 1.3, -0.95)], 0.012)
+        // The coachroof over the cabin and its portlights.
+        let roof: Float = 0.95, rx0: Float = -1.9, rx1: Float = 2.7, rw: Float = 0.95
+        k.line([SIMD3(rx0, c + rw, roof), SIMD3(rx1, c + rw * 0.7, roof), SIMD3(rx1, c - rw * 0.7, roof),
+                SIMD3(rx0, c - rw, roof), SIMD3(rx0, c + rw, roof)], 0.016)
+        for s: Float in [1, -1] {
+            k.line([SIMD3(rx0, c + s * rw, roof), SIMD3(rx0, c + s * rw * 1.1, y.deck)], 0.01)
+            k.line([SIMD3(rx1, c + s * rw * 0.7, roof), SIMD3(rx1 + 0.3, c + s * rw * 0.8, y.deck)], 0.01)
+            for x: Float in [-1.1, 0.0, 1.1] {
+                k.line([SIMD3(x - 0.3, c + s * rw * 1.04, 0.72), SIMD3(x + 0.3, c + s * rw * 1.0, 0.72)], 0.024)
+            }
+        }
+        // The mast from its step on the keel through the cabin, spreaders, shrouds, stays, boom.
+        let m = y.mast, top: Float = 11.5, spr: Float = 6.2
+        k.line([SIMD3(m.x, m.y, y.keel + 0.1), SIMD3(m.x, m.y, top)], 0.03)
+        k.line([SIMD3(m.x, m.y - 1.0, spr), SIMD3(m.x, m.y + 1.0, spr)], 0.016)
+        for s: Float in [1, -1] {
+            k.line([SIMD3(m.x, m.y, top), SIMD3(m.x, m.y + s * 1.0, spr), SIMD3(m.x - 0.2, c + s * half(m.x - 0.2), y.deck)], 0.008)
+        }
+        k.line([SIMD3(m.x, m.y, top - 0.2), SIMD3(y.bow, c, y.deck + 0.1)], 0.008)
+        k.line([SIMD3(m.x, m.y, top), SIMD3(y.stern + 0.1, c, y.deck + 0.1)], 0.008)
+        k.line([SIMD3(m.x, m.y, 1.6), SIMD3(-2.9, c, 1.7)], 0.026)
+        // The chain from the bow roller down to the anchor on the sand, and the anchor.
+        var chain: [SIMD3<Float>] = []
+        let a0 = SIMD3<Float>(y.bow + 0.1, c, 0.3), a1 = SIMD3<Float>(y.bow + 16, c, -6.0)
+        for i in 0...12 {
+            let u = Float(i) / 12
+            let p = a0 + (a1 - a0) * u
+            chain.append(SIMD3(p.x, p.y, min(p.z, a0.z + (a1.z - a0.z) * (1 - (1 - u) * (1 - u)) - 0.4 * sin(Float.pi * u))))
+        }
+        k.line(chain, 0.012)
+        k.line([a1 + SIMD3(0, -0.6, 0), a1 + SIMD3(0.3, 0, 0), a1 + SIMD3(0, 0.6, 0)], 0.02)
+        // The bay: the water from beside the hull to the horizon, low swells, the shore round.
+        water.surface(centre: SIMD2(0.2, c), z: wl, from: 0, to: 1500, rings: 30, part: Part.water)
+        for sc: Float in [1.25, 1.6] { outline(wl, sc, 0.006, from: y.stern - 0.6) }
+        k.ring(centre: .zero, radius: 1400, z: wl, w: 0.03)
+        for r: Float in [40, 120, 320] { k.ring(centre: SIMD2(0.2, c), radius: r, z: wl, w: 0.007) }
+        var rng = SeededGenerator(0xBA7)
+        var shore: [SIMD3<Float>] = []
+        var a: Float = 0.25
+        while a < 4.6 {
+            let d = 520 + 140 * sin(1.7 * a + 0.4) + 50 * rng.next()
+            let h = 14 + 22 * max(sin(2.3 * a + 0.8), 0) + 6 * rng.next()
+            shore.append(SIMD3(d * cos(a), d * sin(a), wl + h))
+            a += 0.05
+        }
+        k.line(shore, 0.02)
+        k.line(shore.map { SIMD3($0.x, $0.y, wl + 0.5) }, 0.012)
     }
 
     /// A round mat under the listener on a dark floor, one quiet ring about them.
