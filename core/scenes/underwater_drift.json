@@ -69,8 +69,8 @@
       "first": 8,
       "interval": [40, 120],
       "fade": 25,
-      "sound": { "model": "whale", "preset": "humpback", "params": { "gain": 14.0 } },
-      "motion": { "type": "drift", "speed": 0.25, "ahead": 60, "behind": 60, "lateral": [70, 110], "height": [-20, -5] }
+      "sound": { "model": "whale", "preset": "humpback", "params": { "gain": 11.0 } },
+      "motion": { "type": "drift", "speed": 0.25, "ahead": 60, "behind": 60, "lateral": [85, 120], "height": [-20, -5] }
     },
     {
       "kind": "clip",

@@ -151,6 +151,9 @@ pub enum Ease {
     In,
     /// 1 − (1 − u)²: starts moving, ends level.
     Out,
+    /// u: a constant glide in cents per second. Held tones use it: after any straight-line
+    /// detrend nothing is left that could read as a waver.
+    Linear,
 }
 
 impl Ease {
@@ -161,6 +164,7 @@ impl Ease {
             Ease::Smooth => u * u * u * (u * (u * 6.0 - 15.0) + 10.0),
             Ease::In => u * u,
             Ease::Out => 1.0 - (1.0 - u) * (1.0 - u),
+            Ease::Linear => u,
         }
     }
 }
@@ -199,8 +203,36 @@ impl Contour {
             i += 1;
         }
         let span = (self.t[i + 1] - self.t[i]).max(1e-6);
-        let e = self.ease.at((u - self.t[i]) / span);
-        (self.log2f[i] + (self.log2f[i + 1] - self.log2f[i]) * e).exp2()
+        let x = (u - self.t[i]) / span;
+        if self.n == 2 {
+            let e = self.ease.at(x);
+            return (self.log2f[0] + (self.log2f[1] - self.log2f[0]) * e).exp2();
+        }
+        // Three or more knots: monotone cubic Hermite (Fritsch–Carlson). The pitch never
+        // stalls at an inner knot on its way up or down (a per-segment ease would stop it
+        // there, a staircase heard as a waver) and never overshoots a knot.
+        let (y0, y1) = (self.log2f[i], self.log2f[i + 1]);
+        let m0 = self.slope(i) * span;
+        let m1 = self.slope(i + 1) * span;
+        let (x2, x3) = (x * x, x * x * x);
+        let y = (2.0 * x3 - 3.0 * x2 + 1.0) * y0 + (x3 - 2.0 * x2 + x) * m0 + (-2.0 * x3 + 3.0 * x2) * y1 + (x3 - x2) * m1;
+        y.exp2()
+    }
+
+    /// Fritsch–Carlson tangent at knot `k` (log2 Hz per unit of `t`): zero at a local extremum,
+    /// the harmonic mean of the neighbouring secants otherwise; zero at the ends, so every
+    /// unit starts and ends on a level pitch.
+    fn slope(&self, k: usize) -> f32 {
+        if k == 0 || k + 1 >= self.n {
+            return 0.0;
+        }
+        let d0 = (self.log2f[k] - self.log2f[k - 1]) / (self.t[k] - self.t[k - 1]).max(1e-6);
+        let d1 = (self.log2f[k + 1] - self.log2f[k]) / (self.t[k + 1] - self.t[k]).max(1e-6);
+        if d0 * d1 <= 0.0 {
+            0.0
+        } else {
+            2.0 * d0 * d1 / (d0 + d1)
+        }
     }
 
     /// Multiplies every knot by `k` (transposition).
@@ -547,6 +579,10 @@ mod tests {
 
     #[test]
     fn contour_is_monotone_between_knots_and_hits_them() {
+        // A rising contour through an inner knot keeps rising there (no stall, no staircase).
+        let up = Contour::through(&[200.0, 300.0, 600.0], Ease::Smooth);
+        let d = |u: f32| up.at(u + 0.01) / up.at(u);
+        assert!(d(0.495) > 1.004, "stalls at the inner knot: {}", d(0.495));
         let c = Contour::through(&[200.0, 400.0, 300.0], Ease::Smooth);
         assert!((c.at(0.0) - 200.0).abs() < 1e-2 && (c.at(0.5) - 400.0).abs() < 1e-2 && (c.at(1.0) - 300.0).abs() < 1e-2);
         let mut prev = c.at(0.0);

@@ -53,7 +53,7 @@ pub struct WhaleConfig {
 
 impl Default for WhaleConfig {
     fn default() -> Self {
-        Self { gain: 1.0, pitch: 1.0, brightness: 0.6, cries: 0.6, tone_hz: 2800.0, reverb: 0.25, t60_s: 1.8, pause_s: 15.0, pace: 1.0 }
+        Self { gain: 1.0, pitch: 1.0, brightness: 0.6, cries: 0.6, tone_hz: 2800.0, reverb: 0.08, t60_s: 1.8, pause_s: 15.0, pace: 1.0 }
     }
 }
 
@@ -153,7 +153,7 @@ impl Whale {
     }
     /// Farther: darker, more of the water's reverberation, fewer high cries.
     pub fn humpback_distant() -> WhaleConfig {
-        WhaleConfig { tone_hz: 1600.0, reverb: 0.5, t60_s: 3.0, brightness: 0.45, cries: 0.45, ..Default::default() }
+        WhaleConfig { pitch: 0.8, tone_hz: 1600.0, reverb: 0.15, t60_s: 2.6, brightness: 0.45, cries: 0.45, ..Default::default() }
     }
     /// A deeper singer: moans, whoops and grunts, few cries.
     pub fn humpback_low() -> WhaleConfig {
@@ -300,17 +300,18 @@ fn template(k: usize, rng: &mut Rng, pitch: f32) -> Theme {
     match k {
         // A series of short cries, ~0.5 s apart (Stimpert S1, 0–3 s: 0.23–0.35 s at 650–800 Hz).
         0 => {
+            // Held at one pitch: a rising-falling arch on every cry, 0.5 s apart and bridged by
+            // the reverberation, was a 2 Hz pitch waver.
             let f = rng.range(620.0, 740.0);
             let count = 3 + rng.next_u32() % 3;
-            for i in 0..count {
-                let rise = 1.0 + 0.03 * i as f32;
-                push(unit(Kind::Cry, rng.range(0.26, 0.36), &[f * rise, f * rise * 1.07, f * rise * 1.02], Ease::Smooth, 0.55, rng.range(0.18, 0.28)));
+            for _ in 0..count {
+                push(unit(Kind::Cry, rng.range(0.26, 0.36), &[f], Ease::Smooth, 0.55, rng.range(0.18, 0.28)));
             }
         }
         // A long falling moan, then a whoop.
         1 => {
             let f = rng.range(160.0, 220.0);
-            push(unit(Kind::Moan, rng.range(1.5, 2.6), &[f, f * 1.1, f * 0.78], Ease::Smooth, 0.9, rng.range(0.8, 1.5)));
+            push(unit(Kind::Moan, rng.range(1.5, 2.6), &[f, f * 0.88], Ease::Linear, 0.9, rng.range(0.8, 1.5)));
             let w = rng.range(100.0, 125.0);
             push(unit(Kind::Whoop, rng.range(0.55, 0.9), &[w, w * 1.25, w * 2.6], Ease::In, 0.8, rng.range(1.2, 2.0)));
         }
@@ -323,7 +324,7 @@ fn template(k: usize, rng: &mut Rng, pitch: f32) -> Theme {
                 push(unit(Kind::Chirp, rng.range(0.17, 0.24), &[f, f * 1.75], Ease::In, 0.45, rng.range(0.6, 0.75)));
             }
             let m = rng.range(235.0, 260.0);
-            push(unit(Kind::Moan, rng.range(0.9, 1.4), &[m, m * 0.93, m * 0.82], Ease::Smooth, 0.8, rng.range(0.8, 1.4)));
+            push(unit(Kind::Moan, rng.range(0.9, 1.4), &[m, m * 0.9], Ease::Linear, 0.8, rng.range(0.8, 1.4)));
         }
         // Two grunts, then a long wail that turns up at the end (S1 22.5–26 s: 341 Hz,
         // rising to ~500 Hz in the last 0.8 s).
@@ -332,27 +333,27 @@ fn template(k: usize, rng: &mut Rng, pitch: f32) -> Theme {
             push(unit(Kind::Grunt, rng.range(0.35, 0.55), &[g, g * 0.78, g * 0.58], Ease::Out, 0.6, rng.range(0.5, 0.8)));
             push(unit(Kind::Grunt, rng.range(0.35, 0.55), &[g * 0.97, g * 0.75, g * 0.56], Ease::Out, 0.55, rng.range(0.9, 1.4)));
             let w = rng.range(320.0, 350.0);
-            push(unit(Kind::Cry, rng.range(2.5, 3.4), &[w, w * 0.97, w * 1.02, w * 1.45], Ease::Smooth, 0.85, rng.range(1.5, 2.2)));
+            push(unit(Kind::Cry, rng.range(2.5, 3.4), &[w, w * 1.2], Ease::Linear, 0.85, rng.range(1.5, 2.2)));
         }
         // Low moans (S2: ~85–120 Hz fundamentals, 0.6–2 s).
         4 => {
             let f = rng.range(95.0, 120.0);
-            push(unit(Kind::Moan, rng.range(1.2, 2.0), &[f, f * 1.12, f * 0.9], Ease::Smooth, 0.65, rng.range(0.9, 1.4)));
-            push(unit(Kind::Moan, rng.range(1.0, 1.6), &[f * 0.95, f * 0.85], Ease::Smooth, 0.6, rng.range(1.2, 2.0)));
+            push(unit(Kind::Moan, rng.range(1.2, 2.0), &[f, f * 0.93], Ease::Linear, 0.65, rng.range(0.9, 1.4)));
+            push(unit(Kind::Moan, rng.range(1.0, 1.6), &[f * 0.95, f * 0.85], Ease::Linear, 0.6, rng.range(1.2, 2.0)));
         }
-        // A wail with one slow, deliberate swell, then a downsweep (S1 37–46 s).
+        // A held wail with a gentle rise (S1 37–46 s), then a downsweep.
         5 => {
             let f = rng.range(390.0, 440.0);
-            push(unit(Kind::Cry, rng.range(1.3, 2.0), &[f, f * 1.05, f * 0.98, f * 1.03], Ease::Smooth, 0.75, rng.range(0.5, 0.9)));
+            push(unit(Kind::Cry, rng.range(1.3, 2.0), &[f, f * 1.04], Ease::Linear, 0.75, rng.range(0.5, 0.9)));
             let d = rng.range(950.0, 1150.0);
-            push(unit(Kind::Cry, rng.range(0.5, 0.8), &[d, d * 0.5], Ease::Out, 0.55, rng.range(1.0, 1.6)));
+            push(unit(Kind::Cry, rng.range(0.5, 0.8), &[d, d * 0.65], Ease::Out, 0.55, rng.range(1.0, 1.6)));
         }
         // Downsweep cries (S1: 1100–1530 → 460–600 Hz in 0.45–1.1 s).
         _ => {
             let count = 2 + rng.next_u32() % 3;
             for _ in 0..count {
                 let d = rng.range(950.0, 1250.0);
-                push(unit(Kind::Cry, rng.range(0.5, 0.9), &[d, d * 0.62, d * 0.48], Ease::Out, 0.55, rng.range(0.6, 1.0)));
+                push(unit(Kind::Cry, rng.range(0.5, 0.9), &[d, d * 0.75, d * 0.6], Ease::Out, 0.55, rng.range(0.6, 1.0)));
             }
         }
     }

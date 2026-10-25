@@ -14,6 +14,7 @@
 //!   cue=10:thunderstorm   at minute 10 ask the direction for a spell (or `next`)
 //!   rain=8 storm=0.6 wind=6   fixed weather (controls; the direction leaves them after that)
 //!   mute=birds,water   group trims at −40 dB (locating a problem)
+//!   clarity=0       the mix's clarity (0 = no masking-aware ducking; locating a problem)
 //!   wav=out.wav     keep the render (wav_from=MIN: from that minute on)
 //!   csv=out.csv     per-second timeline (default build/comfort/<scene>-<minutes>m.csv)
 //!   worst=8         offenders listed per kind
@@ -101,6 +102,7 @@ fn parse(args: &[String]) -> Opts {
                 "storm" => o.fixed.push((id::RAIN_STORM, num())),
                 "wind" => o.fixed.push((id::WIND_SPEED, num())),
                 "birds" => o.fixed.push((id::BIRDS_ACTIVITY, num())),
+                "clarity" => o.fixed.push((id::MIX_CLARITY, num())),
                 "mute" => {
                     for g in v.split(',') {
                         let lv = match g {

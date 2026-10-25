@@ -30,24 +30,29 @@ Humpback song is hierarchical (Payne & McVay 1971). *Units*, the single sounds, 
 *song*, which cycles with breathing pauses. Each seed builds its own song: 4–5 themes from
 seven phrase templates. Each template copies units measured in the references:
 
-* a series of short cries ~0.5 s apart (650–800 Hz, 0.23–0.35 s; Stimpert S1 0–3 s)
-* a long falling moan, then a whoop rising from ~110 Hz
+* a series of short cries ~0.5 s apart, each held at one pitch (650–800 Hz, 0.23–0.35 s;
+  Stimpert S1 0–3 s)
+* a long, slowly falling moan, then a whoop rising from ~110 Hz
 * 4–6 upsweep chirps ~0.9 s apart (370 → 650 Hz, 0.17–0.24 s), then a falling moan
-  (254 → 203 Hz; Garland S2)
-* two falling grunts (135 → 75 Hz), then a long wail that turns up at the end (341 → ~500 Hz;
-  S1 22–26 s)
+  (Garland S2)
+* two falling grunts (135 → 75 Hz), then a long wail rising by 20 % (S1 22–26 s)
 * low moans (~85–120 Hz)
-* a wail with one slow, deliberate swell, then a downsweep (S1 37–46 s)
-* downsweep cries (1100–1250 → 500–600 Hz)
+* a held wail, then a downsweep (S1 37–46 s)
+* downsweep cries (1100–1250 → 650–750 Hz)
+
+Held units (moans, wails) glide at a constant rate in cents per second, or not at all. See
+"Floating tones" below for why.
 
 A unit is a band-limited additive voice: up to 20 harmonics via the Chebyshev
 recurrence. Harmonics fade out between 0.36 and 0.45 × sample rate, so nothing aliases even
 mid-glide. The spectral tilt sets brightness, and a Gaussian formant bump (≈ 520 Hz for
 moans, 1.3 kHz for cries) stands in for the resonance of the whale's air spaces. Pitch
-moves only along a smooth log-frequency contour through 2–4 knots. There is no vibrato and
-no jitter. Attack is 30–160 ms and release 60–350 ms (raised cosine). Grunts and moans get
+moves only along a log-frequency contour: a straight glide for held units, and an eased
+sweep or a monotone cubic (Fritsch–Carlson) through 3 knots for the short sweeps. There is
+no vibrato and no jitter. Attack is 30–160 ms and release 60–350 ms (raised cosine). Grunts and moans get
 a little band-passed breath noise. A 2-pole low-pass (`tone_hz`, distance) and the static
-FDN (t60 1.8 s, wet 0.25) finish the voice.
+FDN (t60 1.8 s, wet 0.08) finish the voice. The second whale (`humpback_distant`) is
+transposed down by 20 % (`pitch` 0.8), so two singers never hold nearly the same note.
 
 ### Dolphins (`dolphins`, presets `bottlenose_pod`, `distant_pod`, `whistles_only`)
 
@@ -189,6 +194,38 @@ Stem balance (600 s, leveller off, `examples/clip_stems`, RMS over the whole tak
 the time a group is absent): current −38.0 dBFS, whales −44.5, reef −53.8 (the
 `calm_drift` episode holds the reef lever at 0.2–0.5), bubbles −50.8, dolphins −60 (before
 the final +3 dB), rain above −67.6 (lever at 0).
+
+## Floating tones (comfort analyzer follow-up)
+
+`examples/comfort` (src/comfort.rs) tracks spectral peaks. A tone held ≥ 0.8 s whose
+straight-line-detrended pitch swings ≥ 2 cycles at 0.5–10 Hz counts as a floating tone.
+Over 30 minutes (`… comfort -- 30 core/scenes/underwater_drift.json turn worst=12`) the first
+version of this scene reached 20 floating tones per hour, the failure threshold. All of them
+were whale units at 200–1050 Hz, 1–1.5 s long, wavering by 9–20 cents at 1.4–2.9 Hz.
+
+The causes, one by one:
+
+| Cause | Fix |
+|---|---|
+| Contour knots joined by a per-segment smoothstep. The pitch stopped at every inner knot, so a falling moan fell in a staircase. A line fitted through that leaves a 2–3 Hz ripple | Three or more knots use a monotone cubic (Fritsch–Carlson): no stall, no overshoot |
+| Templates with a deliberate swell. The wail went up–down–up, and each cry in a 0.5 s series made a small arch. Bridged by the reverberation, the series became one tone wavering at 2 Hz | Series cries are held at one pitch. The swell is gone |
+| Two whales on almost the same note. Two tones a few Hz apart beat, and the analyzer sees one tone wavering (found by removing the second whale: its events vanished) | The second whale is transposed down by 20 % |
+| The reverberation of a glide. The tail holds the pitch of 60–150 ms ago, and against the direct sound it beats at (glide rate × delay), 1–6 Hz | Model reverb lowered (wet 0.25 → 0.08, distant 0.5 → 0.15). Held units glide gently, so the beat stays slow and shallow |
+| Curved glides on held units (arches, eased falls) in the scene's bed noise. One hump plus noise reads as several swings | Held units glide at a constant rate in cents per second (`Ease::Linear`). The detrend leaves nothing to waver |
+
+Each whale probe alone, through the engine (fixed or drifting at 0.25 m/s), scores 0 floating
+tones. So the engine's propagation is not the cause; the mix and the contours were.
+`examples/comfort` gained a `clarity=` option. It was used to rule out the mix's
+masking-aware ducking (clarity 0 changed nothing).
+
+| 30 min, `turn` | before | after |
+|---|---|---|
+| default seed | 20.0 /h (WARN) | 0 /h |
+| seed 1 | 8.0 /h and loudness surprise 11.1 LU (WARN) | 2.0 /h (one tone, 6.6 cents), no warnings |
+| seed 7 | 4.0 /h | 0 /h |
+
+The "before" column for seeds 1 and 7 was measured after the first contour fix.
+After the fixes, all three runs pass every check with no warnings.
 
 ## Known weaknesses
 

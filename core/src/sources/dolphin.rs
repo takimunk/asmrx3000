@@ -259,7 +259,8 @@ fn signature(rng: &mut Rng) -> Signature {
         1 => ([hi, lo, 0.0, 0.0, 0.0], Ease::Out, rng.range(0.25, 0.55)),                    // downsweep
         2 => ([lo, hi, lo * 1.15, 0.0, 0.0], Ease::Smooth, rng.range(0.35, 0.7)),           // arch
         3 => ([hi * 0.9, lo, hi, 0.0, 0.0], Ease::Smooth, rng.range(0.35, 0.7)),            // U
-        4 => ([lo * 1.2, hi * 0.85, lo * 1.1, hi * 0.8, lo * 1.25], Ease::Smooth, rng.range(0.5, 0.8)), // sine
+        // (A sine contour, two cycles up and down, would read as a waver: a long arch instead.)
+        4 => ([lo * 1.1, hi * 0.9, lo * 1.25, 0.0, 0.0], Ease::Smooth, rng.range(0.5, 0.8)), // long arch
         _ => ([lo, lo * 1.15, hi, 0.0, 0.0], Ease::Smooth, rng.range(0.35, 0.65)),          // flat then rise
     };
     let n = pts.iter().take_while(|&&v| v > 0.0).count();
