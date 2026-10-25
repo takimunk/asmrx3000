@@ -250,6 +250,10 @@ struct Dsp {
     left: [f32; BLOCK],
     right: [f32; BLOCK],
     mono: [f32; BLOCK],
+    /// Output high-pass, 4th-order Butterworth at 22 Hz (two sections per ear: left, left,
+    /// right, right): the wind model's bands reach into the infrasound, inaudible but felt as
+    /// pressure on headphones (docs/comfort.md).
+    infra: [crate::dsp::Svf; 4],
     fade: f32,
     volume: f32,
     time: f64,
@@ -393,6 +397,10 @@ impl Engine {
             right: [0.0; BLOCK],
             mono: [0.0; BLOCK],
             fade: 0.0,
+            infra: {
+                let (a, b) = (crate::dsp::Svf::new(22.0, 0.5412, sr), crate::dsp::Svf::new(22.0, 1.3066, sr));
+                [a, b, a, b]
+            },
             volume: 0.7,
             time: 0.0,
             load: 0.0,
@@ -1195,6 +1203,16 @@ impl Dsp {
             self.right[..len].copy_from_slice(&self.bed[1][..len]);
         }
         self.mix.finish(len);
+        if self.bed_mode == 0 {
+            for (f, ch) in self.infra.chunks_exact_mut(2).zip([&mut self.left, &mut self.right]) {
+                for v in ch[..len].iter_mut() {
+                    let x = f[0].process(*v).2;
+                    *v = f[1].process(x).2;
+                }
+                f[0].flush();
+                f[1].flush();
+            }
+        }
 
         // Output dynamics (pascals at the ears -> digital): leveller, comfort compressor, limiter.
         self.mix.master(&self.left[..len], &self.right[..len], &mut self.gains[..len]);
