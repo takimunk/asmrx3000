@@ -254,7 +254,7 @@ final class SceneRenderer {
 
         birdFlight.update(stage.audio, time: time)
         func ground(_ x: Float, _ y: Float) -> Float { Terrain.height(x, y) }
-        if stage.isClipScene {        } else if stage.isClipScene {
+        if stage.isClipScene {
             // No forest here: the scene's own things (and underwater, the bottom).
             let scene = stage.audio.scene
             if scene.look == .underwater {
