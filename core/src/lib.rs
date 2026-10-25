@@ -6,6 +6,7 @@ pub mod acoustics;
 pub mod clips;
 mod ambisonics;
 mod bed;
+pub mod comfort;
 mod binaural;
 pub mod controls;
 pub mod director;
