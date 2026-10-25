@@ -41,8 +41,9 @@ def lerp(pts, t):
 
 # The design: 3 dB under the rest inside the head, eased in and out.
 DIP = [(0, 0), (78, 0), (86, 3), (100, 3), (106, 0), (300, 0)]
-# Left alone: the opening fade, the silence before the legs, the closing fade.
-SKIP = lambda t: t < 6 or 229 <= t <= 234 or t > 294  # noqa: E731
+# Left alone: the opening fade, the hand-over dip before the legs (shaped by hand), the
+# closing fade.
+SKIP = lambda t: t < 6 or 229 <= t <= 235 or t > 294  # noqa: E731
 
 
 def measure(scene):
