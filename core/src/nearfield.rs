@@ -208,6 +208,23 @@ impl NearField {
         self.active = false;
     }
 
+    /// Runs the crossovers of orders >= 2 on `dry` and drops the result: far from the head
+    /// they keep their state warm, so entering the near zone does not start them cold (a cold
+    /// LR4 pair on a running tone summed to a crackle 15 dB over the signal's own top end,
+    /// heard where a path crosses R).
+    fn warm_crossovers(&mut self, design: &NfcDesign, dry: &[f32]) {
+        let n = dry.len();
+        let mut buf = [0.0f32; crate::engine::BLOCK];
+        for m in 2..=ORDER {
+            let [l1, l2, h1, h2] = &mut self.xo[m];
+            for (a, b, c) in [(l1, l2, design.lp), (h1, h2, design.hp)] {
+                buf[..n].copy_from_slice(dry);
+                a.process(&mut buf[..n], c);
+                b.process(&mut buf[..n], c);
+            }
+        }
+    }
+
     /// Puts `x` through the crossover's all-pass (every order's common phase) and, near the
     /// head, fills `orders[m]` (m = 1..=3) with the order-m extrapolated version of it.
     /// Returns false (and leaves `orders` untouched) when the source is beyond R, i.e. all
@@ -223,6 +240,7 @@ impl NearField {
         self.ap.process(x, design.ap);
         let near = r < design.ref_radius;
         if !near && !self.active {
+            self.warm_crossovers(design, &dry[..n]);
             return false;
         }
         for m in 1..=ORDER {
@@ -265,9 +283,14 @@ impl NearField {
             }
         }
         // Stay active for one block after leaving the near zone so the filters settle onto
-        // identity, then drop back to the free path.
+        // identity, then drop back to the free path. The crossovers keep running (warm).
         if !near {
-            self.reset();
+            for o in self.sec.iter_mut() {
+                for b in o.iter_mut() {
+                    b.reset();
+                }
+            }
+            self.active = false;
         } else {
             self.active = true;
         }
@@ -309,6 +332,41 @@ mod tests {
         // Identity beyond R; regularised DC boost below.
         assert!((gain(d.coeffs(3, 2.0), 100.0, 48_000.0) - 1.0).abs() < 1e-6);
         assert!(gain(d.coeffs(3, 0.1), 5.0, 48_000.0) < 1.01 * (1.5 / R_MIN_NFC).powi(3));
+    }
+}
+
+#[cfg(test)]
+mod zone_edge {
+    use super::*;
+    use crate::engine::BLOCK;
+
+    /// A tone that crosses into the near zone keeps a continuous waveform in every order: just
+    /// inside R the filters are close to identity, so order 2..3 must stay close to order 0.
+    #[test]
+    fn entering_the_near_zone_is_seamless() {
+        let fs = 48_000.0;
+        let d = NfcDesign::new(fs, 1.2);
+        let mut nf = NearField::new();
+        let mut orders = [[0.0f32; BLOCK]; ORDER];
+        let mut worst = 0.0f32;
+        for b in 0..200 {
+            let mut x = [0.0f32; BLOCK];
+            for (i, v) in x.iter_mut().enumerate() {
+                let t = (b * BLOCK + i) as f32 / fs;
+                *v = (core::f32::consts::TAU * 220.0 * t).sin() * 0.5 + (core::f32::consts::TAU * 1300.0 * t).sin() * 0.2;
+            }
+            // Far for 100 blocks, then 1 mm inside R.
+            let r = if b < 100 { 1.5 } else { 1.199 };
+            let near = nf.process(&d, r, &mut x, &mut orders);
+            if near && b < 110 {
+                for o in &orders[1..] {
+                    for (a, b) in o.iter().zip(x.iter()) {
+                        worst = worst.max((a - b).abs());
+                    }
+                }
+            }
+        }
+        assert!(worst < 0.02, "orders differ from the all-passed signal by {worst} on entry");
     }
 }
 
