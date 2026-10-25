@@ -14,7 +14,8 @@
 //! * Lightning: Poisson flashes at up to 4/min with storm activity, around a storm centre
 //!   that drifts in bearing and comes closer as the storm grows: storm 1 → ~0.6–1.5 km
 //!   (thunder 2–4 s after the flash), storm 0.5 → ~2–4 km, a weak storm ~5–10 km (lognormal
-//!   spread, the centre wandering slowly), with an occasional close strike (250–600 m). About
+//!   spread, the centre wandering slowly), with an occasional close strike (250–600 m) in a
+//!   severe storm (storm > 0.7; the default direction stays below). About
 //!   a third are intracloud flashes (diffuse light, rumble only), the rest cloud-to-ground
 //!   with 1–5 return strokes. The flash brightness follows those strokes
 //!   ([`Flash::brightness`]: leader glow, the flicker of the strokes, dimmer and smeared with
@@ -197,7 +198,10 @@ impl Weather {
             if self.next_strike <= 0.0 {
                 self.next_strike = 15.0 * crate::sources::common::exp1(&mut self.rng);
                 let centre = Self::storm_centre_m(self.storm) * wander.exp();
-                let close = self.rng.uniform() < 0.07 * self.storm;
+                // A strike within a few hundred metres (the tearing crack) belongs to a severe
+                // storm only: one the listener asked for (direction.weather), not the default
+                // course of a focus soundscape (docs/comfort.md).
+                let close = self.rng.uniform() < 0.07 * crate::sources::common::smoothstep(0.7, 1.0, self.storm);
                 let d = if close { self.rng.range(250.0, 600.0) } else { centre * (0.4 * self.rng.gauss()).exp() };
                 self.strike_distance = d.clamp(200.0, 25_000.0);
                 self.bearing = (b + 0.4 * self.rng.gauss()).rem_euclid(core::f32::consts::TAU);

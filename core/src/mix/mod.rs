@@ -282,6 +282,12 @@ struct Slot {
     tail_w: f32,
     /// Stationary-refocus anchor.
     anchor: bool,
+    /// Event ceiling (birds): the loudest recent phrase before the ceiling, referred to 1 m
+    /// (Pa²·m², held ~30 s), and the smoothed cut, dB (≤ 0).
+    peak_raw: f32,
+    cap_db: f32,
+    /// ≈ 10 ms listener power (Pa²) for that peak.
+    burst: f32,
 }
 
 impl Slot {
@@ -322,6 +328,9 @@ impl Slot {
             protected: true,
             tail_w: 0.0,
             anchor: false,
+            peak_raw: 0.0,
+            cap_db: 0.0,
+            burst: 0.0,
         }
     }
 }
@@ -476,6 +485,8 @@ pub struct Mix {
     last_start: f32,
     phrases: usize,
     bed_db: f32,
+    /// The same ambience unweighted, dB SPL (the thunder ceiling compares like with like).
+    bed_lin_db: f32,
     info: MixInfo,
     probes: Option<Vec<Probe>>,
     a_fast: f32,
@@ -483,6 +494,8 @@ pub struct Mix {
     a_speed: f32,
     a_gain: f32,
     a_presence: f32,
+    /// ≈ 10 ms: the phrase-peak detector of the event ceiling (a chirp is 20–50 ms).
+    a_burst: f32,
     timing: bool,
     /// Seconds spent in the mix layer since `enable_timing`.
     pub cpu_s: f64,
@@ -513,6 +526,20 @@ type Clock = ();
 const GROUND_POWER: f32 = 1.6;
 /// Below this listener level nothing counts as sounding, dB SPL.
 const QUIET_DB: f32 = 12.0;
+/// Event ceiling: a bird's phrases (LAFmax-like, 60 ms) stay within this many dB of the
+/// A-weighted ambience (water, wind, rain) at the listener; docs/comfort.md. Physically a
+/// chaffinch 7 m away sings ~20 dB over a brook 4 m away: a startle, not a forest to work in.
+const EVENT_CEIL_DB: f32 = 9.0;
+/// Most the ceiling takes off a phrase, dB: enough for a bird calling as it flies past at
+/// 3 m (a nightingale there is ~30 dB over the brook), while the nearness cues stay.
+const EVENT_MAX_CUT_DB: f32 = 18.0;
+/// Hold of the phrase-peak memory, s.
+const EVENT_PEAK_HOLD_S: f32 = 30.0;
+/// Thunder ceiling: each peal (10 ms power at the listener, unweighted) within this many dB
+/// of the unweighted ambience, as a per-emitter compressor. The thunder proxy sits ~40 m away,
+/// so the mix hears a peal ~0.1 s before it is heard: the cut is in place at the onset.
+const THUNDER_CEIL_DB: f32 = 9.0;
+const THUNDER_MAX_CUT_DB: f32 = 20.0;
 
 impl Mix {
     pub fn new(sample_rate: f32) -> Self {
@@ -547,6 +574,7 @@ impl Mix {
             last_start: -10.0,
             phrases: 0,
             bed_db: 0.0,
+            bed_lin_db: 0.0,
             info: MixInfo::default(),
             probes: None,
             a_fast: coef(0.06),
@@ -554,6 +582,7 @@ impl Mix {
             a_speed: coef(0.3),
             a_gain: coef(0.25),
             a_presence: coef(10.0),
+            a_burst: coef(0.01),
             timing: false,
             cpu_s: 0.0,
             head: Mat3::from_head(0.0, 0.0, 0.0),
@@ -775,12 +804,43 @@ impl Mix {
 
         s.gain_db += (gain_db - s.gain_db) * self.a_gain;
         s.send += (send * rcue.send - s.send) * self.a_gain;
+        // Event ceiling (birds): the phrase peak at the listener — measured once the bird has
+        // sung, predicted from its calibrated LAFmax and distance before — stays within
+        // EVENT_CEIL_DB of the ambience. Set before a phrase starts, so onsets are covered too.
+        // Fades in with the dynamics intent like the comfort ceiling (0.3..0.6).
+        let k_dyn = ((self.intent.dynamics - 0.3) / 0.3).clamp(0.0, 1.0);
+        let thunder = s.class == SoundClass::Thunder;
+        let k_cap = k_dyn * k_dyn * (3.0 - 2.0 * k_dyn);
+        let want_cap = if k_dyn <= 0.0 || self.bed_db <= QUIET_DB {
+            0.0
+        } else if bird {
+            let level = if s.peak_raw > 0.0 {
+                db_spl(s.peak_raw / (dist * dist))
+            } else {
+                calibration::entry(s.class).target_db + s.gain_db + s.trim_db + s.ctl_db + dcue.db - 20.0 * dist.log10()
+            };
+            (self.bed_db + EVENT_CEIL_DB - level).clamp(-EVENT_MAX_CUT_DB, 0.0) * k_cap
+        } else if thunder {
+            let level = db_spl(s.burst * db_gain_sq(-s.cap_db));
+            (self.bed_lin_db + THUNDER_CEIL_DB - level).clamp(-THUNDER_MAX_CUT_DB, 0.0) * k_cap
+        } else {
+            0.0
+        };
+        // Down fast (a bird: before the next note; thunder: within ~10 ms), up slowly.
+        let a_cap = if want_cap >= s.cap_db {
+            self.a_slow
+        } else if thunder {
+            self.a_burst
+        } else {
+            self.a_fast
+        };
+        s.cap_db += (want_cap - s.cap_db) * a_cap;
         // Calls in flight are short and carry motion: never held.
         let permit = s.permit || v.flying;
         let gain = if trim <= MUTE_DB && s.trim_db < -39.0 {
             0.0
         } else {
-            s.cal * 10f32.powf((s.gain_db + s.trim_db + s.ctl_db + dcue.db) / 20.0)
+            s.cal * 10f32.powf((s.gain_db + s.trim_db + s.ctl_db + dcue.db + s.cap_db) / 20.0)
         };
         let eq = match s.role {
             Role::Soloist(_) => None,
@@ -816,6 +876,18 @@ impl Mix {
         let p = energy * k * k * GROUND_POWER;
         s.fast += (p - s.fast) * self.a_fast;
         s.slow += (p - s.slow) * self.a_slow;
+        if matches!(s.class, SoundClass::Thunder) {
+            s.burst += (p - s.burst) * self.a_burst;
+        }
+        if matches!(s.class, SoundClass::Bird(_)) {
+            // Phrase peak before the event ceiling (what the bird would be without it).
+            s.burst += (p - s.burst) * self.a_burst;
+            let hold = (-(len as f32) / (EVENT_PEAK_HOLD_S * self.fs)).exp();
+            // Referred to 1 m (× r²): a bird that flies in or hops closer is judged at its new
+            // distance at once.
+            let raw = if busy { s.burst * db_gain_sq(-s.cap_db) * s.dist * s.dist } else { 0.0 };
+            s.peak_raw = (s.peak_raw * hold).max(raw);
+        }
         // Without the scene-focus controller gains: what the texture priority ranks.
         let phys = p * db_gain_sq(-s.ctl_db);
         s.phys += (phys - s.phys) * self.a_slow;
@@ -934,8 +1006,10 @@ impl Mix {
         let motion_w = 0.2 + 0.3 * self.stillness.moving * on;
         let anchor_w = 0.3 * self.refocus_now();
         for s in self.slots.iter_mut().filter(|s| s.used) {
-            let l_fast = db_spl(s.fast);
-            let l_slow = db_spl(s.slow);
+            // Attention judges the sound as it is, before the event ceiling (a level trim only).
+            let uncap = db_gain_sq(-s.cap_db);
+            let l_fast = db_spl(s.fast * uncap);
+            let l_slow = db_spl(s.slow * uncap);
             let onset = ((l_fast - l_slow - 3.0) / 12.0).clamp(0.0, 1.0);
             s.novelty = (s.novelty * decay).max(onset);
             let prox = ((l_fast - bed_db + 6.0) / 18.0).clamp(0.0, 1.0);
@@ -1257,13 +1331,15 @@ impl Mix {
         fg[TAIL] = 0.0;
         // Ambience level (A-weighted textures: water, wind, rain) for the salience reference:
         // how far an event stands out of the background it is heard against.
-        let mut bed_p = 0.0;
+        let (mut bed_p, mut bed_lin) = (0.0, 0.0);
         for g in [group::WATER, group::WIND, group::RAIN] {
             if bed[g] {
                 bed_p += (0..BANDS).map(|z| a.fast[g][z] * a.model.a_w[z]).sum::<f32>();
+                bed_lin += a.fast[g].iter().sum::<f32>();
             }
         }
         self.bed_db = db_spl(bed_p);
+        self.bed_lin_db = db_spl(bed_lin);
 
         let p = DuckParams { target_smr_db: 3.0 + 9.0 * c, depth_db: 1.0 + 7.0 * c };
         if c > 0.0 {
