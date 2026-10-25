@@ -712,6 +712,7 @@ pub(crate) fn apply(world: &mut World, st: &ControlState, bases: &Bases) {
         let cfg = match base {
             // No panel controls of its own yet: keeps the scene's configuration.
             ModelConfig::Whale(_) | ModelConfig::Dolphins(_) | ModelConfig::Reef(_) | ModelConfig::Sea(_) => base,
+            ModelConfig::Bowl(own) => ModelConfig::Bowl(own),
             ModelConfig::Water(own) => {
                 let v = em.variation;
                 // Preset regime replaces the scene's; geometry (length) stays.

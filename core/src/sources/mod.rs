@@ -5,6 +5,7 @@
 //! without touching the director or the engine.
 
 mod bird;
+pub mod bowl;
 pub mod common;
 pub mod dolphin;
 pub mod fire;
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub use bird::{Bird, VoiceStyle};
 pub use dolphin::{DolphinConfig, Dolphins};
+pub use bowl::{Bowl, BowlConfig, BowlKind};
 pub use fire::{Fire, FireConfig};
 pub use foliage::{Foliage, FoliageConfig, FoliageKind};
 pub use insects::{InsectConfig, InsectKind, Insects};
@@ -232,10 +234,12 @@ pub enum ModelKind {
     Reef,
     /// Open water under the surface: ambient bed, bubbles, rain above (sea.rs).
     Sea,
+    /// Singing bowls and tingsha, struck on cue or rubbed (bowl.rs).
+    Bowl,
 }
 
 impl ModelKind {
-    pub const ALL: [ModelKind; 11] = [
+    pub const ALL: [ModelKind; 12] = [
         ModelKind::Wind,
         ModelKind::Foliage,
         ModelKind::Water,
@@ -247,6 +251,7 @@ impl ModelKind {
         ModelKind::Dolphins,
         ModelKind::Reef,
         ModelKind::Sea,
+        ModelKind::Bowl,
     ];
 
     pub fn presets(self) -> &'static [&'static str] {
@@ -262,13 +267,14 @@ impl ModelKind {
             ModelKind::Dolphins => Dolphins::PRESETS,
             ModelKind::Reef => Reef::PRESETS,
             ModelKind::Sea => Sea::PRESETS,
+            ModelKind::Bowl => Bowl::PRESETS,
         }
     }
 
     /// Engine source kind (telemetry / UI colour, per-kind gain).
     pub fn source_kind(self) -> SourceKind {
         match self {
-            ModelKind::Wind | ModelKind::Foliage => SourceKind::Wind,
+            ModelKind::Wind | ModelKind::Foliage | ModelKind::Bowl => SourceKind::Wind,
             ModelKind::Water | ModelKind::Reef | ModelKind::Sea => SourceKind::Water,
             ModelKind::Rain => SourceKind::Rain,
             ModelKind::Thunder => SourceKind::Thunder,
@@ -290,6 +296,7 @@ impl ModelKind {
             ModelKind::Dolphins => "dolphins",
             ModelKind::Reef => "reef",
             ModelKind::Sea => "sea",
+            ModelKind::Bowl => "bowl",
         }
     }
 
@@ -361,6 +368,7 @@ pub enum ModelConfig {
     Dolphins(DolphinConfig),
     Reef(ReefConfig),
     Sea(SeaConfig),
+    Bowl(BowlConfig),
 }
 
 impl SoundDesc {
@@ -426,6 +434,11 @@ impl SoundDesc {
                 c.validate().map_err(ctx)?;
                 ModelConfig::Sea(c)
             }
+            ModelKind::Bowl => {
+                let c = configure(pick(m, p, Bowl::preset, BowlConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Bowl(c)
+            }
         })
     }
 
@@ -449,6 +462,7 @@ impl ModelConfig {
             ModelConfig::Dolphins(_) => ModelKind::Dolphins,
             ModelConfig::Reef(_) => ModelKind::Reef,
             ModelConfig::Sea(_) => ModelKind::Sea,
+            ModelConfig::Bowl(_) => ModelKind::Bowl,
         }
     }
 
@@ -465,6 +479,7 @@ impl ModelConfig {
             ModelConfig::Dolphins(c) => Box::new(Dolphins::new(sr, seed, c)),
             ModelConfig::Reef(c) => Box::new(Reef::new(sr, seed, c)),
             ModelConfig::Sea(c) => Box::new(Sea::new(sr, seed, c)),
+            ModelConfig::Bowl(c) => Box::new(Bowl::new(sr, seed, c)),
         }
     }
 }

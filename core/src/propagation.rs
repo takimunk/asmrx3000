@@ -156,6 +156,7 @@ impl Propagator {
         self.direct.coeffs.settle();
         self.ground.coeffs.settle();
         self.near.reset();
+        self.delay.clear();
         self.sleeping = true;
         self.started = false;
         self.key.valid = false;
