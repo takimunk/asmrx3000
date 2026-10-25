@@ -5,6 +5,7 @@
 //! without touching the director or the engine.
 
 mod bird;
+pub mod bowl;
 pub mod common;
 pub mod fire;
 pub mod foliage;
@@ -20,6 +21,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use bird::{Bird, VoiceStyle};
+pub use bowl::{Bowl, BowlConfig, BowlKind};
 pub use fire::{Fire, FireConfig};
 pub use foliage::{Foliage, FoliageConfig, FoliageKind};
 pub use insects::{InsectConfig, InsectKind, Insects};
@@ -219,11 +221,13 @@ pub enum ModelKind {
     Insects,
     /// Space plasma waves: hiss, whistlers, chorus, narrowband tones (plasma.rs).
     Plasma,
+    /// Singing bowls and tingsha, struck on cue or rubbed (bowl.rs).
+    Bowl,
 }
 
 impl ModelKind {
-    pub const ALL: [ModelKind; 8] =
-        [ModelKind::Wind, ModelKind::Foliage, ModelKind::Water, ModelKind::Rain, ModelKind::Thunder, ModelKind::Fire, ModelKind::Insects, ModelKind::Plasma];
+    pub const ALL: [ModelKind; 9] =
+        [ModelKind::Wind, ModelKind::Foliage, ModelKind::Water, ModelKind::Rain, ModelKind::Thunder, ModelKind::Fire, ModelKind::Insects, ModelKind::Plasma, ModelKind::Bowl];
 
     pub fn presets(self) -> &'static [&'static str] {
         match self {
@@ -235,13 +239,14 @@ impl ModelKind {
             ModelKind::Fire => Fire::PRESETS,
             ModelKind::Insects => Insects::PRESETS,
             ModelKind::Plasma => Plasma::PRESETS,
+            ModelKind::Bowl => Bowl::PRESETS,
         }
     }
 
     /// Engine source kind (telemetry / UI colour, per-kind gain).
     pub fn source_kind(self) -> SourceKind {
         match self {
-            ModelKind::Wind | ModelKind::Foliage | ModelKind::Plasma => SourceKind::Wind,
+            ModelKind::Wind | ModelKind::Foliage | ModelKind::Plasma | ModelKind::Bowl => SourceKind::Wind,
             ModelKind::Water => SourceKind::Water,
             ModelKind::Rain => SourceKind::Rain,
             ModelKind::Thunder => SourceKind::Thunder,
@@ -260,6 +265,7 @@ impl ModelKind {
             ModelKind::Fire => "fire",
             ModelKind::Insects => "insects",
             ModelKind::Plasma => "plasma",
+            ModelKind::Bowl => "bowl",
         }
     }
 }
@@ -322,6 +328,7 @@ pub enum ModelConfig {
     Fire(FireConfig),
     Insects(InsectConfig),
     Plasma(PlasmaConfig),
+    Bowl(BowlConfig),
 }
 
 impl SoundDesc {
@@ -372,6 +379,11 @@ impl SoundDesc {
                 c.validate().map_err(ctx)?;
                 ModelConfig::Plasma(c)
             }
+            ModelKind::Bowl => {
+                let c = configure(pick(m, p, Bowl::preset, BowlConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Bowl(c)
+            }
         })
     }
 
@@ -392,6 +404,7 @@ impl ModelConfig {
             ModelConfig::Fire(_) => ModelKind::Fire,
             ModelConfig::Insects(_) => ModelKind::Insects,
             ModelConfig::Plasma(_) => ModelKind::Plasma,
+            ModelConfig::Bowl(_) => ModelKind::Bowl,
         }
     }
 
@@ -405,6 +418,7 @@ impl ModelConfig {
             ModelConfig::Fire(c) => Box::new(Fire::new(sr, seed, c)),
             ModelConfig::Insects(c) => Box::new(Insects::new(sr, seed, c)),
             ModelConfig::Plasma(c) => Box::new(Plasma::new(sr, seed, c)),
+            ModelConfig::Bowl(c) => Box::new(Bowl::new(sr, seed, c)),
         }
     }
 }

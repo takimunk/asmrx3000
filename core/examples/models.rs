@@ -40,6 +40,7 @@ fn showcase(model: ModelKind, preset: &str) -> Controls {
         ModelKind::Thunder => wind(0.3, Ambient { strike: 1, strike_distance_m: 2500.0, strike_strokes: 3, storm: 1.0, ..Default::default() }),
         ModelKind::Fire => wind(0.2, Ambient::default()),
         ModelKind::Plasma => wind(0.1, Ambient::default()),
+        ModelKind::Bowl => Controls { activity: 1.0, cue: 1, ..Default::default() },
         ModelKind::Insects => {
             let hour = if matches!(preset, "grasshopper" | "cicada") { 14.0 } else { 23.0 };
             wind(0.1, Ambient { hour, temperature_c: if preset == "cicada" { 28.0 } else { 22.0 }, ..Default::default() })

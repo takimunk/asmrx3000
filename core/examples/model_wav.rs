@@ -4,7 +4,8 @@
 //!   cargo run --release --manifest-path core/Cargo.toml --example model_wav -- \
 //!       <model> <preset|-> <seconds> <out.wav> [key=value ...]
 //!
-//! model: wind foliage water rain thunder fire insects, or `wings:<style|species>`.
+//! model: wind foliage water rain thunder fire insects plasma bowl, or `wings:<style|species>`
+//! (bowl: struck once at the start).
 //! preset `-` = the model's defaults.
 //!
 //! key=value:
@@ -162,6 +163,11 @@ fn main() {
         let mut g: Box<dyn Generator> = d.build(SR, seed).unwrap_or_else(|e| panic!("{e}"));
         if kind == ModelKind::Insects {
             c.activity = c.activity.max(1.0);
+        }
+        if kind == ModelKind::Bowl {
+            // One strike at the start (a no-op for the rubbed presets).
+            c.activity = c.activity.max(1.0);
+            c.cue = 1;
         }
         let (mut rng, mut lp) = (0x9E3779B97F4A7C15u64 ^ seed, 0.0f32);
         let a = (asmr_core::BLOCK as f32 / SR / (gust_period / std::f32::consts::TAU)).min(1.0);
