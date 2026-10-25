@@ -91,7 +91,7 @@
       "first": 60,
       "interval": [120, 300],
       "fade": 10,
-      "sound": { "model": "dolphins", "preset": "bottlenose_pod", "params": { "gain": 3.2 } },
+      "sound": { "model": "dolphins", "preset": "bottlenose_pod", "params": { "gain": 4.5 } },
       "motion": { "type": "drift", "speed": 0.4, "ahead": 25, "behind": 25, "lateral": [18, 30], "height": [-6, 2] }
     },
     {
