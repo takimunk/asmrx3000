@@ -1266,8 +1266,9 @@ impl Dsp {
             }
             crate::profile::lap(crate::profile::Section::MixVoice);
             em.generator.render(tmp, &controls);
-            if self.world.muffle_hz > 0.0 && em.base.is_some() {
-                // Underwater: physical models (built for air) heard through water.
+            if self.world.muffle_hz > 0.0 && em.base.is_some_and(|b| !b.kind().underwater()) {
+                // Underwater: physical models (built for air) heard through water; the
+                // underwater models (whale, dolphins, reef, sea) are made for it already.
                 let a = 1.0 - (-core::f32::consts::TAU * self.world.muffle_hz / sr).exp();
                 for v in tmp.iter_mut() {
                     em.muffle[0] += (*v - em.muffle[0]) * a;
