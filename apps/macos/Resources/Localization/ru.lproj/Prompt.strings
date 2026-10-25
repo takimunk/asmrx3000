@@ -45,9 +45,6 @@
 "louder" = "громче";
 "wind" = "ветер";
 "wind %@" = "ветер %@";
-"flying" = "летим";
-"at home" = "дома";
-"standing here" = "стоим здесь";
 "Mock: %@." = "Мок: %@.";
 "from the northwest" = "с северо-запада";
 "from the northeast" = "с северо-востока";
@@ -57,12 +54,10 @@
 "from the south" = "с юга";
 "from the west" = "с запада";
 "from the east" = "с востока";
-"going home" = "домой";
 "focus on %@" = "в фокусе %@";
 "birds %@" = "птицы %@";
 "and %d more" = "и ещё %d";
 "Can not describe the scene." = "Не могу описать сцену.";
-"That is not about sound. I change water, weather, time, birds, place and flight." = "Это не про звук. Я меняю воду, погоду, время, птиц, место и полёт.";
 " (closest: %@)" = " (ближе всего — %@)";
 "Did not get what to change%@. Say it another way: \"quieter river\", \"night\", \"to the taiga\"." = "Не понял, что изменить%@. Скажите иначе: «тише река», «ночь», «в тайгу».";
 "on the left" = "слева";
@@ -73,9 +68,6 @@
 "birds" = "птицы";
 "insects" = "насекомые";
 "campfire" = "костёр";
-"flight" = "полёт";
-"place" = "место";
-"speed" = "скорость";
 "river" = "река";
 "thunder" = "гроза";
 "volume" = "громкость";
@@ -84,8 +76,6 @@
 "time" = "время";
 "wind from" = "ветер откуда";
 "quieter" = "тише";
-"faster" = "быстрее";
-"slower" = "медленнее";
 "fuller" = "полноводнее";
 "shallower" = "мельче";
 "more" = "больше";
@@ -97,9 +87,6 @@
 "hotter" = "жарче";
 "stronger" = "сильнее";
 "weaker" = "слабее";
-"already flying" = "уже летим";
-"already standing" = "и так стоим";
-"already home" = "и так дома";
 "river almost dry already" = "река и так почти пересохла";
 "already calm" = "и так безветрие";
 "no rain anyway" = "дождя и так нет";
@@ -107,6 +94,4 @@
 "no birds anyway" = "птиц и так нет";
 "birds already in full chorus" = "птиц и так полный хор";
 "no insects anyway" = "насекомых и так нет";
-"already %@" = "уже %@";
 "%@ already" = "%@: уже так";
-"broadleaf forest" = "лиственный лес";
