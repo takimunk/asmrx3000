@@ -363,6 +363,7 @@ impl Engine {
             temperature_c: desc.environment.temperature_c,
             humidity_pct: desc.environment.humidity * 100.0,
             ear_height: -world.ground_z,
+            underwater: world.muffle_hz > 0.0,
             ..Acoustic::default()
         });
         let mut dsp = Dsp {
@@ -1089,6 +1090,7 @@ impl Dsp {
             reverb: p(param::REVERB),
             ear_height: p(param::EAR_HEIGHT),
             hrtf: if p(param::HRTF) > 0.5 { HrtfModel::Analytic } else { HrtfModel::Measured },
+            underwater: self.world.muffle_hz > 0.0,
         }, dt);
 
         for ch in self.bus.iter_mut() {
