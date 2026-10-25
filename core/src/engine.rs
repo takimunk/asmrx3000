@@ -5,7 +5,7 @@
 //! (params, telemetry, spectrum) may be called from any thread; it only touches atomics.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
@@ -18,7 +18,6 @@ use crate::controls::{self, ControlBank, ControlInfo, ControlState};
 use crate::director::{Director, Environment};
 use crate::dsp::soft_clip;
 use crate::fft::fft;
-use crate::flight::{self, bridge::FlightBridge, Flight};
 use crate::headpose::{HeadPoseInput, HeadTracker, PoseSettings, Quat};
 use crate::math::Vec3;
 use crate::mix::{self, EmitterView, Intent, Mix, MixInfo, MixShared};
@@ -43,19 +42,6 @@ const SCOPE_LEN: usize = 4096;
 
 // Source levels come from the calibration table (mix/calibration.rs); the mix layer
 // (mix/mod.rs) adds intent, attention, masking-aware ducking and output dynamics.
-
-/// Scope track of a source kind (shared with flight mode).
-pub(crate) fn scope_track(kind: SourceKind) -> usize {
-    match kind {
-        SourceKind::Water => scope::WATER,
-        SourceKind::Wind => scope::WIND,
-        SourceKind::Bird => scope::BIRDS,
-        SourceKind::Rain => scope::RAIN,
-        SourceKind::Thunder => scope::THUNDER,
-        SourceKind::Fire => scope::FIRE,
-        SourceKind::Insect => scope::INSECTS,
-    }
-}
 
 pub mod param {
     pub const VOLUME: u32 = 0;
@@ -94,16 +80,7 @@ pub mod param {
     pub const HEAD_PREDICTION: u32 = 42;
     /// 1 = the head turns about the neck (ears translate: motion parallax), 0 = pure rotation.
     pub const HEAD_PARALLAX: u32 = 43;
-    /// Flight mode: 0 = the scene (home), 1 = flying through an endless streamed landscape,
-    /// 2 = in that landscape, holding still (walking with the MOVE_* keys). 1 and 2 are both
-    /// "in the world" for the cross-fade (flight/, docs/flight-mode.md).
-    pub const FLIGHT: u32 = 44;
-    /// Movement keys held in the app, −1..1: W/S (+ = forward), A/D (+ = right), Q/E (+ = turn
-    /// right); MOVE_RUN 0/1 (Shift). Standing they walk; flying they steer and set the cruise.
-    pub const MOVE_FORWARD: u32 = 45;
-    pub const MOVE_STRAFE: u32 = 46;
-    pub const MOVE_TURN: u32 = 47;
-    pub const MOVE_RUN: u32 = 48;
+    /// 44..=48: reserved (formerly the flight mode and its movement keys); ids stay stable.
     /// The screen in front of the listener (set by the host from the display's physical size
     /// after the "look at the centre" calibration): visible width and height, metres, and the
     /// distance from the eyes to its centre, metres. Scenes use it as a portal (sounds can be
@@ -144,21 +121,7 @@ pub mod telemetry {
     pub const HEAD_HORIZON_MS: u32 = 12;
     /// Head-pose samples per second arriving from the host.
     pub const HEAD_RATE: u32 = 13;
-    /// Flight mode cross-fade 0 (scene) .. 1 (flying).
-    pub const FLIGHT: u32 = 14;
-    /// Current flight speed, m/s (ramps to the flight.speed control).
-    pub const FLIGHT_SPEED: u32 = 15;
-    /// Ears above the ground, m.
-    pub const FLIGHT_ALTITUDE: u32 = 16;
-    /// Distance travelled along the path, m (wraps at 10 km).
-    pub const FLIGHT_ODOMETER: u32 = 17;
-    /// Turn rate of the course, rad/s (+ = turning left).
-    pub const FLIGHT_TURN: u32 = 18;
-    /// Heading of the course in the landscape, rad (0..2π, counter-clockwise).
-    pub const FLIGHT_HEADING: u32 = 19;
-    /// Position in the landscape, m (wrapping at 4096 m: for scrolling ground textures).
-    pub const FLIGHT_X: u32 = 20;
-    pub const FLIGHT_Y: u32 = 21;
+    /// 14..=21: reserved (formerly flight telemetry); ids stay stable.
     /// Mix loudness after the mix dynamics, before VOLUME: momentary (400 ms), short-term
     /// (3 s) and gated integrated (BS.1770), LUFS.
     pub const LOUDNESS_MOMENTARY: u32 = 22;
@@ -241,18 +204,8 @@ struct Shared {
     /// Live waveform taps, see `scope`.
     scope: Box<[AtomicF32]>,
     scope_pos: AtomicUsize,
-    /// Flight mode, built off the audio thread on first use and handed over here.
-    flight_inbox: AtomicPtr<Flight>,
-    flight_requested: AtomicU32,
-    /// 1 while the streamed objects (not the scene's) are reported.
-    flight_shown: AtomicU32,
-    flight_objects: FlightBridge,
-    /// Where the listener is in the landscape (UI terrain), and whether it was published.
-    flight_frame: crate::flight::bridge::FrameBridge,
-    flight_framed: AtomicU32,
     /// Bird telemetry (`asmr_get_birds`).
     birds: crate::director::BirdBridge,
-    seed: u64,
     head: HeadPoseInput,
     /// Seconds of audio rendered (f64 bits): the clock head-pose arrivals are stamped with.
     clock: AtomicU64,
@@ -309,9 +262,6 @@ struct Dsp {
     /// The sound director's mix layer.
     mix: Mix,
     gains: [f32; BLOCK],
-    flight: Option<Box<Flight>>,
-    /// Cross-fade scene -> flight, 0..1.
-    flight_mix: f32,
 }
 
 pub struct Engine {
@@ -363,14 +313,7 @@ impl Engine {
             labels: prompt::labels(&world),
             scope: atomics(SCOPE_TRACKS * SCOPE_LEN),
             scope_pos: AtomicUsize::new(0),
-            flight_inbox: AtomicPtr::new(std::ptr::null_mut()),
-            flight_requested: AtomicU32::new(0),
-            flight_shown: AtomicU32::new(0),
-            flight_objects: FlightBridge::new(),
-            flight_frame: crate::flight::bridge::FrameBridge::new(),
-            flight_framed: AtomicU32::new(0),
             birds: crate::director::BirdBridge::new(),
-            seed: desc.seed,
             head: HeadPoseInput::new(),
             clock: AtomicU64::new(0),
             mix: MixShared::new(),
@@ -457,53 +400,11 @@ impl Engine {
             ctl_applied: false,
             mix: Mix::new(sr),
             gains: [1.0; BLOCK],
-            flight: None,
-            flight_mix: 0.0,
         };
         dsp.sync_scene_trees();
         dsp.publish(&shared);
-        let mut engine = Self { shared, rendering: AtomicBool::new(false), dsp: UnsafeCell::new(dsp) };
-        if let Some(f) = &desc.flight {
-            if f.apply(&engine)? {
-                // Starts in the air, at cruising speed: no cross-fade from the scene.
-                let ptr = engine.shared.flight_inbox.swap(std::ptr::null_mut(), Ordering::AcqRel);
-                let dsp = engine.dsp.get_mut();
-                if !ptr.is_null() {
-                    // SAFETY: produced by Box::into_raw in `prepare_flight`, taken once.
-                    let mut pack = unsafe { Box::from_raw(ptr) };
-                    pack.cruise(engine.shared.controls.state(&engine.shared.params).get(controls::id::FLIGHT_SPEED));
-                    dsp.flight = Some(pack);
-                }
-                dsp.flight_mix = 1.0;
-            }
-        }
+        let engine = Self { shared, rendering: AtomicBool::new(false), dsp: UnsafeCell::new(dsp) };
         Ok(engine)
-    }
-
-    /// Builds flight mode (once) on the calling thread and hands it to the audio thread.
-    /// Allocates; called from `set_param(FLIGHT, 1)`, i.e. the UI thread.
-    pub fn prepare_flight(&self) {
-        if self.shared.flight_requested.swap(1, Ordering::AcqRel) != 0 {
-            return;
-        }
-        let sr = self.shared.telemetry[telemetry::SAMPLE_RATE as usize].load();
-        let pack = Box::new(Flight::new(sr, self.shared.seed ^ 0xF1_6000));
-        self.shared.flight_inbox.store(Box::into_raw(pack), Ordering::Release);
-    }
-
-    /// Where the listener is in the flight landscape and what it is (None before flight mode
-    /// was first built). Any thread.
-    pub fn flight_frame(&self) -> Option<crate::flight::bridge::Frame> {
-        (self.shared.flight_framed.load(Ordering::Acquire) != 0).then(|| self.shared.flight_frame.read())
-    }
-
-    /// Shape of a streamed object (river bed, lake shore, ridge line) as listener-relative
-    /// (x, y, z) triples; returns the number of points. Any thread.
-    pub fn object_path(&self, id: u32, out: &mut [f32]) -> usize {
-        if self.shared.flight_shown.load(Ordering::Acquire) == 0 {
-            return 0;
-        }
-        self.shared.flight_objects.path(id, out)
     }
 
     /// Head orientation from a motion sensor. Any thread. `q` (w, x, y, z): head -> world rotation in
@@ -535,9 +436,6 @@ impl Engine {
             }
         }
         drop(guard);
-        if id == param::FLIGHT && value.is_finite() && value > 0.5 {
-            self.prepare_flight();
-        }
     }
 
     /// Copies the control tree (macros and their physical children) into `out`, returns how
@@ -588,12 +486,8 @@ impl Engine {
     /// Applies a JSON patch of control targets (gliding) and object moves; returns the
     /// result JSON with errors and an undo patch (docs/prompt-control.md).
     pub fn apply_patch_json(&self, patch: &str) -> String {
-        let (result, params) = prompt::apply_patch(&self.prompt_view(), patch);
+        let result = prompt::apply_patch(&self.prompt_view(), patch);
         self.mark_patch_touches(&result);
-        // Switches (flight on/off) are engine parameters, set after the control transaction.
-        for (id, value) in params {
-            self.set_param(id, value);
-        }
         result
     }
 
@@ -862,18 +756,12 @@ impl Engine {
 
     /// Copies scene objects (trees, rivers, birds) into `out`, returns how many were written.
     pub fn objects(&self, out: &mut [ObjectInfo]) -> usize {
-        if self.shared.flight_shown.load(Ordering::Acquire) != 0 {
-            return self.shared.flight_objects.read(out);
-        }
         self.shared.objects.read(out)
     }
 
     /// Per-bird behaviour telemetry of the scene (species, state, flight style, wingbeat,
-    /// velocity); 0 while flight mode is shown. Any thread.
+    /// velocity). Any thread.
     pub fn birds(&self, out: &mut [crate::director::BirdInfo]) -> usize {
-        if self.shared.flight_shown.load(Ordering::Acquire) != 0 {
-            return 0;
-        }
         self.shared.birds.read(out)
     }
 
@@ -952,23 +840,12 @@ impl Engine {
     }
 }
 
-impl Drop for Engine {
-    fn drop(&mut self) {
-        let p = self.shared.flight_inbox.swap(std::ptr::null_mut(), Ordering::AcqRel);
-        if !p.is_null() {
-            // SAFETY: produced by Box::into_raw in `prepare_flight` and never taken.
-            drop(unsafe { Box::from_raw(p) });
-        }
-    }
-}
-
 /// Track indices of `Engine::scope`; mirror ASMR_SCOPE_* in asmr.h.
 pub mod scope {
     pub const WATER: usize = 0;
     pub const WIND: usize = 1;
     pub const BIRDS: usize = 2;
-    /// Birds in flight.
-    pub const FLIGHT: usize = 3;
+    // 3: reserved (formerly flight mode).
     pub const OUTPUT: usize = 4;
     pub const RAIN: usize = 5;
     pub const INSECTS: usize = 6;
@@ -1122,19 +999,7 @@ impl Dsp {
             return;
         }
 
-        // Flight mode: take the pack once it is built; cross-fade over 1.5 s.
-        if self.flight.is_none() {
-            let ptr = shared.flight_inbox.swap(std::ptr::null_mut(), Ordering::AcqRel);
-            if !ptr.is_null() {
-                // SAFETY: produced by Box::into_raw in `Engine::prepare_flight`, taken once.
-                self.flight = Some(unsafe { Box::from_raw(ptr) });
-            }
-        }
-        let flying = p(param::FLIGHT) > 0.5 && self.flight.is_some();
-        let step = if flying { dt / 1.5 } else { -dt / 1.5 };
-        self.flight_mix = (self.flight_mix + step).clamp(0.0, 1.0);
-        // Fully in flight: the scene's emitters are not rendered at all.
-        let scene_emitters = if self.flight_mix >= 1.0 { 0 } else { self.world.emitters.len() };
+        let scene_emitters = self.world.emitters.len();
 
         // Controls: macros and their physical children -> generator configs (only on change).
         let st = if let Some(_guard) = shared.glides.try_edit() {
@@ -1233,13 +1098,8 @@ impl Dsp {
         let mut peaks = [0.0f32; SCOPE_TRACKS];
 
         let listener = pose.offset;
-        // Scene focus: where the head points, and whether the listener travels (flight speed;
-        // the scene's listener stands still).
-        let travel = match self.flight.as_deref() {
-            Some(f) if self.flight_mix > 0.5 => f.pose().ground_speed(),
-            _ => 0.0,
-        };
-        self.mix.set_listener(&head, travel);
+        // Scene focus: where the head points (the scene's listener stands still).
+        self.mix.set_listener(&head, 0.0);
         crate::profile::lap(crate::profile::Section::Control);
         for (idx, em) in self.world.emitters[..scene_emitters].iter_mut().enumerate() {
             let tmp = &mut self.scratch[..len];
@@ -1301,9 +1161,6 @@ impl Dsp {
                 SourceKind::Insect => scope::INSECTS,
             };
             peaks[track] = peaks[track].max(peak);
-            if flying {
-                peaks[scope::FLIGHT] = peaks[scope::FLIGHT].max(peak);
-            }
 
             // Propagation: delay/Doppler, spreading, air, ground, directivity, occlusion,
             // forest scattering, near field and reverb sends (propagation.rs).
@@ -1333,56 +1190,6 @@ impl Dsp {
             // Front pair stands in for the stereo taps (spectrum, level meters).
             self.left[..len].copy_from_slice(&self.bed[0][..len]);
             self.right[..len].copy_from_slice(&self.bed[1][..len]);
-        }
-        if let (Some(f), true) = (self.flight.as_deref_mut(), self.flight_mix > 0.0) {
-            for v in peaks.iter_mut() {
-                *v *= (self.flight_mix * core::f32::consts::FRAC_PI_2).cos();
-            }
-            let inputs = flight::Inputs {
-                st: &st,
-                bases: &shared.controls.bases,
-                hour: env.hour,
-                birds,
-                rain: self.director.weather().rain_unit(),
-                ambient: self.director.weather().ambient(&env),
-                head,
-                // The predicted head pose, relative to the direction of travel (+ = left / up).
-                head_yaw: pose.quat.to_yaw_pitch_roll().0,
-                head_pitch: pose.quat.to_yaw_pitch_roll().1,
-                listener_offset: pose.offset,
-                head_tracked: shared.head.get().is_some_and(|s| self.time - s.arrived < 1.0),
-                acoustic: Acoustic {
-                    temperature_c: env.temperature_c,
-                    humidity_pct: env.humidity * 100.0,
-                    pressure_kpa: p(param::PRESSURE),
-                    ground: GroundType::ForestFloor,
-                    tree_density_per_ha: p(param::TREE_DENSITY),
-                    foliage: p(param::FOLIAGE),
-                    reverb: p(param::REVERB),
-                    ear_height: p(param::EAR_HEIGHT),
-                    hrtf: if p(param::HRTF) > 0.5 { HrtfModel::Analytic } else { HrtfModel::Measured },
-                },
-                wind: &self.wind,
-                wind_slider: wind,
-                gustiness,
-                water,
-                neural,
-                hold: p(param::FLIGHT) > 1.5,
-                moves: flight::Moves::new(
-                    p(param::MOVE_FORWARD),
-                    p(param::MOVE_STRAFE),
-                    p(param::MOVE_TURN),
-                    p(param::MOVE_RUN) > 0.5,
-                ),
-            };
-            let bed = match self.bed_mode {
-                0 => None,
-                1 => Some((&mut self.bed, Some(&head))),
-                _ => Some((&mut self.bed, None)),
-            };
-            crate::profile::lap(crate::profile::Section::Control);
-            f.process(&inputs, self.flight_mix, &mut self.left[..len], &mut self.right[..len], bed, &mut peaks, &mut self.mix);
-            crate::profile::lap(crate::profile::Section::Flight);
         }
         self.mix.finish(len);
 
@@ -1418,19 +1225,7 @@ impl Dsp {
     }
 
     fn publish(&self, shared: &Shared) {
-        let flight = self.flight.as_deref().filter(|_| self.flight_mix > 0.5);
-        let mut scene_iter;
-        let mut flight_iter;
-        let emitters: &mut dyn Iterator<Item = &crate::scene::Emitter> = match flight {
-            Some(f) => {
-                flight_iter = f.sounding();
-                &mut flight_iter
-            }
-            None => {
-                scene_iter = self.world.emitters.iter();
-                &mut scene_iter
-            }
-        };
+        let emitters = self.world.emitters.iter();
         let mut count = 0;
         for (i, s) in emitters.take(MAX_SOURCES).enumerate() {
             count = i + 1;
@@ -1461,33 +1256,8 @@ impl Dsp {
         shared.objects.publish(&self.world);
         shared.birds.publish(&self.director, &self.world);
         let t = &shared.telemetry;
-        match flight {
-            Some(f) => {
-                f.publish(&shared.flight_objects);
-                shared.flight_shown.store(1, Ordering::Release);
-            }
-            None => shared.flight_shown.store(0, Ordering::Release),
-        }
-        if let Some(f) = self.flight.as_deref() {
-            f.publish_frame(&shared.flight_frame);
-            shared.flight_framed.store(1, Ordering::Release);
-        }
-        if let Some(f) = self.flight.as_deref() {
-            let pose = f.pose();
-            t[telemetry::FLIGHT_SPEED as usize].store(pose.ground_speed());
-            t[telemetry::FLIGHT_ALTITUDE as usize].store(pose.height);
-            t[telemetry::FLIGHT_ODOMETER as usize].store((pose.s % 10_000.0) as f32);
-            t[telemetry::FLIGHT_TURN as usize].store(pose.turn);
-            t[telemetry::FLIGHT_HEADING as usize].store(pose.heading as f32);
-            t[telemetry::FLIGHT_X as usize].store(pose.x.rem_euclid(4096.0) as f32);
-            t[telemetry::FLIGHT_Y as usize].store(pose.y.rem_euclid(4096.0) as f32);
-        }
-        t[telemetry::FLIGHT as usize].store(self.flight_mix);
         t[telemetry::GUST as usize].store(self.wind.gust());
-        let (wx, wy) = match flight {
-            Some(f) => f.acoustics.context().wind_to,
-            None => self.acoustics.context().wind_to,
-        };
+        let (wx, wy) = self.acoustics.context().wind_to;
         t[telemetry::WIND_FROM as usize].store((-wy).atan2(-wx));
         t[telemetry::BUBBLE_RATE as usize].store(bubble_rate);
         t[telemetry::TIME as usize].store((self.time % 86_400.0) as f32);

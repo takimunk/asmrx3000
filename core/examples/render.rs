@@ -6,9 +6,6 @@
 //! * `turn`  slowly sweeps the head yaw +-90 deg so you can check that the scene stays put.
 //! * `orbit` makes the near bird circle the listener (Doppler, near field, occlusion by trunks);
 //!   combine as `turn+orbit`.
-//! * `flyby` runs the built-in spatial demo scene (fly-bys, a flock changing trees, an
-//!   approach/recede, circling) and prints the director's timeline plus a per-second
-//!   left/right level trace.
 //! * `river` renders the default scene's river alone, at the listener's spot (4 m from the
 //!   bank), in every flow regime and across the WATER macro, and the birds alone for
 //!   reference; prints RMS per regime and writes the takes to the output WAV.
@@ -23,15 +20,14 @@
 //!   dripping, a gust shakes down a shower → crickets resume, slower. Weather stores run 20×
 //!   faster so the drying fits in the take. Prints the weather and levels every 5 s.
 //!
-//! A scene file given as the 4th argument replaces the default (or demo) scene.
+//! A scene file given as the 4th argument replaces the default scene.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
 
 use asmr_core::director::{bird_flags, bird_state, BirdInfo, Species};
-use asmr_core::scene::DEMO_SCENE_JSON;
-use asmr_core::{object_flags, param, telemetry, Engine, ObjectInfo, ObjectKind, SceneDesc, SourceInfo, MAX_OBJECTS, MAX_SOURCES};
+use asmr_core::{param, telemetry, Engine, ObjectInfo, SceneDesc, SourceInfo, MAX_OBJECTS, MAX_SOURCES};
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -39,7 +35,6 @@ fn main() -> std::io::Result<()> {
     let path = args.get(2).cloned().unwrap_or_else(|| "render.wav".into());
     let mode = args.get(3).map(String::as_str).unwrap_or("");
     let turn = mode.contains("turn");
-    let flyby = mode == "flyby";
     let weather = mode == "weather";
     let levels = weather || mode == "levels";
     let life = mode.starts_with("life");
@@ -47,7 +42,6 @@ fn main() -> std::io::Result<()> {
     let sr = 48_000.0f32;
     let scene = match args.get(4) {
         Some(file) => std::fs::read_to_string(file)?,
-        None if flyby => DEMO_SCENE_JSON.to_string(),
         None => asmr_core::scene::DEFAULT_SCENE_JSON.to_string(),
     };
     if mode == "river" {
@@ -86,18 +80,6 @@ fn main() -> std::io::Result<()> {
     let mut pcm: Vec<i16> = Vec::with_capacity(blocks * block * 2);
     let (mut peak, mut energy) = (0.0f32, 0.0f64);
 
-    let species: Vec<String> = desc
-        .entities
-        .iter()
-        .filter_map(|e| match e {
-            asmr_core::scene::EntityDesc::Bird(b) => Some(format!("{:?}", b.species).to_lowercase()),
-            _ => None,
-        })
-        .collect();
-    let mut objs = [ObjectInfo::default(); MAX_OBJECTS];
-    let n = engine.objects(&mut objs);
-    let mut prev = objs;
-    let mut closest = [f32::MAX; MAX_OBJECTS];
     let (mut win_l, mut win_r, mut win_n) = (0.0f64, 0.0f64, 0usize);
 
     let mut last_flash = 0.0f32;
@@ -150,49 +132,6 @@ fn main() -> std::io::Result<()> {
         last_flash = flash;
         if life {
             log.update(t, &engine);
-        }
-        if flyby {
-            engine.objects(&mut objs);
-            let mut bird_no = 0;
-            for i in 0..n {
-                let (o, p) = (objs[i], prev[i]);
-                if o.kind != ObjectKind::Bird as u32 {
-                    continue;
-                }
-                let name = &species[bird_no];
-                bird_no += 1;
-                let d = (o.x * o.x + o.y * o.y + o.z * o.z).sqrt();
-                let az = o.y.atan2(o.x).to_degrees();
-                let moving = o.flags & object_flags::MOVING != 0;
-                let was_moving = p.flags & object_flags::MOVING != 0;
-                let absent = o.flags & object_flags::ABSENT != 0;
-                if moving {
-                    closest[i] = closest[i].min(d);
-                }
-                if moving && !was_moving {
-                    println!("{t:6.1}s  {name:<12} #{:<4} takes off   at {d:5.1} m, az {az:+5.0}°", o.id);
-                } else if !moving && was_moving {
-                    let what = if absent { "leaves" } else { "lands" };
-                    println!(
-                        "{t:6.1}s  {name:<12} #{:<4} {what:<11} at {d:5.1} m, az {az:+5.0}°  (closest {:.1} m)",
-                        o.id, closest[i]
-                    );
-                    closest[i] = f32::MAX;
-                } else if !absent && p.flags & object_flags::ABSENT != 0 && !moving {
-                    println!("{t:6.1}s  {name:<12} #{:<4} appears     at {d:5.1} m, az {az:+5.0}°", o.id);
-                }
-            }
-            prev = objs;
-            if win_n as f32 >= 0.5 * sr {
-                let db = |e: f64| 10.0 * (e / win_n as f64).max(1e-12).log10();
-                let (dl, dr) = (db(win_l), db(win_r));
-                let bar = ((dl - dr) * 2.0).clamp(-20.0, 20.0) as i32;
-                let mut s = [b' '; 41];
-                s[20] = b'|';
-                s[(20 - bar) as usize] = b'*';
-                println!("        [{t:5.1}s] L {dl:6.1} dB  R {dr:6.1} dB  {}", String::from_utf8_lossy(&s));
-                (win_l, win_r, win_n) = (0.0, 0.0, 0);
-            }
         }
     }
     let elapsed = started.elapsed().as_secs_f32();

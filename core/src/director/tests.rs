@@ -247,7 +247,7 @@ fn thunder_proxy_points_at_the_strike() {
 // Life model
 // ---------------------------------------------------------------------------------------
 
-const OPEN_SCENE: &str = include_str!("../../scenes/open_country.json");
+const OPEN_SCENE: &str = include_str!("fixtures/open_country.json");
 
 #[test]
 fn residents_feed_on_the_ground_by_day_and_return_to_trees() {

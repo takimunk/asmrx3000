@@ -34,15 +34,13 @@ pub enum Section {
     Rotate,
     /// Binaural (or 7.1.4 bed) decode.
     Decode,
-    /// Flight mode's landscape: route, birds, LOD, terrain paths, slope echoes, airflow.
-    Flight,
     /// Mix finish, master dynamics, output loop, scope.
     Master,
     /// Spectrum ring and publishing telemetry for the UI.
     Publish,
 }
 
-pub const SECTIONS: usize = 10 + 2 * KINDS;
+pub const SECTIONS: usize = 9 + 2 * KINDS;
 
 impl Section {
     pub fn index(self) -> usize {
@@ -56,9 +54,8 @@ impl Section {
             Section::Reverb => 4 + 2 * KINDS,
             Section::Rotate => 5 + 2 * KINDS,
             Section::Decode => 6 + 2 * KINDS,
-            Section::Flight => 7 + 2 * KINDS,
-            Section::Master => 8 + 2 * KINDS,
-            Section::Publish => 9 + 2 * KINDS,
+            Section::Master => 7 + 2 * KINDS,
+            Section::Publish => 8 + 2 * KINDS,
         }
     }
 
@@ -68,7 +65,7 @@ impl Section {
             i if i <= KINDS => format!("generate: {}", KIND_NAMES[i - 1]),
             i if i == 1 + KINDS => "mix voice/feed".into(),
             i if i < 2 + 2 * KINDS => format!("propagate: {}", KIND_NAMES[i - 2 - KINDS]),
-            i => ["path filters", "near field + encode", "reverb", "rotate", "decode", "flight", "master", "publish"]
+            i => ["path filters", "near field + encode", "reverb", "rotate", "decode", "master", "publish"]
                 [i - 2 - 2 * KINDS]
                 .into(),
         }

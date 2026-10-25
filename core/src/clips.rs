@@ -705,9 +705,9 @@ pub mod group_param {
     pub const DISTANCE: u32 = 3;
     /// Playback rate of its files, ×0.5..2 [1] (not for physical models).
     pub const PITCH: u32 = 4;
-    /// First model parameter (water: flow speed ×0..2.5 [1]; plasma: hiss centre ×0.4..2.5 [1]).
+    /// First model parameter (water: flow speed ×0..2.5 [1]).
     pub const MODEL_A: u32 = 5;
-    /// Second model parameter (water: turbulence ×0..4 [1]; plasma: whistlers per minute added, 0..60 [0]).
+    /// Second model parameter (water: turbulence ×0..4 [1]).
     pub const MODEL_B: u32 = 6;
     pub const COUNT: usize = 7;
 }
@@ -718,7 +718,6 @@ pub enum GroupModel {
     #[default]
     None = 0,
     Water = 1,
-    Plasma = 2,
 }
 
 /// (min, max, default) of group parameter `p` for a group of model `m`.
@@ -943,10 +942,6 @@ impl ClipGroups {
             match c.sound.as_ref().map(|d| d.model) {
                 Some(crate::sources::ModelKind::Water) => {
                     s.model = GroupModel::Water;
-                    s.mask |= 0b110_0000;
-                }
-                Some(crate::sources::ModelKind::Plasma) => {
-                    s.model = GroupModel::Plasma;
                     s.mask |= 0b110_0000;
                 }
                 Some(_) => {}
@@ -1439,12 +1434,6 @@ impl Track {
                     c.flow_ms = (own.flow_ms * g.a).clamp(0.0, 6.0);
                     c.turbulence = (own.turbulence * g.b).clamp(0.0, 1.0);
                     ModelConfig::Water(c)
-                }
-                Some(ModelConfig::Plasma(own)) => {
-                    let mut c = own;
-                    c.hiss_hz = (own.hiss_hz * g.a).clamp(100.0, 2000.0);
-                    c.whistlers_per_min = (own.whistlers_per_min + g.b).clamp(0.0, 120.0);
-                    ModelConfig::Plasma(c)
                 }
                 _ => continue,
             };

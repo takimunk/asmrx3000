@@ -41,7 +41,7 @@ pub enum SoundClass {
 impl SoundClass {
     pub fn of_model(m: ModelKind) -> Self {
         match m {
-            ModelKind::Wind | ModelKind::Plasma => SoundClass::Wind,
+            ModelKind::Wind => SoundClass::Wind,
             ModelKind::Foliage => SoundClass::Foliage,
             ModelKind::Water => SoundClass::Water,
             ModelKind::Rain => SoundClass::Rain,

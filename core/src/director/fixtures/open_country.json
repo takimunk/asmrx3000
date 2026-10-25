@@ -1,0 +1,21 @@
+{
+  "name": "Open country: meadow by the sea",
+  "seed": 4242,
+  "environment": { "time_of_day": 7.0, "season": "summer", "wind": 0.35, "water": 0.0, "birds": 0.6, "ground_z": -1.7 },
+  "director": { "flock_interval": [80, 160] },
+  "entities": [
+    { "kind": "tree", "id": 1, "species": "pine",  "position": [-18.0, 14.0, -1.7], "canopy_height": 7.0 },
+    { "kind": "tree", "id": 2, "species": "birch", "position": [-22.0, -9.0, -1.7], "canopy_height": 5.5 },
+
+    { "kind": "bird", "id": 100, "species": "skylark", "behaviour": { "type": "open", "center": [12, 6, 0],  "radius": 25 } },
+    { "kind": "bird", "id": 101, "species": "skylark", "behaviour": { "type": "open", "center": [-10, -20, 0], "radius": 25 } },
+    { "kind": "bird", "id": 102, "species": "gull",    "behaviour": { "type": "open", "center": [45, 0, 0],  "radius": 35 } },
+    { "kind": "bird", "id": 103, "species": "gull",    "behaviour": { "type": "open", "center": [50, 15, 0], "radius": 35 } },
+    { "kind": "bird", "id": 104, "species": "gull",    "behaviour": { "type": "open", "center": [40, -20, 0], "radius": 35 } },
+    { "kind": "bird", "id": 105, "species": "raven",   "behaviour": { "type": "open", "center": [-20, 0, 0], "radius": 60 } },
+    { "kind": "bird", "id": 106, "species": "swallow", "behaviour": { "type": "open", "center": [5, 0, 0], "radius": 20 } },
+    { "kind": "bird", "id": 107, "species": "swallow", "behaviour": { "type": "open", "center": [0, 8, 0], "radius": 20 } },
+    { "kind": "bird", "id": 108, "species": "blackbird", "behaviour": { "type": "resident", "home": 1 } },
+    { "kind": "bird", "id": 109, "species": "wood_pigeon", "behaviour": { "type": "resident", "home": 2 } }
+  ]
+}

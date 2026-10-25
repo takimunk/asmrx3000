@@ -9,7 +9,6 @@ pub mod common;
 pub mod fire;
 pub mod foliage;
 pub mod insects;
-pub mod plasma;
 pub mod rain;
 pub mod thunder;
 pub mod water;
@@ -23,7 +22,6 @@ pub use bird::{Bird, VoiceStyle};
 pub use fire::{Fire, FireConfig};
 pub use foliage::{Foliage, FoliageConfig, FoliageKind};
 pub use insects::{InsectConfig, InsectKind, Insects};
-pub use plasma::{Plasma, PlasmaConfig};
 pub use rain::{Rain, RainConfig, Surface};
 pub use thunder::{Thunder, ThunderConfig};
 pub use water::{Water, WaterConfig};
@@ -217,13 +215,11 @@ pub enum ModelKind {
     Thunder,
     Fire,
     Insects,
-    /// Space plasma waves: hiss, whistlers, chorus, narrowband tones (plasma.rs).
-    Plasma,
 }
 
 impl ModelKind {
-    pub const ALL: [ModelKind; 8] =
-        [ModelKind::Wind, ModelKind::Foliage, ModelKind::Water, ModelKind::Rain, ModelKind::Thunder, ModelKind::Fire, ModelKind::Insects, ModelKind::Plasma];
+    pub const ALL: [ModelKind; 7] =
+        [ModelKind::Wind, ModelKind::Foliage, ModelKind::Water, ModelKind::Rain, ModelKind::Thunder, ModelKind::Fire, ModelKind::Insects];
 
     pub fn presets(self) -> &'static [&'static str] {
         match self {
@@ -234,14 +230,13 @@ impl ModelKind {
             ModelKind::Thunder => Thunder::PRESETS,
             ModelKind::Fire => Fire::PRESETS,
             ModelKind::Insects => Insects::PRESETS,
-            ModelKind::Plasma => Plasma::PRESETS,
         }
     }
 
     /// Engine source kind (telemetry / UI colour, per-kind gain).
     pub fn source_kind(self) -> SourceKind {
         match self {
-            ModelKind::Wind | ModelKind::Foliage | ModelKind::Plasma => SourceKind::Wind,
+            ModelKind::Wind | ModelKind::Foliage => SourceKind::Wind,
             ModelKind::Water => SourceKind::Water,
             ModelKind::Rain => SourceKind::Rain,
             ModelKind::Thunder => SourceKind::Thunder,
@@ -259,7 +254,6 @@ impl ModelKind {
             ModelKind::Thunder => "thunder",
             ModelKind::Fire => "fire",
             ModelKind::Insects => "insects",
-            ModelKind::Plasma => "plasma",
         }
     }
 }
@@ -321,7 +315,6 @@ pub enum ModelConfig {
     Thunder(ThunderConfig),
     Fire(FireConfig),
     Insects(InsectConfig),
-    Plasma(PlasmaConfig),
 }
 
 impl SoundDesc {
@@ -367,11 +360,6 @@ impl SoundDesc {
                 c.validate().map_err(ctx)?;
                 ModelConfig::Insects(c)
             }
-            ModelKind::Plasma => {
-                let c = configure(pick(m, p, Plasma::preset, PlasmaConfig::default(), names)?, &self.params).map_err(ctx)?;
-                c.validate().map_err(ctx)?;
-                ModelConfig::Plasma(c)
-            }
         })
     }
 
@@ -391,7 +379,6 @@ impl ModelConfig {
             ModelConfig::Thunder(_) => ModelKind::Thunder,
             ModelConfig::Fire(_) => ModelKind::Fire,
             ModelConfig::Insects(_) => ModelKind::Insects,
-            ModelConfig::Plasma(_) => ModelKind::Plasma,
         }
     }
 
@@ -404,7 +391,6 @@ impl ModelConfig {
             ModelConfig::Thunder(c) => Box::new(Thunder::new(sr, seed, c)),
             ModelConfig::Fire(c) => Box::new(Fire::new(sr, seed, c)),
             ModelConfig::Insects(c) => Box::new(Insects::new(sr, seed, c)),
-            ModelConfig::Plasma(c) => Box::new(Plasma::new(sr, seed, c)),
         }
     }
 }
