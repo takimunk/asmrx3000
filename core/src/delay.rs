@@ -69,13 +69,16 @@ pub struct DelayLine {
     mask: usize,
     /// Absolute index of the next sample to be written.
     w: usize,
+    /// Samples cleared by `skip` since the last `write`: once it covers the whole buffer,
+    /// skipping needs no memory traffic at all.
+    cleared: usize,
 }
 
 impl DelayLine {
     /// `max_delay` in samples; the buffer is the next power of two above it plus the taps.
     pub fn new(max_delay: usize) -> Self {
         let n = (max_delay + 2 * TAPS + 512).next_power_of_two();
-        Self { buf: vec![0.0; n], mask: n - 1, w: 0 }
+        Self { buf: vec![0.0; n], mask: n - 1, w: 0, cleared: n }
     }
 
     /// Largest delay (samples) a read may ask for.
@@ -90,13 +93,22 @@ impl DelayLine {
             self.buf[(start + j) & self.mask] = v;
         }
         self.w += x.len();
+        self.cleared = 0;
         start
     }
 
-    /// Advances over a block of silence without touching memory (valid only once the whole
-    /// buffer is known to be zero).
+    /// Advances over a block of silence. The skipped samples are zeroed until the whole
+    /// buffer has been (afterwards there is nothing left to clear): a sleeping path that wakes
+    /// reads back what the buffer held one lap earlier otherwise, a slice of stale audio that
+    /// sounds as a click or chirp at every wake-up.
     pub fn skip(&mut self, n: usize) -> usize {
         let start = self.w;
+        if self.cleared < self.buf.len() {
+            for j in 0..n {
+                self.buf[(start + j) & self.mask] = 0.0;
+            }
+            self.cleared += n;
+        }
         self.w += n;
         start
     }
@@ -227,6 +239,34 @@ mod tests {
             let want = (2.0 * PI * f * ((1984 + j) as f64 - d)).sin();
             assert!((*v as f64 - want).abs() < 5e-3, "linear j={j}: {v} vs {want}");
         }
+    }
+
+    /// Sleep (skip) after a short silence, wake, and read at a delay that reaches back over
+    /// the skipped stretch: nothing from the previous lap of the buffer may come back.
+    #[test]
+    fn skipped_stretch_reads_silence() {
+        init();
+        let mut dl = DelayLine::new(4096);
+        let n = dl.buf.len();
+        // A full lap of loud signal, then a little silence written, then skipped blocks.
+        dl.write(&vec![0.5f32; n]);
+        dl.write(&vec![0.0f32; 256]);
+        for _ in 0..(n / 64) {
+            dl.skip(64);
+        }
+        let start = dl.write(&[0.0f32; 64]);
+        let mut out = vec![0.0f32; 64];
+        dl.read_sinc(start, 1000.0, 1000.0, &mut out);
+        assert!(out.iter().all(|v| *v == 0.0), "stale audio after wake: {:?}", &out[..4]);
+        // A short sleep (less than a lap) must also read silence.
+        dl.write(&vec![0.5f32; n]);
+        dl.write(&vec![0.0f32; 256]);
+        for _ in 0..30 {
+            dl.skip(64);
+        }
+        let start = dl.write(&[0.0f32; 64]);
+        dl.read_sinc(start, 1500.0, 1500.0, &mut out);
+        assert!(out.iter().all(|v| *v == 0.0), "stale audio after a short sleep: {:?}", &out[..4]);
     }
 
     #[test]
