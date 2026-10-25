@@ -366,7 +366,6 @@ final class OnboardingController: NSObject, NSWindowDelegate {
             fadeOut(w)
             return
         }
-        model.audio.place = .home
         model.audio.play()
         guard let menu = MenuBarController.shared else {
             fadeOut(w)

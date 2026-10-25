@@ -540,7 +540,7 @@ private extension View {
 
 // MARK: - Transport
 
-/// Play, volume, where the listener is (home, standing in the world or flying), head tracking and recenter;
+/// Play, volume, head tracking and recenter;
 /// the status on the right says where the head looks (or the hour). Whatever the pointer is
 /// over is named, with its key, in `hint` (drawn over the scene).
 private struct Transport: View {
@@ -564,13 +564,6 @@ private struct Transport: View {
                     model.stage.refreshControls()
                 }
                 .padding(.trailing, Grid.x2)
-            }
-            if !audio.scene.isClip {
-                // Home, standing or flying: the forest's generated world. Clip scenes have none.
-                ModeSwitch(place: audio.place, hint: $hint) { to in
-                    act { if audio.place != to { audio.place = to } }()
-                }
-                .padding(.trailing, Grid.x1)
             }
             LabeledToggle(icon: .head, title: tr("Head"), on: head.enabled,
                           name: head.enabled ? tr("Head tracking is on: turn off") : tr("Head tracking with AirPods: turn on"),
@@ -628,72 +621,6 @@ private struct Transport: View {
             guard words.count == 2, let arrow = arrows[words[1]] else { return arrows[part] ?? part }
             return "\(arrow) \(words[0])"
         }.joined(separator: " ")
-    }
-}
-
-/// Where the listener is: "Дома | Стоим | Летим", the current one raised. Clicking another
-/// one switches; F stops / flies on in the world and takes off from home. Says plainly which
-/// mode is on and what a click does.
-private struct ModeSwitch: View {
-    typealias Place = AudioEngine.Place
-    let place: Place
-    @Binding var hint: String?
-    let set: (Place) -> Void
-    @ObservedObject private var lang = Language.shared
-    @State private var hovered: Place?
-    /// The segments sit 2 pt inside the frame.
-    private static let inset: CGFloat = 2
-
-    var body: some View {
-        HStack(spacing: Self.inset) {
-            segment(.home, title: tr("Home"))
-            segment(.standing, title: tr("Standing"))
-            segment(.flying, title: tr("Flying"))
-        }
-        .padding(Self.inset)
-        .frame(height: Grid.control)
-        .background(RoundedRectangle(cornerRadius: Grid.radius, style: .continuous).strokeBorder(Ink.hairline, lineWidth: 1))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(tr("Mode"))
-    }
-
-    /// What hovering a segment says: the current mode, or what a click does (and its key).
-    private func describe(_ to: Place) -> String {
-        if to == place {
-            switch to {
-            case .home: return tr("Now: at home, the forest by the river")
-            case .standing: return tr("Now: standing, walk   W A S D,  run   ⇧")
-            case .flying: return tr("Now: flying, steer   A D,  faster   W")
-            }
-        }
-        switch to {
-        case .home: return tr("Go back home")
-        case .standing: return place == .flying ? tr("Stop here   F") : tr("Step into the world and stand")
-        case .flying: return place == .standing ? tr("Fly on   F") : tr("Take off over the forest   F")
-        }
-    }
-
-    private func segment(_ to: Place, title: String) -> some View {
-        let on = place == to
-        return Button { set(to) } label: {
-            Text(title)
-                .font(Ink.text(Ink.Size.caption))
-                .foregroundStyle(on || hovered == to ? Ink.paper : Ink.graphite)
-                .fixedSize()
-                .padding(.horizontal, Grid.x2 - 2)
-                .frame(maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: Grid.radius - Self.inset, style: .continuous)
-                    .fill(on ? Ink.pressed : hovered == to ? Ink.raised : .clear))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { h in
-            hovered = h ? to : (hovered == to ? nil : hovered)
-            hint = h ? describe(to) : nil
-        }
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

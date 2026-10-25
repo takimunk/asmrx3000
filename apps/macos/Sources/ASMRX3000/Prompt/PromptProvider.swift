@@ -372,35 +372,13 @@ struct MockProvider: PromptProvider {
         if let side {
             set("env.wind_direction", side.deg); said.append(tr("wind %@", tr(side.name)))
         }
-        // Places: the first landscape whose words match and that exists.
-        let places: [(words: [String], biomes: [String])] = [
-            (["пустын", "desert"], ["desert", "meadows"]),
-            (["гор", "mountain"], has("снег", "snow") ? ["snowy_mountains", "highlands"] : ["highlands", "snowy_mountains"]),
-            (["мор", "sea"], ["sea_coast", "lake_shore", "river_valley"]),
-            (["озер", "озёр", "lake"], ["lake_shore", "taiga"]),
-            (["тайг", "taiga"], ["taiga"]),
-            (["луг", "поле", "meadow"], ["meadows"]),
-            (["путешеств", "journey", "travel"], ["journey"]),
-        ]
-        let options = scene.options["flight.biome"] ?? []
-        if let place = places.first(where: { p in p.words.contains { t.contains($0) } }),
-           let biome = place.biomes.first(where: options.contains) {
-            set("flight.on", "on"); set("flight.biome", biome)
-            if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 5) }
-            said.append(tr(Knob.biomeName(biome)))
-        } else if has("полет", "полёт", "лети", "летим", "fly") {
-            set("flight.on", "on"); if (values["flight.speed"] ?? 0) < 1 { set("flight.speed", 8) }; said.append(tr("flying"))
-        }
-        if has("домой", "home") { set("flight.on", "off"); said.append(tr("at home")) }
-        else if has("приземл", "land", "стоп", "останов", "завис") { set("flight.on", "stand"); said.append(tr("standing here")) }
-
         let explanation = said.isEmpty ? "" : tr("Mock: %@.", said.joined(separator: ", "))
         let patch: [String: Any] = ["explanation": explanation, "glide_s": glide, "changes": changes]
         return try PromptReply(patch: JSONSerialization.data(withJSONObject: patch), kind: said.isEmpty ? .unmatched : .patch)
     }
 }
 
-/// Current values, options, switches and objects from asmr_get_state_json.
+/// Current values, options and objects from asmr_get_state_json.
 struct SceneState {
     var values: [String: Double] = [:]
     var units: [String: String] = [:]
@@ -408,8 +386,6 @@ struct SceneState {
     var ranges: [String: ClosedRange<Double>] = [:]
     /// `<group>.level` controls (dB loudness of one group).
     var loudness: Set<String> = []
-    /// Switch states by key ("flight.on": "off" home, "on" flying, "stand" standing in the world).
-    var switches: [String: String] = [:]
     var trees: [(id: Int, pos: [Double])] = []
     /// Object kinds present ("tree", "river", "fire", …).
     var kinds: Set<String> = []
@@ -423,9 +399,6 @@ struct SceneState {
             options[k] = c["options"] as? [String]
             if let lo = c["min"] as? Double, let hi = c["max"] as? Double, lo <= hi { ranges[k] = lo...hi }
             if c["loudness"] as? Bool == true { loudness.insert(k) }
-        }
-        for s in o["switches"] as? [[String: Any]] ?? [] {
-            if let k = s["key"] as? String { switches[k] = s["value"] as? String ?? "off" }
         }
         for obj in o["objects"] as? [[String: Any]] ?? [] {
             if let k = obj["kind"] as? String { kinds.insert(k) }
@@ -446,7 +419,6 @@ struct SceneState {
                 s[k] = String(format: "%g", (v * 100).rounded() / 100) + ((units[k] ?? "").isEmpty ? "" : " " + units[k]!)
             }
         }
-        for (k, v) in switches { s[k] = v }
         return s
     }
 

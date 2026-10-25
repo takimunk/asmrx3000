@@ -530,11 +530,11 @@ fn a_path_motion_passes_its_keyframes() {
     assert!(p.1.abs() < 0.15 && p.0 < -0.5, "{p:?}");
 }
 
-/// The cave (core/scenes/cave_drips.json): its levers fit its groups, and over a long session
+/// The cave (test fixture fixtures/cave_drips.json): its levers fit its groups, and over a long session
 /// the direction visits every episode and moves every lever.
 #[test]
 fn the_cave_is_directed_through_all_its_spells() {
-    let desc = SceneDesc::from_json(include_str!("../../scenes/cave_drips.json")).unwrap();
+    let desc = SceneDesc::from_json(include_str!("fixtures/cave_drips.json")).unwrap();
     crate::clips::validate_levers(&desc).unwrap();
     let steer = Steer::from_desc(desc.direction.as_ref().unwrap());
     let mut seen = std::collections::BTreeSet::new();

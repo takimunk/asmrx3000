@@ -4,7 +4,7 @@
 //!   a few environment readings and a compact list of scene objects.
 //! * [`apply_patch`] — `{"glide_s": 4, "changes": [{"key": "water.flow", "value": 0.3}, …],
 //!   "moves": [{"object": 3, "position": [x, y, z]}]}`. Keys are the control keys the sliders
-//!   use plus switches (`flight.on`); values are clamped, presets may be given by name,
+//!   use; values are clamped, presets may be given by name,
 //!   `"reset"` hands a child back to its macro. Parsing is tolerant of what language models
 //!   write: aliases and near-miss keys, `<group>.level` ↔ `<group>.gain`, loose preset names
 //!   (also Russian place words for landscapes), numbers with units, `delta` / `factor`, a
@@ -334,11 +334,9 @@ pub(crate) fn state_json(v: &View) -> String {
             Value::Object(m)
         })
         .collect();
-    let switches: Vec<Value> = Switch::ALL.iter().map(|s| json!({"key": s.key(), "value": s.state(v), "options": s.options()})).collect();
     let (facts, parts) = scene_facts(v);
     json!({
         "controls": ctl,
-        "switches": switches,
         "environment": env,
         "scene": facts,
         "summary_ru": summary_text(&parts),
@@ -358,53 +356,6 @@ pub(crate) fn state_json(v: &View) -> String {
 /// Sound-director per-group loudness controls (`<group>.level`, dB) carry this flag.
 const LEVEL_FLAG: u32 = 1 << 4;
 
-/// Switches a patch may flip besides the controls (they are engine parameters); their states
-/// are named by `options` in the order of the parameter's values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Switch {
-    /// Flight mode (`ASMR_PARAM_FLIGHT`): "off" = home (the scene), "on" = flying through
-    /// generated landscapes, "stand" = in that landscape, holding still.
-    Flight,
-}
-
-impl Switch {
-    pub(crate) const ALL: [Switch; 1] = [Switch::Flight];
-
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            Switch::Flight => "flight.on",
-        }
-    }
-
-    fn param(self) -> u32 {
-        match self {
-            Switch::Flight => crate::engine::param::FLIGHT,
-        }
-    }
-
-    /// Names of the states, by parameter value.
-    pub(crate) fn options(self) -> &'static [&'static str] {
-        match self {
-            Switch::Flight => &["off", "on", "stand"],
-        }
-    }
-
-    /// Index of the current state.
-    fn value(self, v: &View) -> u8 {
-        let x = v.params[self.param() as usize].load();
-        if x.is_finite() { x.round().clamp(0.0, (self.options().len() - 1) as f32) as u8 } else { 0 }
-    }
-
-    fn state(self, v: &View) -> &'static str {
-        self.name(self.value(v))
-    }
-
-    fn name(self, value: u8) -> &'static str {
-        let o = self.options();
-        o[(value as usize).min(o.len() - 1)]
-    }
-}
-
 /// How a value given for an alias maps onto the control it resolved to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Conv {
@@ -418,7 +369,6 @@ enum Conv {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Resolved {
     Control(usize, Conv),
-    Switch(Switch),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -529,7 +479,6 @@ fn group_alias(g: &str) -> &str {
         "thunder" | "storm" | "weather" | "дождь" => "rain",
         "time" | "environment" | "world" | "climate" => "env",
         "volume" | "overall" | "global" | "output" => "master",
-        "fly" | "flying" | "landscape" | "land" | "terrain" | "полет" => "flight",
         "ветер" => "wind",
         "режиссура" | "сценарий" | "course" => "direction",
         g => g,
@@ -545,10 +494,7 @@ fn alias(k: &str) -> Option<&'static str> {
         "season" => "env.season",
         "wind.direction" | "wind_direction" | "wind.from" | "wind.dir" | "wind.heading" | "env.wind_dir" | "env.wind_from" | "wind_from" | "направление_ветра" => "env.wind_direction",
         "volume" | "master" | "master.gain" | "master.level" | "loudness_overall" | "громкость" => "master.volume",
-        "biome" | "landscape" | "place" | "location" | "terrain" | "flight.landscape" | "flight.place" | "flight.terrain" => "flight.biome",
         "thunder" | "storm" | "rain.thunder" | "thunderstorm" | "rain.thunderstorm" => "rain.storm",
-        "speed" | "flight.velocity" => "flight.speed",
-        "altitude" | "height" | "flight.height" => "flight.altitude",
         "regime" | "water.type" | "water.character" | "water.preset" | "water.mode" => "water.regime",
         // The scene's own course (direction.*).
         "direction" | "direction.on" | "direction.level" | "режиссура" | "сценарий" | "course" | "scenario" | "autopilot" | "автопилот" => "direction.amount",
@@ -563,14 +509,6 @@ fn alias(k: &str) -> Option<&'static str> {
     })
 }
 
-fn is_switch_word(k: &str) -> Option<Switch> {
-    match k {
-        "flight.on" | "flight" | "flight.enabled" | "flight.enable" | "flight.active" | "flight.mode" | "flight_mode" | "flying" | "fly" | "flight.state"
-        | "flight.flying" | "flight.toggle" | "param.flight" | "params.flight" => Some(Switch::Flight),
-        _ => None,
-    }
-}
-
 /// Resolves what a patch entry's key means; `Err` carries (English, Russian) messages.
 fn resolve_key(raw: &str) -> Result<Resolved, (String, String)> {
     if let Some(i) = controls::index_of_key(raw) {
@@ -579,16 +517,13 @@ fn resolve_key(raw: &str) -> Result<Resolved, (String, String)> {
     let mut k = norm(raw);
     for prefix in ["controls.", "control.", "scene.", "params.", "set."] {
         if let Some(rest) = k.strip_prefix(prefix) {
-            if !rest.is_empty() && is_switch_word(&k).is_none() {
+            if !rest.is_empty() {
                 k = rest.to_string();
             }
         }
     }
     if let Some(i) = controls::index_of_key(&k) {
         return Ok(Resolved::Control(i, Conv::Same));
-    }
-    if let Some(s) = is_switch_word(&k) {
-        return Ok(Resolved::Switch(s));
     }
     if let Some(a) = alias(&k) {
         if let Some(i) = controls::index_of_key(a) {
@@ -607,9 +542,6 @@ fn resolve_key(raw: &str) -> Result<Resolved, (String, String)> {
         let full = format!("{g}.{rest}");
         if let Some(i) = controls::index_of_key(&full) {
             return Ok(Resolved::Control(i, Conv::Same));
-        }
-        if let Some(s) = is_switch_word(&full) {
-            return Ok(Resolved::Switch(s));
         }
         if let Some(a) = alias(&full) {
             if let Some(i) = controls::index_of_key(a) {
@@ -650,33 +582,14 @@ fn resolve_key(raw: &str) -> Result<Resolved, (String, String)> {
     if let (Some(one), None) = (ends.next(), ends.next()) {
         return Ok(Resolved::Control(controls::index_of_key(one).unwrap_or(0), Conv::Same));
     }
-    if let Some(one) = fuzzy(&k, keys().chain(Switch::ALL.iter().map(|s| s.key()))) {
+    if let Some(one) = fuzzy(&k, keys()) {
         if let Some(i) = controls::index_of_key(one) {
             return Ok(Resolved::Control(i, Conv::Same));
-        }
-        if let Some(s) = Switch::ALL.iter().find(|s| s.key() == one) {
-            return Ok(Resolved::Switch(*s));
         }
     }
     let near = closest(&k, keys()).unwrap_or("");
     Err((format!("unknown key `{raw}` (closest: {near})"), format!("нет параметра «{raw}» (ближе всего {near})")))
 }
-
-/// Words that pick a landscape preset, best candidate first. Only names that exist count.
-const PLACE_WORDS: &[(&[&str], &[&str])] = &[
-    (&["desert", "dune", "sand", "sahara", "пустын", "дюн", "песк", "пески"], &["desert"]),
-    (&["snow", "снег", "снеж", "alpine", "glacier", "ледник"], &["snowy_mountains", "highlands"]),
-    (&["mountain", "hill", "ridge", "гор", "скал", "нагорь"], &["highlands", "snowy_mountains"]),
-    (&["sea", "ocean", "coast", "beach", "shore_sea", "мор", "океан", "побереж", "пляж"], &["sea_coast", "lake_shore"]),
-    (&["lake", "pond", "озер", "пруд"], &["lake_shore", "taiga"]),
-    (&["big_river", "wide_river", "большая_рек", "широк"], &["big_river", "river_valley"]),
-    (&["river", "valley", "brook", "рек", "долин", "ручь", "ручей"], &["river_valley", "big_river"]),
-    (&["taiga", "conifer", "spruce", "pine", "тайг", "хвой", "ель", "елов", "сосн"], &["taiga"]),
-    (&["meadow", "field", "steppe", "prairie", "grass", "луг", "поле", "степ", "трав"], &["meadows"]),
-    (&["oak", "birch", "deciduous", "broadleaf", "дуб", "берез", "листв"], &["broadleaf"]),
-    (&["forest", "wood", "лес"], &["mixed"]),
-    (&["journey", "travel", "tour", "everywhere", "путешеств", "разн", "везде"], &["journey"]),
-];
 
 /// Words that pick a `direction.cue` option, first match wins (so "после дождя" is not rain).
 const CUE_WORDS: &[(&[&str], &str)] = &[
@@ -695,7 +608,7 @@ const CUE_WORDS: &[(&[&str], &str)] = &[
 ];
 
 /// Matches a preset name loosely: exact, as-built words, prefix / substring, edit distance,
-/// then place words in English or Russian (landscapes) or weather words (`direction.cue`).
+/// then weather words (`direction.cue`).
 fn match_option(id: u32, raw: &str) -> Result<usize, (String, String)> {
     let opts = controls::options(id);
     let s = norm(raw);
@@ -708,7 +621,7 @@ fn match_option(id: u32, raw: &str) -> Result<usize, (String, String)> {
         }
     }
     let containing: Vec<usize> = (0..opts.len()).filter(|&k| s.len() >= 3 && (opts[k].contains(s.as_str()) || s.contains(opts[k]))).collect();
-    if containing.len() == 1 || (!containing.is_empty() && id != controls::id::FLIGHT_BIOME) {
+    if !containing.is_empty() {
         return Ok(containing[0]);
     }
     if let Some(one) = fuzzy(&s, opts.iter().copied()) {
@@ -717,15 +630,6 @@ fn match_option(id: u32, raw: &str) -> Result<usize, (String, String)> {
     if id == controls::id::DIRECTION_CUE {
         if let Some(k) = CUE_WORDS.iter().find(|(words, _)| words.iter().any(|w| s.contains(w))).and_then(|(_, pick)| opts.iter().position(|o| o == pick)) {
             return Ok(k);
-        }
-    }
-    if id == controls::id::FLIGHT_BIOME {
-        for (words, picks) in PLACE_WORDS {
-            if words.iter().any(|w| s.contains(w)) {
-                if let Some(k) = picks.iter().find_map(|p| opts.iter().position(|o| o == p)) {
-                    return Ok(k);
-                }
-            }
         }
     }
     let key = controls::index_of_id(id).map_or("", |i| controls::meta(i).key);
@@ -874,23 +778,6 @@ fn convert(op: Op, conv: Conv) -> Op {
     }
 }
 
-/// A switch state: 0 off (home), 1 on (flying), 2 stand (holding still in the world).
-fn parse_switch(val: &Value) -> Option<u8> {
-    match val {
-        Value::Bool(b) => Some(*b as u8),
-        Value::Number(n) => n.as_f64().filter(|x| x.is_finite()).map(|x| x.round().clamp(0.0, 2.0) as u8),
-        Value::String(s) => match norm(s).as_str() {
-            "on" | "true" | "yes" | "start" | "fly" | "go" | "1" | "вкл" | "да" | "летим" | "лети" => Some(1),
-            "off" | "false" | "no" | "land" | "home" | "0" | "выкл" | "нет" | "домой" | "дома" => Some(0),
-            "stand" | "stop" | "hold" | "halt" | "pause" | "hover" | "2" | "стоп" | "стоим" | "стой" | "остановись"
-            | "зависни" | "пауза" => Some(2),
-            _ => None,
-        },
-        Value::Object(o) => o.get("value").and_then(parse_switch),
-        _ => None,
-    }
-}
-
 /// Finds the JSON in a model reply that wrapped it in prose or a code fence.
 fn extract_json(text: &str) -> Option<Value> {
     if let Ok(v) = serde_json::from_str::<Value>(text) {
@@ -903,7 +790,7 @@ fn extract_json(text: &str) -> Option<Value> {
 }
 
 /// Top-level fields of a patch that are not changes.
-const PATCH_FIELDS: &[&str] = &["explanation", "glide_s", "changes", "moves", "answer", "intent", "say", "reply", "message", "params", "switches", "notes"];
+const PATCH_FIELDS: &[&str] = &["explanation", "glide_s", "changes", "moves", "answer", "intent", "say", "reply", "message", "params", "notes"];
 
 /// The change list in whatever shape it came: an array of entries, a `{key: value}` map,
 /// wrapped in `patch` / `input` / `set_scene`, or loose keys at the top level.
@@ -914,7 +801,7 @@ fn change_list(o: &Map<String, Value>) -> Vec<Value> {
         Some(Value::Object(m)) => from_map(m),
         _ => Vec::new(),
     };
-    for k in ["params", "switches"] {
+    for k in ["params"] {
         if let Some(Value::Object(m)) = o.get(k) {
             out.extend(from_map(m));
         }
@@ -945,9 +832,8 @@ fn unwrap_patch(root: Value) -> Value {
     }
 }
 
-/// Applies a patch (see the module doc). Returns the result JSON and the engine parameters
-/// to set afterwards (switches):
-/// `{"ok", "applied": [{"key", "value" | "reset", "clamped"?, "from"?}], "switched": {..},
+/// Applies a patch (see the module doc). Returns the result JSON:
+/// `{"ok", "applied": [{"key", "value" | "reset", "clamped"?, "from"?}],
 ///   "moved": [ids], "errors": [..], "errors_ru": [..], "undo": <patch>}`.
 /// Valid entries are applied even when others are rejected.
 /// How much louder a group gets when its physical macro goes from `from` to `to`, dB:
@@ -1000,13 +886,13 @@ fn balance(list: &mut Vec<Change>, before: &[f32]) -> Vec<(usize, f32)> {
     trims
 }
 
-pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
+pub(crate) fn apply_patch(v: &View, patch: &str) -> String {
     let mut errs = Errs::default();
     let Some(root) = extract_json(patch) else {
         let e = serde_json::from_str::<Value>(patch).err().map_or_else(String::new, |e| e.to_string());
         let out = json!({"ok": false, "applied": [], "moved": [], "errors": [format!("patch is not JSON: {e}")],
             "errors_ru": ["ответ модели не JSON"], "undo": {"changes": []}});
-        return (out.to_string(), Vec::new());
+        return out.to_string();
     };
     let root = unwrap_patch(root);
     let (default_glide, changes, moves) = match &root {
@@ -1028,7 +914,6 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
 
     // Parse everything first.
     let mut list: Vec<Change> = Vec::new();
-    let mut switches: Vec<(Switch, u8)> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     for c in &changes {
         let Some(o) = c.as_object() else {
@@ -1048,19 +933,6 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         };
         let value = ["value", "to", "target", "set", "state"].iter().find_map(|k| o.get(*k));
         let i = match resolved {
-            Resolved::Switch(s) => {
-                match value.and_then(parse_switch).or_else(|| o.get("on").and_then(parse_switch)) {
-                    Some(on) => {
-                        switches.retain(|(x, _)| *x != s);
-                        switches.push((s, on));
-                    }
-                    None => errs.push(
-                        format!("{}: expected one of {}", s.key(), s.options().join(", ")),
-                        format!("«{}»: нужно {}", s.key(), s.options().join(", ")),
-                    ),
-                }
-                continue;
-            }
             Resolved::Control(i, conv) => {
                 if key != controls::meta(i).key {
                     notes.push(format!("{key} → {}", controls::meta(i).key));
@@ -1118,9 +990,6 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         };
         undo.push(json!({"key": m.key, "value": back}));
     }
-    for (s, _) in &switches {
-        undo.push(json!({"key": s.key(), "value": s.state(v)}));
-    }
 
     let mut applied = Vec::new();
     for c in &list {
@@ -1176,15 +1045,6 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
     }
     drop(guard);
 
-    // Switches: engine parameters, set by the caller after this transaction.
-    let mut params = Vec::new();
-    let mut switched = Map::new();
-    for (s, x) in &switches {
-        params.push((s.param(), *x as f32));
-        switched.insert(s.key().into(), json!(s.name(*x)));
-        applied.push(json!({"key": s.key(), "value": s.name(*x), "from": s.state(v)}));
-    }
-
     // Object moves (immediate; the stage animates its own way).
     let objects = v.objects();
     let mut moved = Vec::new();
@@ -1223,9 +1083,6 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         "errors_ru": errs.ru,
         "undo": {"glide_s": default_glide.min(2.0), "changes": undo, "moves": undo_moves},
     });
-    if !switched.is_empty() {
-        out["switched"] = Value::Object(switched);
-    }
     if !notes.is_empty() {
         out["notes"] = json!(notes);
     }
@@ -1233,7 +1090,7 @@ pub(crate) fn apply_patch(v: &View, patch: &str) -> (String, Vec<(u32, f32)>) {
         // The trims the balance added (also in `applied` and `undo`), for the user's line.
         out["balanced"] = json!(balanced.iter().map(|(i, db)| json!({"key": controls::meta(*i).key, "db": r3(*db)})).collect::<Vec<_>>());
     }
-    (out.to_string(), params)
+    out.to_string()
 }
 
 fn start_value(v: &View, i: usize, from: f32, mut to: f32, glide: f32) {
@@ -1262,45 +1119,6 @@ fn start_value(v: &View, i: usize, from: f32, mut to: f32, glide: f32) {
 
 /// A source counts as sounding above this RMS.
 const AUDIBLE: f32 = 1e-4;
-
-/// Russian names of landscape presets (unknown ones are shown by their machine name).
-fn biome_ru(name: &str) -> String {
-    match name {
-        "mixed" => "смешанный лес",
-        "broadleaf" => "лиственный лес",
-        "taiga" => "тайга",
-        "river_valley" => "речная долина",
-        "meadows" => "луга",
-        "highlands" => "нагорье",
-        "desert" => "пустыня",
-        "snowy_mountains" => "снежные горы",
-        "lake_shore" => "берег озера",
-        "sea_coast" => "морское побережье",
-        "big_river" => "большая река",
-        "journey" => "путешествие",
-        other => return other.replace('_', " "),
-    }
-    .to_string()
-}
-
-/// English blurb of a landscape preset for the system prompt.
-fn biome_en(name: &str) -> String {
-    match name {
-        "mixed" => "mixed forest, brooks, a lake now and then".into(),
-        "broadleaf" => "oak, birch and aspen woods".into(),
-        "taiga" => "spruce and pine, lakes, rock".into(),
-        "river_valley" => "many brooks, willows, alders, lakes".into(),
-        "meadows" => "open parkland and fields, crickets, camps".into(),
-        "highlands" => "ridges, rock, waterfalls".into(),
-        "desert" => "dry sand and dunes, almost no trees, hot wind".into(),
-        "snowy_mountains" => "snowy peaks and ridges, cold wind, sparse conifers".into(),
-        "lake_shore" => "a lake shore with lapping water".into(),
-        "sea_coast" => "a sea coast with surf".into(),
-        "big_river" => "a wide big river".into(),
-        "journey" => "a journey: the landscape changes along the way (meadows, forests, lakes, taiga, mountains)".into(),
-        other => other.replace('_', " "),
-    }
-}
 
 fn regime_ru(name: &str) -> &'static str {
     match name {
@@ -1542,7 +1360,7 @@ fn distance_ru(d: f32) -> &'static str {
 pub(crate) struct Live {
     /// Sounding sources (`asmr_get_sources`): kind, listener-relative position, level, pitch.
     pub sources: Vec<SourceInfo>,
-    /// What is on stage now (the streamed landscape while flying).
+    /// What is on stage now.
     pub objects: Vec<ObjectInfo>,
     pub mix: MixInfo,
 }
@@ -1559,43 +1377,19 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     let mut parts: Vec<(&'static str, String)> = Vec::new();
 
     // Place.
-    let flying = p(param::FLIGHT) > 0.5;
-    let standing = p(param::FLIGHT) > 1.5;
     let playing = p(param::PLAYING) > 0.5;
-    let biome = opt("flight.biome").unwrap_or("mixed");
     let kinds = |k: u32| v.live.objects.iter().filter(|o| o.kind == k && o.flags & object_flags::ABSENT == 0).count();
-    let (trees, rivers, lakes, rocks) = (kinds(0), kinds(1), kinds(4), kinds(5));
+    let (trees, rivers) = (kinds(0), kinds(1));
     let sounding = |kind: SourceKind| v.live.sources.iter().filter(move |s| s.kind == kind as u32 && s.level > AUDIBLE);
     let fire = sounding(SourceKind::Fire).count() > 0;
-    let speed = t(telemetry::FLIGHT_SPEED);
-    let altitude = t(telemetry::FLIGHT_ALTITUDE);
-    let place = if flying {
-        json!({"mode": if standing { "stand" } else { "flight" }, "biome": biome, "speed_m_s": r3(speed), "altitude_m": r3(altitude), "set_speed_m_s": r3(get("flight.speed").unwrap_or(0.0))})
-    } else {
-        json!({"mode": "scene", "trees": trees, "rivers": rivers, "lakes": lakes, "fire": fire})
-    };
-    if flying {
-        if standing {
-            let pace = if speed < 0.3 { "стоим".to_string() } else { format!("идём, {:.1} м/с", speed) };
-            parts.push(("place", format!("Остановились в ландшафте «{}»: {pace}.", biome_ru(biome))));
-        } else {
-            let pace = if speed < 0.3 { "зависли на месте".to_string() } else { format!("{:.0} м/с", speed) };
-            let height = if altitude >= 0.5 { format!(", высота {:.0} м", altitude) } else { String::new() };
-            parts.push(("place", format!("Полёт, ландшафт «{}»: {pace}{height}.", biome_ru(biome))));
-        }
-    } else {
+    let place = json!({"mode": "scene", "trees": trees, "rivers": rivers, "fire": fire});
+    {
         let mut what: Vec<&str> = Vec::new();
         if trees > 0 {
             what.push(if trees > 12 { "лес" } else { "деревья" });
         }
         if rivers > 0 {
             what.push("река");
-        }
-        if lakes > 0 {
-            what.push("озеро");
-        }
-        if rocks > 0 {
-            what.push("скалы");
         }
         if fire {
             what.push("костёр");
@@ -1653,18 +1447,18 @@ pub(crate) fn scene_facts(v: &View) -> (Value, Vec<(&'static str, String)>) {
     let water = match nearest(SourceKind::Water) {
         Some((s, d)) => {
             let (dir_en, dir_ru) = direction(s.rel_x, s.rel_y);
-            let name = if !flying || regime != "scene" { regime_ru(regime) } else if lakes > 0 && rivers == 0 { "озеро" } else { "река" };
+            let name = if regime != "scene" { regime_ru(regime) } else { "река" };
             parts.push(("water", format!("{}: {} {dir_ru}, ~{:.0} м.", capitalize(name), distance_ru(d), d)));
             json!({"sounding": true, "regime": regime, "nearest_m": r3(d), "direction": dir_en, "flow": r3(get("water.flow").unwrap_or(0.0))})
         }
         None if !playing => {
             // Paused: nothing sounds, but the water is still there.
-            let near = v.live.objects.iter().filter(|o| (o.kind == 1 || o.kind == 4) && o.flags & object_flags::ABSENT == 0)
+            let near = v.live.objects.iter().filter(|o| o.kind == 1 && o.flags & object_flags::ABSENT == 0)
                 .map(|o| (o, (o.x * o.x + o.y * o.y).sqrt())).min_by(|a, b| a.1.total_cmp(&b.1));
             match near {
                 Some((o, d)) => {
                     let (dir_en, dir_ru) = direction(o.x, o.y);
-                    parts.push(("water", format!("{}: {dir_ru}, ~{:.0} м (звук на паузе).", if o.kind == 4 { "Озеро" } else { "Река" }, d)));
+                    parts.push(("water", format!("Река: {dir_ru}, ~{:.0} м (звук на паузе).", d)));
                     json!({"sounding": false, "regime": regime, "nearest_m": r3(d), "direction": dir_en, "flow": r3(get("water.flow").unwrap_or(0.0))})
                 }
                 None => {
@@ -1776,13 +1570,6 @@ fn summary_text(parts: &[(&str, String)]) -> String {
 /// Plain-language meaning of each control for the system prompt. Controls added later get a
 /// generic line (`<group>.level`), landscapes are listed from the control tree.
 fn describe(key: &str) -> String {
-    if key == "flight.biome" {
-        let list: Vec<String> = controls::options(controls::id::FLIGHT_BIOME).iter().map(|n| format!("{n} ({})", biome_en(n))).collect();
-        return format!(
-            "Landscape preset of flight mode: {}. Exists only while flying: set flight.on = \"on\" with it. A change fades out and regenerates. Pick the closest one when no preset matches the request exactly.",
-            list.join(", ")
-        );
-    }
     if key == "direction.cue" {
         return format!(
             "Impulse: ask the scene's course for a weather spell, one of {}. `next` = wrap up the current spell and go on to the planned one. It comes as soon as it naturally can: the current spell wraps up (a downpour tapers off first) and, if the asked one cannot follow directly, a short bridge comes between (overcast before rain), so it arrives within minutes, not at once. Reads back `none` afterwards. For 'let it rain soon', 'a thunderstorm later', 'change the weather'; for an immediate change set the controls themselves.",
@@ -1834,7 +1621,7 @@ fn describe_static(key: &str) -> &'static str {
         "env.temperature" => "Air temperature, °C. Crickets chirp faster when warm and fall silent below ~10 °C.",
         "env.humidity" => "Relative humidity 0..1 (dry air carries high frequencies further).",
         "env.season" => "spring, summer, autumn, winter: which birds sing, leaf state.",
-        "env.wind_direction" => "Where the wind blows FROM, degrees clockwise from north: 0 north (= ahead in the scene), 90 east (right), 180 south (behind), 270 west (left, default). Compass words work too: \"север\", \"northwest\", \"left\". Gusts sweep in from that side, upwind sounds get quieter and duller far away, downwind ones carry. Fixed to the world: in flight it does not turn with the course. «ветер с севера» = 0.",
+        "env.wind_direction" => "Where the wind blows FROM, degrees clockwise from north: 0 north (= ahead in the scene), 90 east (right), 180 south (behind), 270 west (left, default). Compass words work too: \"север\", \"northwest\", \"left\". Gusts sweep in from that side, upwind sounds get quieter and duller far away, downwind ones carry. Fixed to the world. «ветер с севера» = 0.",
         "insects.activity" => "Crickets and other insects, level multiplier (0 silent, 1 as built, 2 loud). Mostly evening and night.",
         "insects.warmth" => "Microclimate offset for insects, °C.",
         "fire.heat" => "Campfire heat release, kW, logarithmic (5 embers, 20 campfire, 100 big fire, 500 bonfire). Only audible if the scene has a fire.",
@@ -1856,16 +1643,6 @@ fn describe_static(key: &str) -> &'static str {
         "mix.texture_budget" => "How much the background textures (rain patches, leaves, water segments, wind, insects) may pile up beyond the few nearest/most important ones (0 = only those few, 0.35 default, 1 = everything summed). Lower for 'less noise', 'less hiss', 'cleaner'; raise for 'enveloping', 'wall of rain'.",
         "mix.refocus" => "When the listener stands still, over a few seconds the nearest brook and one bird area come forward and the rest steps back (0 off, 0.5 default, 1 strong). Raise for 'meditative', 'calm focus'; lower for 'keep everything'.",
         "water.level" | "wind.level" | "foliage.level" | "rain.level" | "birds.level" | "insects.level" | "fire.level" => "Loudness trim of this sound group in the mix, dB (−40 mutes, 0 default, +12). A plain fader: use it only for explicit 'louder/quieter/mute the …' requests about one group; prefer the physical macro or mix.focus otherwise.",
-        "flight.speed" => "Flight mode only (the user switches it on with the flight button): forward speed through an endless generated landscape, m/s. 0 hover, 1.5 walk, 5 run, 12 glide, 25 fast flight. Altitude follows unless set.",
-        "flight.altitude" => "Flight mode: ears above the ground, m, logarithmic (1.7 walking among trunks, 5 under the crowns, 20 just above the canopy, 40 high). Follows the speed unless set.",
-        "flight.curviness" => "Flight mode: how much the path bends, 0 straight .. 1 (turn radius 250 m). Takes effect ~200 m ahead.",
-        "flight.density" => "Flight mode: forest density multiplier, 0 open .. 1 as generated .. 2 dense; applies at once.",
-        "flight.seed" => "Flight mode: which landscape, 0..999 (another number = another landscape; regenerates).",
-        "flight.steer_by_head" => "Flight mode: fly where the head looks (AirPods head tracking). off = keep the course (head only looks around), yaw = turning the head turns the flight, yaw_pitch = also climb when looking up and descend when looking down.",
-        "flight.turn_rate" => "Flight mode, steering by head: fastest turn, degrees per second (10 lazy glider, 30 default, 60+ agile). Reached when the head is turned ~45° from the course.",
-        "flight.airflow" => "Flight mode: wind noise of motion at the ears, 0 off, 1 physical (subtle below ~10 m/s), 3 strong.",
-        "flight.relief" => "Flight mode: how high the hills, mountains and dunes are, 0 flat .. 1 as the biome .. 2 twice as steep (regenerates). Relief shapes the sound: hills hide sources, valleys echo.",
-        "flight.stops" => "Flight mode: how often the flight eases down and lingers at a place (lake shore, waterfall, surf, river bank, viewpoint), 0 never .. 0.5 now and then .. 1 at every one, longer.",
         "direction.amount" => "The scene's own course (режиссура), macro 0..1. 0 = off: nothing changes by itself, the clock stands, everything stays as set; 1 = full course (default). While on, the world runs non-stop by moving the driven controls the way automation moves faders: time flows, weather spells follow each other with their own inner course (clear, calm, breeze, windy, overcast, drizzle, shower, steady_rain, thunderstorm, after_rain, mist), and the wind, its direction, gusts, rain, thunder, temperature, humidity, birds.activity and water.flow (the brook swells after heavy rain) follow them. 0 for 'freeze', 'stop changing things'.",
         "direction.weather" => "Steers the course −1 fair (dry, clear spells) .. 0 neutral .. +1 wet and stormy (rain and thunderstorms more often and heavier). A tendency for what comes next, not rain now. For 'fewer rains', 'rainy day', 'fair weather in general'.",
         "direction.energy" => "Steers the course −1 still (calm air, mist, quieter birds, fewer animal encounters) .. 0 neutral .. +1 lively (more wind and gusts, more birdsong, more encounters). A tendency, applied to the spells and their values at once. For 'calmer / livelier weather'.",
@@ -1878,8 +1655,7 @@ fn describe_static(key: &str) -> &'static str {
 
 const RULES: &str = "\
 You control a real-time, physically based sound simulation heard binaurally by one listener: a \
-forest scene by a river, or (flight mode) an endless generated landscape the listener flies \
-through. The user writes a short request in any language (usually Russian). Answer ONLY by calling \
+forest scene by a river, an underwater drift or a body scan. The user writes a short request in any language (usually Russian). Answer ONLY by calling \
 the tool `set_scene` exactly once, never with prose outside it.
 
 Rules:
@@ -1896,18 +1672,6 @@ louder) if it exists, else `<group>.gain` (linear multiplier). Change the physic
 rain.rate, wind.speed, birds.activity) only when the thing itself should change: \"река \
 полноводнее\", \"дождь сильнее\", \"больше птиц\", \"убери дождь\". \"тише\" alone (no object) = calmer \
 scene. master.volume is the overall volume only.
-- Switches: `flight.on` (\"on\" / \"stand\" / \"off\"). \"полетели\", \"летим\", \"дальше\", \
-\"fly\" → on (and a flight.speed if none is set: 8 m/s); \"стоп\", \"остановись\", \"зависни\", \
-\"постоим тут\", \"приземлись здесь\", \"stop\" → stand (stops where we are, on the ground, in the same \
-landscape); \"домой\", \"приземлись домой\", \"вернись в лес у реки\", \"home\" → off. \
-flight.* controls only act in the landscape (on or stand).
-- Scene recipes. A place request (\"перенеси меня в пустыню\", \"в горы, где идёт снег\", \"к морю\", \
-\"на озеро ночью в дождь\") is one patch built from blocks: place (flight.on on + flight.biome, the \
-closest preset; while flying, keep a gentle flight.speed 3–8 unless asked to stop) + weather \
-(rain.rate, rain.storm, wind.speed, env.temperature, env.humidity, env.season for snow/winter) + time \
-(env.time_of_day) + life (birds.activity, insects.activity) + mix intent (mix.focus.*). Fill in what \
-the place implies even when not said: desert = hot, dry, few birds, no rain; snowy mountains = \
-winter, frost, wind, no insects; sea or lake = water in front.
 - DIRECTION (режиссура). The scene runs its own course: time flows and weather spells follow each \
 other, moving the driven controls (env.time_of_day, wind.speed, env.wind_direction, wind.gustiness, \
 rain.rate, rain.storm, env.temperature, env.humidity, birds.activity, water.flow). Setting one of \
@@ -1950,12 +1714,6 @@ prose, directions relative to the head).
 - explanation: one short line (≤ 70 characters, longer only for answers) in the user's language, \
 saying what you changed, plain words, no numbers unless asked. Never leave it empty.";
 
-/// The first landscape preset of `names` that exists, else the first preset.
-fn pick_biome(names: &[&str]) -> &'static str {
-    let opts = controls::options(controls::id::FLIGHT_BIOME);
-    names.iter().find_map(|n| opts.iter().find(|o| *o == n).copied()).or_else(|| opts.first().copied()).unwrap_or("mixed")
-}
-
 /// The loudness change for "+db on water": `water.level` when the sound director has it,
 /// else the linear `water.gain`.
 fn level_change(group: &str, db: f32) -> String {
@@ -1970,13 +1728,9 @@ fn level_change(group: &str, db: f32) -> String {
 /// Few-shot examples. Generated, so they only use keys and presets that exist (each one is
 /// checked to apply cleanly by a test).
 fn examples() -> String {
-    let desert = pick_biome(&["desert", "meadows"]);
-    let snowy = pick_biome(&["snowy_mountains", "highlands"]);
-    let sea = pick_biome(&["sea_coast", "lake_shore", "river_valley"]);
-    let lake = pick_biome(&["lake_shore", "taiga"]);
     format!("\
 Examples (current values matter; these assume wind.speed 6, rain.rate 4, water.flow 0.7, \
-birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
+birds.activity 0.8, master.volume 0.8, env.time_of_day 14):
 
 «поспокойнее» →
 {{\"explanation\":\"Тише ветер и дождь, река медленнее, птицы реже.\",\"glide_s\":6,\"changes\":[\
@@ -2028,40 +1782,6 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 {{\"explanation\":\"Река полноводная, но не заглушает остальное.\",\"glide_s\":10,\"changes\":[\
 {{\"key\":\"water.flow\",\"value\":1}},{flood_water}]}}
 
-«полетели» →
-{{\"explanation\":\"Летим над лесом.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"on\"}},\
-{{\"key\":\"flight.speed\",\"value\":8}}]}}
-
-«перенеси меня в пустыню» →
-{{\"explanation\":\"Пустыня: жарко, сухо, горячий ветер.\",\"glide_s\":6,\"changes\":[\
-{{\"key\":\"flight.on\",\"value\":\"on\"}},{{\"key\":\"flight.biome\",\"value\":\"{desert}\"}},{{\"key\":\"flight.speed\",\"value\":4}},\
-{{\"key\":\"rain.rate\",\"value\":0}},{{\"key\":\"rain.storm\",\"value\":0}},{{\"key\":\"wind.speed\",\"value\":6}},\
-{{\"key\":\"env.temperature\",\"value\":35}},{{\"key\":\"env.humidity\",\"value\":0.15}},\
-{{\"key\":\"birds.activity\",\"value\":0.15}},{{\"key\":\"insects.activity\",\"value\":0.4}}]}}
-
-«в горы, где идёт снег» →
-{{\"explanation\":\"Снежные горы: зима, мороз, ветер на гребнях.\",\"glide_s\":6,\"changes\":[\
-{{\"key\":\"flight.on\",\"value\":\"on\"}},{{\"key\":\"flight.biome\",\"value\":\"{snowy}\"}},{{\"key\":\"flight.speed\",\"value\":5}},\
-{{\"key\":\"env.season\",\"value\":\"winter\"}},{{\"key\":\"env.temperature\",\"value\":-8}},{{\"key\":\"rain.rate\",\"value\":0}},\
-{{\"key\":\"wind.speed\",\"value\":9}},{{\"key\":\"insects.activity\",\"value\":0}},{{\"key\":\"birds.activity\",\"value\":0.1}}]}}
-
-«к морю» →
-{{\"explanation\":\"Летим к морю, вода впереди.\",\"changes\":[\
-{{\"key\":\"flight.on\",\"value\":\"on\"}},{{\"key\":\"flight.biome\",\"value\":\"{sea}\"}},{{\"key\":\"flight.speed\",\"value\":5}},\
-{{\"key\":\"wind.speed\",\"value\":7}},{{\"key\":\"mix.focus.water\",\"value\":0.7}}]}}
-
-«на озеро ночью в дождь» →
-{{\"explanation\":\"Ночное озеро под ровным дождём.\",\"glide_s\":8,\"changes\":[\
-{{\"key\":\"flight.on\",\"value\":\"on\"}},{{\"key\":\"flight.biome\",\"value\":\"{lake}\"}},{{\"key\":\"flight.speed\",\"value\":2}},\
-{{\"key\":\"env.time_of_day\",\"value\":23}},{{\"key\":\"rain.rate\",\"value\":4}},{{\"key\":\"birds.activity\",\"value\":0.15}},\
-{{\"key\":\"insects.activity\",\"value\":0.6}},{{\"key\":\"mix.focus.rain\",\"value\":0.4}}]}}
-
-«стоп» →
-{{\"explanation\":\"Остановились здесь, стоим на земле.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"stand\"}}]}}
-
-«домой» →
-{{\"explanation\":\"Вернулись домой, снова лес у реки.\",\"changes\":[{{\"key\":\"flight.on\",\"value\":\"off\"}}]}}
-
 «больше птиц слева» (tree 4 is movable at [6, -3, 0]) →
 {{\"explanation\":\"Больше птиц, дерево с птицами слева.\",\"changes\":[\
 {{\"key\":\"birds.activity\",\"value\":0.95}}],\"moves\":[{{\"object\":4,\"position\":[4,6,0]}}]}}
@@ -2090,7 +1810,7 @@ birds.activity 0.8, master.volume 0.8, env.time_of_day 14, flight off):
 {{\"explanation\":\"День, лес у реки. Река справа рядом, слева поют две птицы, лёгкий ветер.\",\"changes\":[]}}
 
 «what's the weather in Paris?» →
-{{\"explanation\":\"I can only change the sound scene: water, weather, time, birds, flight.\",\"changes\":[]}}",
+{{\"explanation\":\"I can only change the sound scene: water, weather, time, birds.\",\"changes\":[]}}",
         quieter = level_change("water", -8.0),
         louder = level_change("water", 6.0),
         storm_wind = level_change("wind", -3.0),
@@ -2121,11 +1841,6 @@ fn context_text(v: &View) -> String {
         let flag = if c["overridden"] == json!(true) { ", set explicitly" } else if c["parent"].is_string() && !level { ", follows macro" } else { "" };
         let _ = writeln!(s, "{key} = {val}{range}{flag}");
     }
-    let _ = writeln!(s, "[switches]");
-    for sw in state["switches"].as_array().into_iter().flatten() {
-        let opts: Vec<&str> = sw["options"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        let _ = writeln!(s, "{} = {} ({})", sw["key"].as_str().unwrap_or(""), sw["value"].as_str().unwrap_or(""), opts.join(" / "));
-    }
     let e = &state["environment"];
     let _ = writeln!(
         s,
@@ -2148,7 +1863,6 @@ fn system_text() -> String {
         let m = controls::meta(i);
         let _ = writeln!(s, "- {}{}: {}", m.key, if m.unit.is_empty() { String::new() } else { format!(" [{}]", m.unit) }, describe(m.key));
     }
-    let _ = writeln!(s, "- flight.on: switch, \"on\" / \"stand\" / \"off\": flight mode. on = flying through generated landscapes; stand = stopped in that landscape, standing on the ground (the user walks with the keys); off = home, the forest by the river.");
     s.push('\n');
     s.push_str(&examples());
     s
@@ -2156,9 +1870,8 @@ fn system_text() -> String {
 
 /// JSON schema of the `set_scene` tool input, generated from the control tree.
 pub fn tool_schema() -> Value {
-    let mut keys: Vec<&str> = (0..COUNT).map(|i| controls::meta(i).key).collect();
-    keys.extend(Switch::ALL.iter().map(|s| s.key()));
-    let mut names: Vec<&str> = vec!["reset", "on", "off", "stand"];
+    let keys: Vec<&str> = (0..COUNT).map(|i| controls::meta(i).key).collect();
+    let mut names: Vec<&str> = vec!["reset"];
     for i in 0..COUNT {
         let m = controls::meta(i);
         if m.flags & flags::DISCRETE != 0 {
@@ -2433,7 +2146,7 @@ mod tests {
         assert!(p["context"].as_str().unwrap().contains("water.flow = 0.6"));
         let schema = &p["tool"]["input_schema"];
         let keys = schema["properties"]["changes"]["items"]["properties"]["key"]["enum"].as_array().unwrap();
-        assert_eq!(keys.len(), crate::controls::COUNT + super::Switch::ALL.len());
+        assert_eq!(keys.len(), crate::controls::COUNT);
         let names = &schema["properties"]["changes"]["items"]["properties"]["value"]["anyOf"][1]["enum"];
         assert!(names.as_array().unwrap().iter().any(|n| n == "small_waterfall"));
     }
@@ -2469,7 +2182,7 @@ mod tests {
 
     #[test]
     fn keys_are_resolved_tolerantly() {
-        use super::{resolve_key, Conv, Resolved, Switch};
+        use super::{resolve_key, Conv, Resolved};
         let idx = |k: &str| crate::controls::index_of_key(k).unwrap();
         for (raw, key) in [
             ("water.flow", "water.flow"),
@@ -2480,7 +2193,6 @@ mod tests {
             ("time", "env.time_of_day"),
             ("time_of_day", "env.time_of_day"),
             ("rock_size", "water.rock_size"),
-            ("biome", "flight.biome"),
             ("focus.birds", "mix.focus.birds"),
             ("wind.sped", "wind.speed"),
             ("birds.activty", "birds.activity"),
@@ -2491,9 +2203,6 @@ mod tests {
                 Ok(Resolved::Control(i, Conv::Same)) => assert_eq!(i, idx(key), "{raw}"),
                 other => panic!("{raw}: {other:?}"),
             }
-        }
-        for raw in ["flight.on", "flight", "flying", "params.flight"] {
-            assert_eq!(resolve_key(raw), Ok(Resolved::Switch(Switch::Flight)), "{raw}");
         }
         // Loudness: `<group>.level` when it exists, else the linear gain in dB.
         let lvl = resolve_key("river.volume").unwrap();
@@ -2515,18 +2224,12 @@ mod tests {
             {"key":"rain.rate","value":"6 mm/h"},
             {"key":"env.time_of_day","value":"23:30"},
             {"key":"env.season","value":"Winter"},
-            {"key":"flight.biome","value":"тайга"},
-            {"key":"flight.steer_by_head","value":false}]}"#));
+            {"key":"direction.cue","value":"гроза"}]}"#));
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(e.control(id::WATER_REGIME), crate::controls::options(id::WATER_REGIME).iter().position(|o| *o == "small_waterfall").unwrap() as f32);
         assert!((e.control(id::RAIN_RATE) - 6.0).abs() < 1e-4);
         assert!((e.control(id::ENV_TIME) - 23.5).abs() < 1e-4);
-        assert_eq!(applied(&r, "flight.biome"), Some(json!("taiga")));
-        assert_eq!(applied(&r, "flight.steer_by_head"), Some(json!("off")));
-        // Russian place words pick the closest landscape that exists.
-        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.biome","value":"горы"}]}"#));
-        let b = applied(&r, "flight.biome").unwrap();
-        assert!(b == "highlands" || b == "snowy_mountains", "{r}");
+        assert_eq!(applied(&r, "direction.cue"), Some(json!("thunderstorm")));
         // Relative values.
         e.apply_patch_json(r#"{"glide_s":0,"changes":[{"key":"wind.speed","value":6}]}"#);
         e.apply_patch_json(r#"{"glide_s":0,"changes":[{"key":"wind.speed","factor":0.5},{"key":"birds.activity","value":0.5}]}"#);
@@ -2565,35 +2268,6 @@ mod tests {
     }
 
     #[test]
-    fn flight_switch_toggles_and_undoes() {
-        let e = engine();
-        assert!(e.param(crate::param::FLIGHT) < 0.5);
-        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"on"},{"key":"flight.biome","value":"taiga"}]}"#));
-        assert_eq!(r["ok"], true, "{r}");
-        assert_eq!(r["switched"]["flight.on"], "on");
-        assert!(e.param(crate::param::FLIGHT) > 0.5);
-        let s = parse(&e.state_json());
-        assert_eq!(s["switches"][0]["value"], "on");
-        let undo = r["undo"].to_string();
-        assert!(undo.contains("flight.on"));
-        e.apply_patch_json(&undo);
-        assert!(e.param(crate::param::FLIGHT) < 0.5);
-        // "Stop" stands still in the world; "home" goes back to the scene.
-        e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"on"}]}"#);
-        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"стоп"}]}"#));
-        assert_eq!(r["switched"]["flight.on"], "stand", "{r}");
-        assert!((e.param(crate::param::FLIGHT) - 2.0).abs() < 1e-6);
-        assert_eq!(parse(&e.state_json())["switches"][0]["value"], "stand");
-        assert!(r["undo"].to_string().contains("\"on\""));
-        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"домой"}]}"#));
-        assert_eq!(r["switched"]["flight.on"], "off");
-        assert!(e.param(crate::param::FLIGHT) < 0.5);
-        // Bad switch values are reported.
-        let r = parse(&e.apply_patch_json(r#"{"changes":[{"key":"flight.on","value":"maybe"}]}"#));
-        assert_eq!(r["ok"], false);
-    }
-
-    #[test]
     fn state_describes_the_scene_in_words() {
         let e = engine();
         e.set_param(crate::param::PLAYING, 1.0);
@@ -2611,7 +2285,6 @@ mod tests {
         }
         let p = parse(&e.prompt_json());
         assert!(p["context"].as_str().unwrap().contains("[scene now]"));
-        assert!(p["context"].as_str().unwrap().contains("flight.on = off"));
         assert_eq!(super::direction(1.0, 0.0).1, "впереди");
         assert_eq!(super::direction(0.0, 1.0).1, "слева");
         assert_eq!(super::direction(0.0, -1.0).1, "справа");
@@ -2643,13 +2316,10 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_lists_landscapes_from_the_tree() {
+    fn system_prompt_states_the_rules() {
         let sys = parse(&engine().prompt_json())["system"].as_str().unwrap().to_string();
-        for b in crate::controls::options(id::FLIGHT_BIOME) {
-            assert!(sys.contains(b), "{b}");
-        }
         assert!(sys.contains("LOUDNESS vs PHYSICS"));
-        assert!(sys.contains("- flight.on"));
+        assert!(!sys.contains("flight"));
     }
 
     #[test]

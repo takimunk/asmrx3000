@@ -61,9 +61,8 @@ struct LeverPanel: View {
     private var drawer: UInt32? { stills != nil ? stills?.drawer : controls.expanded }
 
     /// The world levers in display order: (always shown, behind "more").
-    static func split(_ macros: [Control], flying: Bool) -> (shown: [Control], more: [Control]) {
-        var order = primary
-        if flying { order.insert(ASMR_GROUP_FLIGHT, at: 0) }
+    static func split(_ macros: [Control]) -> (shown: [Control], more: [Control]) {
+        let order = primary
         let rest = macros.filter { !elsewhere.contains(Int($0.group)) }
         var shown = order.compactMap { g in rest.first { Int($0.group) == g } }
         var more = rest.filter { m in !shown.contains { $0.id == m.id } }
@@ -72,8 +71,8 @@ struct LeverPanel: View {
         return (shown, more)
     }
 
-    static func visible(_ macros: [Control], flying: Bool, showAll: Bool) -> [Control] {
-        let s = split(macros, flying: flying)
+    static func visible(_ macros: [Control], showAll: Bool) -> [Control] {
+        let s = split(macros)
         return showAll ? s.shown + s.more : s.shown
     }
 
@@ -93,8 +92,8 @@ struct LeverPanel: View {
 
     /// The levers drawn over live waveforms (the tracks behind their sliders follow them): the
     /// forest's world levers; in a clip scene only the technical ones behind "more".
-    static func levers(_ macros: [Control], scene: SceneInfo, flying: Bool, showAll: Bool) -> [Control] {
-        scene.isClip ? worldLevers(macros) + (showAll ? sceneLevers(macros) : []) : visible(macros, flying: flying, showAll: showAll)
+    static func levers(_ macros: [Control], scene: SceneInfo, showAll: Bool) -> [Control] {
+        scene.isClip ? worldLevers(macros) + (showAll ? sceneLevers(macros) : []) : visible(macros, showAll: showAll)
     }
 
     static func layout(_ levers: [Control]) -> [ScopeRow] {
@@ -208,29 +207,12 @@ struct LeverPanel: View {
 
     // MARK: World
 
-    /// Russian name of the current flight landscape (flight.biome preset). In a journey the
-    /// biome changes with the place: the frame says which one is under the listener
-    /// ("путешествие · луга").
-    static func biomeName(_ all: [Control], frame: AsmrFlightFrame? = nil) -> String {
-        guard let c = all.first(where: { $0.key == "flight.biome" }) else { return tr("forest") }
-        let i = Int(c.value.rounded())
-        guard i >= 0 && i < c.options.count else { return tr("forest") }
-        let name = ControlText.option(c.options[i])
-        if c.options[i] == "journey", let f = frame, Int(f.biome) == i, Int(f.local_biome) < c.options.count, Int(f.local_biome) != i {
-            return name + " · " + ControlText.option(c.options[Int(f.local_biome)])
-        }
-        return name
-    }
-
     private func world(hour: Float?) -> some View {
-        let split = Self.split(controls.macros, flying: audio.flying)
+        let split = Self.split(controls.macros)
         let shown = showAll ? split.shown + split.more : split.shown
         return VStack(alignment: .leading, spacing: 0) {
-            // Polled once a second: in a journey the biome under the listener changes as it flies.
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                SectionHeader(title: tr("World"), note: worldNote(plain: audio.flying ? tr("flight: %@", Self.biomeName(controls.controls, frame: audio.readFlightFrame())) : tr("what happens in the forest")),
-                              open: worldOpen) { worldOpenStored.toggle() }
-            }
+            SectionHeader(title: tr("World"), note: worldNote(plain: tr("what happens in the forest")),
+                          open: worldOpen) { worldOpenStored.toggle() }
             if worldOpen { rows(shown, hour: hour) }
             if worldOpen, !split.more.isEmpty {
                 MoreRow(more: split.more, hour: hour, showAll: showAll) { showAllStored.toggle() }
@@ -241,9 +223,9 @@ struct LeverPanel: View {
     }
 
     /// The world header's note: what is going on in it (the direction's spell and what follows),
-    /// else what the section is. In flight the landscape under the listener says more.
+    /// else what the section is.
     private func worldNote(plain: String) -> String {
-        audio.flying ? plain : Self.directionStatus(audio) ?? plain
+        Self.directionStatus(audio) ?? plain
     }
 
     /// The lever rows over the live waveforms of their groups.
@@ -284,7 +266,6 @@ struct LeverPanel: View {
     private func clipScene(hour: Float?) -> some View {
         let plain: String = switch audio.scene.look {
         case .underwater: tr("what happens in the water")
-        case .space: tr("what happens around you")
         default: tr("the scene's sounds")
         }
         let world = Self.worldLevers(controls.macros)
@@ -492,7 +473,6 @@ enum ControlText {
         case ASMR_GROUP_ENVIRONMENT: return tr("Time and weather")
         case ASMR_GROUP_INSECTS: return tr("Insects")
         case ASMR_GROUP_FIRE: return tr("Campfire")
-        case ASMR_GROUP_FLIGHT: return tr("Flight")
         case ASMR_GROUP_MIX: return tr("Mix")
         case ASMR_GROUP_DIRECTION: return tr("Direction")
         default:
@@ -503,7 +483,7 @@ enum ControlText {
 
     private static let groupNames = [
         "water": N_("Water"), "wind": N_("Wind"), "foliage": N_("Foliage"), "rain": N_("Rain"), "birds": N_("Birds"),
-        "insects": N_("Insects"), "fire": N_("Campfire"), "flight": N_("Flight"), "mix": N_("Mix"), "env": N_("Time and weather"),
+        "insects": N_("Insects"), "fire": N_("Campfire"), "mix": N_("Mix"), "env": N_("Time and weather"),
         "scene": N_("Scene"),
     ]
 
@@ -511,7 +491,7 @@ enum ControlText {
         // Macros: the world levers.
         "water.flow": N_("River flow"), "wind.speed": N_("Wind speed"), "foliage.density": N_("Foliage density"),
         "rain.rate": N_("Rain intensity"), "birds.activity": N_("Bird activity"), "env.time_of_day": N_("Time of day"),
-        "insects.activity": N_("Insect activity"), "fire.heat": N_("Fire heat"), "flight.speed": N_("Flight speed"),
+        "insects.activity": N_("Insect activity"), "fire.heat": N_("Fire heat"),
         "mix.clarity": N_("Clarity"),
         // Clip scenes (AudioEngine.SceneMacro).
         "scene.motion": N_("All: motion"), "scene.events": N_("All: events"), "scene.bed": N_("All: background"), "scene.creatures": N_("All: creatures"),
@@ -528,10 +508,6 @@ enum ControlText {
         // Birds, environment, insects, fire.
         "birds.orbit": N_("Circling close"), "env.temperature": N_("Temperature"), "env.humidity": N_("Humidity"),
         "env.season": N_("Season"), "env.wind_direction": N_("Wind from"), "insects.warmth": N_("Warmth"), "fire.moisture": N_("Wood dampness"), "fire.resin": N_("Resin"),
-        // Flight.
-        "flight.altitude": N_("Altitude"), "flight.curviness": N_("Winding"), "flight.biome": N_("Landscape"),
-        "flight.density": N_("Forest density"), "flight.seed": N_("Terrain"), "flight.airflow": N_("Air noise"),
-        "flight.steer_by_head": N_("Steer with head"), "flight.turn_rate": N_("Turn rate"),
         // Mix.
         "mix.density": N_("Birds at once"), "mix.soloists": N_("Soloists"), "mix.loudness": N_("Target loudness"),
         "mix.dynamics": N_("Leveling"),
@@ -557,78 +533,29 @@ enum ControlText {
         "under_conifer": N_("under a spruce"),
         // env.season
         "spring": N_("spring"), "summer": N_("summer"), "autumn": N_("autumn"), "winter": N_("winter"),
-        // flight.biome
-        "mixed": N_("mixed forest"), "broadleaf": N_("oak forest"), "taiga": N_("taiga"), "river_valley": N_("river valley"),
-        "meadows": N_("meadows"), "highlands": N_("highlands"), "desert": N_("desert"), "snowy_mountains": N_("snowy mountains"),
-        "lake_shore": N_("lake shore"), "sea_coast": N_("sea coast"), "big_river": N_("big river"),
-        "journey": N_("journey"),
-        // flight.steer_by_head
-        "off": N_("no"), "yaw": N_("by turning"), "yaw_pitch": N_("by turning and tilting"),
         // direction.cue and the spells (AudioEngine prefixes them "cue." so "steady_rain" keeps both names).
-        "cue.none": N_("—"), "cue.next": N_("next"), "cue.clear": N_("clear"), "cue.calm": N_("calm"),
-        "cue.breeze": N_("breeze"), "cue.windy": N_("windy"), "cue.overcast": N_("overcast"), "cue.drizzle": N_("drizzle"),
-        "cue.shower": N_("shower"), "cue.steady_rain": N_("long rain"), "cue.thunderstorm": N_("thunderstorm"),
-        "cue.after_rain": N_("after the rain"), "cue.mist": N_("mist"),
-        // The clip scenes' spells.
-        "cue.calm_drift": N_("calm drift"), "cue.whales_near": N_("whales near"), "cue.pod_passes": N_("a pod passes"),
-        "cue.storm_above": N_("storm above"), "cue.reef_morning": N_("reef morning"), "cue.quiet_shift": N_("quiet shift"),
-        "cue.convoy": N_("convoy"), "cue.docking": N_("docking"), "cue.solar_storm": N_("solar storm"),
-        "cue.night_side": N_("night side"),
-        // The new scenes' episodes.
-        "cue.arrival": N_("arrival"),
+        "cue.none": N_("—"),
+        "cue.next": N_("next"),
+        "cue.clear": N_("clear"),
+        "cue.calm": N_("calm"),
+        "cue.breeze": N_("breeze"),
+        "cue.windy": N_("windy"),
+        "cue.overcast": N_("overcast"),
+        "cue.drizzle": N_("drizzle"),
+        "cue.shower": N_("shower"),
+        "cue.steady_rain": N_("long rain"),
+        "cue.thunderstorm": N_("thunderstorm"),
+        "cue.after_rain": N_("after the rain"),
+        "cue.mist": N_("mist"),
+        "cue.calm_drift": N_("calm drift"),
+        "cue.whales_near": N_("whales near"),
+        "cue.pod_passes": N_("a pod passes"),
+        "cue.storm_above": N_("storm above"),
+        "cue.reef_morning": N_("reef morning"),
+        "cue.quiet_shift": N_("quiet shift"),
         "cue.body_scan": N_("body scan"),
-        "cue.booming": N_("booming"),
-        "cue.calm_watch": N_("calm watch"),
-        "cue.clearing": N_("clearing up"),
-        "cue.coldest_hour": N_("coldest hour"),
-        "cue.contemplation": N_("contemplation"),
-        "cue.deep_night": N_("deep night"),
         "cue.deep_quiet": N_("deep quiet"),
-        "cue.departure": N_("departure"),
-        "cue.dusk_cooling": N_("dusk cooling"),
-        "cue.fog": N_("fog"),
-        "cue.freshening": N_("freshening"),
-        "cue.gale": N_("gale"),
-        "cue.hills": N_("hills"),
-        "cue.old_line": N_("old line"),
-        "cue.plains": N_("plains"),
-        "cue.preparation": N_("preparation"),
-        "cue.rain_belt": N_("rain belt"),
         "cue.rest": N_("rest"),
-        "cue.serving": N_("serving"),
-        "cue.skater": N_("skater"),
-        "cue.snow_drift": N_("snow drifting"),
-        "cue.squall": N_("squall"),
-        "cue.station": N_("a stop"),
-        "cue.still_night": N_("still night"),
-        "cue.whisking": N_("whisking"),
-        // The cave's episodes.
-        "cue.settling_in": N_("settling in"),
-        "cue.drip_by_drip": N_("drip by drip"),
-        "cue.dry_spell": N_("dry spell"),
-        "cue.rain_above": N_("rain above"),
-        "cue.deep_silence": N_("deep silence"),
-        "cue.air_from_outside": N_("air from outside"),
-        "cue.stones_settle": N_("stones settle"),
-        // The yacht at anchor ("breeze" and "still night" are above).
-        "cue.flat_calm": N_("flat calm"),
-        "cue.tide_turns": N_("tide turns"),
-        "cue.dawn": N_("dawn"),
-        // Campfire by the sea.
-        "cue.kindling": N_("kindling"),
-        "cue.steady_fire": N_("steady fire"),
-        "cue.low_embers": N_("low embers"),
-        "cue.rising_tide": N_("rising tide"),
-        "cue.before_dawn": N_("before dawn"),
-        // The night library's episodes.
-        "cue.quiet_reading": N_("quiet reading"),
-        "cue.rain_sets_in": N_("rain sets in"),
-        "cue.fire_burns_low": N_("fire burning low"),
-        "cue.storm_outside": N_("storm outside"),
-        "cue.late_stillness": N_("late stillness"),
-        // The tent in the rain ("drizzle", "steady_rain" and "clearing" are above).
-        "cue.passing_storm": N_("passing storm"),
-        "cue.night_wind": N_("night wind"),
     ]
 
     /// Stretches of a spell (direction/episodes.json labels).
@@ -640,139 +567,31 @@ enum ControlText {
         "distant thunder": N_("distant thunder"), "calm before the storm": N_("calm before the storm"),
         "the cell overhead": N_("the cell overhead"), "trailing rain": N_("trailing rain"),
         "storm moving away": N_("storm moving away"), "after the rain": N_("after the rain"), "mist": N_("mist"),
-        // The new scenes' stretches.
-        "a calm watch": N_("a calm watch"),
-        "a late skater": N_("a late skater"),
-        "a sleeping station": N_("a sleeping station"),
-        "a steady blow": N_("a steady blow"),
         "across to the right arm": N_("across to the right arm"),
         "afterglow": N_("afterglow"),
-        "alone again": N_("alone again"),
-        "approach": N_("approach"),
         "around the head": N_("around the head"),
         "arrival": N_("arrival"),
-        "away again": N_("away again"),
         "belly": N_("belly"),
-        "calm again": N_("calm again"),
         "chest & heart": N_("chest & heart"),
-        "clearing the utensils": N_("clearing the utensils"),
         "clicks in the distance": N_("clicks in the distance"),
-        "convoy moving off": N_("convoy moving off"),
         "crown": N_("crown"),
-        "deep night": N_("deep night"),
         "deep quiet": N_("deep quiet"),
-        "deep still night": N_("deep still night"),
-        "drifting snow": N_("drifting snow"),
-        "easing": N_("easing"),
-        "entering the shadow": N_("entering the shadow"),
-        "first drops": N_("first drops"),
-        "fog bank": N_("fog bank"),
-        "fog lifting": N_("fog lifting"),
-        "fog rolls in": N_("fog rolls in"),
-        "full gale": N_("full gale"),
-        "gathering speed": N_("gathering speed"),
-        "hard dock": N_("hard dock"),
         "inside": N_("inside"),
-        "into the hills": N_("into the hills"),
         "left arm": N_("left arm"),
         "legs & feet": N_("legs & feet"),
-        "line speed": N_("line speed"),
         "moving on": N_("moving on"),
-        "old jointed line": N_("old jointed line"),
-        "open plains": N_("open plains"),
         "open water": N_("open water"),
-        "out of the hills": N_("out of the hills"),
         "over the reef": N_("over the reef"),
-        "particle counts rising": N_("particle counts rising"),
         "pod moving off": N_("pod moving off"),
-        "pulling out": N_("pulling out"),
-        "purifying the utensils": N_("purifying the utensils"),
-        "rain and the water jar": N_("rain and the water jar"),
-        "rain eases": N_("rain eases"),
-        "rain in the garden": N_("rain in the garden"),
-        "rain on the glass": N_("rain on the glass"),
         "rain starts above": N_("rain starts above"),
         "rest": N_("rest"),
         "return": N_("return"),
-        "settling": N_("settling"),
-        "ships on approach": N_("ships on approach"),
-        "slowing": N_("slowing"),
-        "snow begins to drift": N_("snow begins to drift"),
         "songs from afar": N_("songs from afar"),
-        "squall line": N_("squall line"),
         "stillness": N_("stillness"),
         "storm on the surface": N_("storm on the surface"),
-        "storm subsiding": N_("storm subsiding"),
-        "systems settle": N_("systems settle"),
-        "the bowl is set before you": N_("the bowl is set before you"),
-        "the coldest hour": N_("the coldest hour"),
-        "the convoy passes": N_("the convoy passes"),
-        "the eaves drip": N_("the eaves drip"),
-        "the gale builds": N_("the gale builds"),
-        "the ice tightens": N_("the ice tightens"),
-        "the lake booms": N_("the lake booms"),
         "the pod around you": N_("the pod around you"),
-        "the rain stops": N_("the rain stops"),
-        "the sky clears": N_("the sky clears"),
-        "the squall": N_("the squall"),
-        "the wind freshens": N_("the wind freshens"),
         "throat & shoulders": N_("throat & shoulders"),
-        "thunder moving off": N_("thunder moving off"),
-        "tunnels and bridges": N_("tunnels and bridges"),
         "whales close": N_("whales close"),
-        "whisking the tea": N_("whisking the tea"),
-        // The cave's stretches ("drip by drip", "dry spell", "deep silence", "stones settle" are its spells' names).
-        "the cave settles around you": N_("the cave settles around you"),
-        "the drips thin out": N_("the drips thin out"),
-        "the first drips return": N_("the first drips return"),
-        "rain soaks in above": N_("rain soaks in above"),
-        "the cave is raining": N_("the cave is raining"),
-        "the water drains away": N_("the water drains away"),
-        "air from the entrance": N_("air from the entrance"),
-        "the air stills": N_("the air stills"),
-        "still again": N_("still again"),
-        // The yacht at anchor.
-        "a still night at anchor": N_("a still night at anchor"),
-        "a breeze picks up": N_("a breeze picks up"),
-        "a fresh night breeze": N_("a fresh night breeze"),
-        "the breeze dies away": N_("the breeze dies away"),
-        "slack water": N_("slack water"),
-        "the boat swings to the tide": N_("the boat swings to the tide"),
-        "lying to the new tide": N_("lying to the new tide"),
-        "first light": N_("first light"),
-        "dawn over the bay": N_("dawn over the bay"),
-        "morning settles": N_("morning settles"),
-        // Campfire by the sea.
-        "kindling catches": N_("kindling catches"),
-        "the fire takes": N_("the fire takes"),
-        "a good blaze": N_("a good blaze"),
-        "a steady fire": N_("a steady fire"),
-        "the fire burns down": N_("the fire burns down"),
-        "the tide turns": N_("the tide turns"),
-        "high water": N_("high water"),
-        "the tide eases": N_("the tide eases"),
-        "a breeze off the sea": N_("a breeze off the sea"),
-        "breezy": N_("breezy"),
-        "the breeze drops": N_("the breeze drops"),
-        "the fire dies down": N_("the fire dies down"),
-        "embers before dawn": N_("embers before dawn"),
-        // The night library's stretches ("rain setting in", "steady rain", "storm moving away" above).
-        "reading by the fire": N_("reading by the fire"),
-        "the fire burns low": N_("the fire burns low"),
-        "glowing embers": N_("glowing embers"),
-        "a fresh log": N_("a fresh log"),
-        "the wind rises": N_("the wind rises"),
-        "storm over the roofs": N_("storm over the roofs"),
-        "late-night stillness": N_("late-night stillness"),
-        // The tent in the rain ("steady rain", "the rain stops", "thunder moving off" are above).
-        "drizzle on the fly": N_("drizzle on the fly"),
-        "the rain sets in": N_("the rain sets in"),
-        "thunder over the valley": N_("thunder over the valley"),
-        "the storm passes over": N_("the storm passes over"),
-        "only the drips": N_("only the drips"),
-        "wind off the ridge": N_("wind off the ridge"),
-        "gusts on the fly": N_("gusts on the fly"),
-        "the wind drops": N_("the wind drops"),
     ]
 
     /// A stretch's label; one without its own entry may share a spell's name ("deep quiet").
@@ -794,93 +613,16 @@ enum ControlText {
 
     /// The scene files' lever titles (English, as authored), so the translations are found.
     private static let leverTitles = [
-        "Ships": N_("Ships"), "Station": N_("Station"), "Docking": N_("Docking"), "Radio": N_("Radio"),
-        "Solar wind": N_("Solar wind"), "Current": N_("Current"), "Whales": N_("Whales"), "Dolphins": N_("Dolphins"),
-        "Reef": N_("Reef"), "Rain above": N_("Rain above"), "Depth": N_("Depth"),
-        // The new scenes' group and lever titles.
-        "Bell buoy": N_("Bell buoy"),
+        "Current": N_("Current"),
+        "Whales": N_("Whales"),
+        "Dolphins": N_("Dolphins"),
+        "Reef": N_("Reef"),
+        "Rain above": N_("Rain above"),
+        "Depth": N_("Depth"),
         "Bowls": N_("Bowls"),
-        "Bridges": N_("Bridges"),
-        "Ceremony": N_("Ceremony"),
-        "Compartment": N_("Compartment"),
-        "Countryside": N_("Countryside"),
-        "Crossings": N_("Crossings"),
-        "Deep ice": N_("Deep ice"),
-        "Eaves": N_("Eaves"),
-        "Fog": N_("Fog"),
-        "Foghorn": N_("Foghorn"),
-        "Frost": N_("Frost"),
-        "Gale": N_("Gale"),
-        "Garden": N_("Garden"),
         "Guide": N_("Guide"),
-        "Horn": N_("Horn"),
-        "Kettle": N_("Kettle"),
-        "Lamp": N_("Lamp"),
-        "Near cracks": N_("Near cracks"),
-        "Old rails": N_("Old rails"),
-        "Passing trains": N_("Passing trains"),
-        "Rail joints": N_("Rail joints"),
-        "Rain on the window": N_("Rain on the window"),
-        "Room": N_("Room"),
-        "Rumble": N_("Rumble"),
-        "Running cracks": N_("Running cracks"),
-        "Sea": N_("Sea"),
-        "Shore forest": N_("Shore forest"),
-        "Shore life": N_("Shore life"),
-        "Singing ice": N_("Singing ice"),
-        "Snow drift": N_("Snow drift"),
-        "Space weather": N_("Space weather"),
         "Speed": N_("Speed"),
-        "Stations": N_("Stations"),
-        "Temple bell": N_("Temple bell"),
-        "Thunder": N_("Thunder"),
-        "Tower": N_("Tower"),
-        "Tunnels": N_("Tunnels"),
-        "Vastness": N_("Vastness"),
-        // The cave.
-        "Drips": N_("Drips"),
-        "Pools": N_("Pools"),
-        "Stream": N_("Stream"),
-        "Pebbles": N_("Pebbles"),
-        "Slow drip": N_("Slow drip"),
-        "Drips on rock": N_("Drips on rock"),
-        "Far drips": N_("Far drips"),
-        "Draught": N_("Draught"),
-        // The yacht at anchor.
-        "Anchor chain": N_("Anchor chain"),
-        "Bay": N_("Bay"),
-        "Creaks": N_("Creaks"),
-        "Dawn": N_("Dawn"),
-        "Gulls": N_("Gulls"),
-        "Gusts": N_("Gusts"),
-        "Halyard": N_("Halyard"),
-        "Harbour": N_("Harbour"),
-        "Hull": N_("Hull"),
-        "Moored boats": N_("Moored boats"),
-        "Rigging": N_("Rigging"),
-        "Slaps": N_("Slaps"),
-        "Swell": N_("Swell"),
-        "Tide": N_("Tide"),
         "Wind": N_("Wind"),
-        // Campfire by the sea.
-        "Surf": N_("Surf"), "Night life": N_("Night life"),
-        "Crackle": N_("Crackle"), "Flames": N_("Flames"), "Embers": N_("Embers"), "Driftwood": N_("Driftwood"),
-        "Dune grass": N_("Dune grass"),
-        // The night library.
-        "Clock": N_("Clock"),
-        "Fire": N_("Fire"),
-        "House": N_("House"),
-        "Pages": N_("Pages"),
-        "Pen": N_("Pen"),
-        "Reading": N_("Reading"),
-        "Storm": N_("Storm"),
-        // The tent in the rain ("Rain", "Wind", "Thunder" are translated as they are).
-        "Rain on the fly": N_("Rain on the fly"),
-        "Downpour": N_("Downpour"),
-        "Meadow": N_("Meadow"),
-        "Fly and poles": N_("Fly and poles"),
-        "Sleeping bag": N_("Sleeping bag"),
-        "Tent": N_("Tent"),
     ]
 
     private static func leverKey(_ c: Control) -> String? {
@@ -896,11 +638,6 @@ enum ControlText {
     static func leverIcon(_ c: Control) -> Icon? {
         guard let key = leverKey(c) else { return nil }
         switch ClipGroupLabels.leverIcons[key] ?? "" {
-        case "ship": return .ship
-        case "station": return .station
-        case "docking": return .docking
-        case "radio": return .radio
-        case "plasma": return .plasma
         case "water", "current": return .water
         case "whale": return .whale
         case "dolphin": return .dolphin
@@ -922,16 +659,13 @@ enum ControlText {
 
     private static let clipFallbackTitles = [
         "current": N_("Current"), "whales": N_("Whales"), "dolphins": N_("Dolphins"), "bubbles": N_("Bubbles"),
-        "plasma": N_("Plasma"), "flybys": N_("Flybys"), "beams": N_("Beams"), "orbits": N_("Orbits"),
     ]
     private static let clipFallbackIcons = [
         "current": "water", "whales": "whale", "dolphins": "dolphin", "bubbles": "bubbles",
-        "plasma": "plasma", "flybys": "flyby", "beams": "beam", "orbits": "orbit",
     ]
     private static let clipLeaves = [
         "level": N_("Volume"), "events": N_("Events"), "motion": N_("Motion"), "distance": N_("Distance"),
         "pitch": N_("Pitch"), "flow": N_("Current speed"), "turbulence": N_("Turbulence"),
-        "hiss": N_("Hiss center"), "whistlers": N_("Whistlers"),
     ]
 
     /// ("whales", "events") from "clip.whales.events".
@@ -961,9 +695,6 @@ enum ControlText {
             case "whale": return .whale
             case "dolphin": return .dolphin
             case "bubbles": return .bubbles
-            case "plasma": return .plasma
-            case "flyby", "comet": return .comet
-            case "beam": return .beam
             case "orbit": return .orbit
             case "wind": return .wind
             case "tone": return .tone
@@ -975,7 +706,7 @@ enum ControlText {
         case "events": return .dot
         case "motion": return .speed
         case "distance": return .width
-        case "pitch", "hiss", "whistlers": return .tone
+        case "pitch": return .tone
         case "flow": return .flow
         case "turbulence": return .gust
         default: return .dot
@@ -1011,7 +742,6 @@ enum ControlText {
                 return decibels(Int(c.value.rounded()))
             case "events" where c.value < 0.01: return tr("off")
             case "motion" where c.value < 0.01: return tr("stop")
-            case "whistlers": return tr("+%d /min", Int(c.value.rounded()))
             default: break
             }
         }
@@ -1020,7 +750,6 @@ enum ControlText {
         case "scene.motion" where c.value < 0.01: return tr("stop")
         case "scene.events" where c.value < 0.01, "scene.bed" where c.value < 0.01, "scene.creatures" where c.value < 0.01:
             return tr("off")
-        case "flight.seed": return tr("#%d", index)
         case "mix.soloists": return String(index)
         default: break
         }

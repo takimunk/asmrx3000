@@ -19,7 +19,7 @@ private struct FrameUniforms {
     var haze: SIMD4<Float>      // horizon y px, stars, planet, clip scene
     var listener: SIMD4<Float>  // head position xyz, distance from the eye
     var invViewProj: simd_float4x4
-    var world: SIMD4<Float>     // snow cover, sand cover, bare rock above this slope, flying (0..1)
+    var world: SIMD4<Float>     // snow cover, sand cover, bare rock above this slope, 0
     var precip: SIMD4<Float>    // rate mm/h, snow (1) or rain (0), fog distance scale, sea
     var motion: SIMD4<Float>    // velocity of the air past the eye (travel frame, m/s), -
     var accent: SIMD4<Float>    // the user's accent rgb (Accent.swift), -
@@ -44,8 +44,6 @@ final class SceneRenderer {
     private var terrain: Mesh?
     private var terrainRiver: [SIMD4<Float>] = []
     private let pole: Mesh?
-    /// Flight mode: a boulder (the relief is FlightTerrain's chunks).
-    private let boulder = FlightGround.makeBoulder()
     private var data = [SIMD4<Float>](repeating: .zero, count: 48)
     private var lastBird: [UInt32: SIMD3<Float>] = [:]
     private var heading: [UInt32: Float] = [:]
@@ -116,21 +114,14 @@ final class SceneRenderer {
     func encode(_ cb: MTLCommandBuffer, target: MTLTexture, size: SIMD2<Float>, scale: Float) {
         ensureTargets(width: target.width, height: target.height)
         let river = stage.riverPoints()
-        if !stage.flight.active, !stage.isClipScene, terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
+        if !stage.isClipScene, terrain == nil || river.map({ SIMD3($0.x, $0.y, $0.z) }) != terrainRiver.map({ SIMD3($0.x, $0.y, $0.z) }) {
             terrain = TerrainMesh.build(river: river)
             terrainRiver = river
         }
         guard let gA, let gB, let gDepth else { return }
 
         let cam = stage.viewCamera
-        // In flight the sun stands lower (the relief reads in raking light) and stays put in
-        // the world while the course turns under it.
-        var sunDir = Self.sun
-        if stage.flight.active {
-            let a = Float(stage.flight.frame.heading)
-            let w = simd_normalize(SIMD3<Float>(-0.62, 0.55, 0.42))
-            sunDir = SIMD3(cos(-a) * w.x - sin(-a) * w.y, sin(-a) * w.x + cos(-a) * w.y, w.z)
-        }
+        let sunDir = Self.sun
         let vp = cam.viewProjection(aspect: size.x / size.y)
         let proj = Projector(camera: cam, size: size)
         let time = Float(stage.time.truncatingRemainder(dividingBy: 3600))
@@ -217,7 +208,7 @@ final class SceneRenderer {
         }
 
         // 4. Clip scenes: the names of the sounds that matter now.
-        if stage.isClipScene && !stage.flight.active {
+        if stage.isClipScene {
             labels.encode(cb, target: target, proj: proj, scale: scale, time: time, candidates: labelCandidates)
         }
     }
@@ -261,26 +252,9 @@ final class SceneRenderer {
         for (i, p) in river.prefix(8).enumerated() { data[i] = p }
         for i in 0..<64 { data[16 + i / 4][i % 4] = stage.wind[i] }
 
-        let flight = stage.flight
-        let flying = flight.active
         birdFlight.update(stage.audio, time: time)
-        // In flight the relief sits below the herm, which flies at the altitude.
-        func ground(_ x: Float, _ y: Float) -> Float {
-            flying ? stage.flightGround(x, y) : Terrain.height(x, y)
-        }
-        if flying {
-            // The relief, near chunks first (they cover the far ones), then the water on it.
-            // Far chunks fully covered by near ones are not drawn.
-            let chunks = stage.terrain.chunks.values.filter { !stage.terrain.covered($0) }.sorted { $0.key.level < $1.key.level }
-            for c in chunks {
-                let m = stage.terrain.model(c)
-                if let g = c.groundMesh { list.append((g, Instance(model: m, info: Self.anchor(c), anim: .zero))) }
-            }
-            for c in chunks {
-                let m = stage.terrain.model(c)
-                if let w = c.waterMesh { list.append((w, Instance(model: m, info: Self.anchor(c), anim: .zero))) }
-            }
-        } else if stage.isClipScene {
+        func ground(_ x: Float, _ y: Float) -> Float { Terrain.height(x, y) }
+        if stage.isClipScene {
             // No forest here: the scene's own things (and underwater, the bottom).
             let scene = stage.audio.scene
             if scene.look == .underwater {
@@ -289,11 +263,10 @@ final class SceneRenderer {
             }
             clipInstances(&list, proj: proj, scale: scale)
             u.counts = SIMD4(0, Float(ringCount), 0, 0)
-            // The sky of the place: stars, and in orbit the planet below.
-            let set = ClipSet.of(scene)
-            u.haze.y = set.stars
-            u.haze.z = set.planet ? 1 : 0
-            u.haze.w = set == .ice ? 2 : 1
+            // No stars, no planet: the sky is plain.
+            u.haze.y = 0
+            u.haze.z = 0
+            u.haze.w = 1
             return list
         } else if let terrain {
             list.append((terrain, Instance(model: matrix_identity_float4x4, info: SIMD4(-1, flags(.river), 0, 0), anim: .zero)))
@@ -307,35 +280,18 @@ final class SceneRenderer {
             switch o.kind {
             case UInt32(ASMR_OBJECT_TREE):
                 let names = ["broadleaf", "spruce", "broadleaf_b", "spruce_b"]
-                // Streamed trees keep their model by id; the scene's go in order.
-                // Streamed trees: conifers (spruce, pine) or broadleaf by species (flags >> 8).
-                let species = Int(o.flags >> 8 & 15) - 1
-                let conifer = species == 2 || species == 6
-                let name = flying && species >= 0 ? (conifer ? ["spruce", "spruce_b"] : ["broadleaf", "broadleaf_b"])[Int(o.id % 2)]
-                    : names[(flying ? Int(o.id % 4) : treeIndex) % names.count]
+                // The scene's trees go in order.
+                let name = names[treeIndex % names.count]
                 treeIndex += 1
-                let r = simd_length(SIMD2(o.x, o.y))
-                if flying && r > FlightGround.reach { continue }
                 guard let mesh = lib[name] else { continue }
-                // Streamed trees come with their ground (on the relief).
-                let g = flying ? o.z : ground(o.x, o.y)
+                let g = ground(o.x, o.y)
                 let crown: Float = name.hasPrefix("spruce") ? 3.6 : 4.2
-                // Streamed trees grow in from the edge of reach, already deep in the haze.
-                let grow: Float = flying ? min(max((FlightGround.reach - r) / 8, 0), 1) : 1
-                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown * (0.3 + 0.7 * grow)
+                let s = (Stage.treeHeight * 0.75 + sin(Float(o.id) * 2.1) * 1.2) / crown
                 let wind = localWind(o.y)
                 let m = Self.transform(SIMD3(o.x, o.y, g), yaw: Float(o.id) * 1.3, scale: s) * Self.slender
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id), flags(.object(o.id)), wind * 0.55, 6.6),
                                             anim: SIMD4(0, Float(o.id), wind, 1))))
-            case UInt32(ASMR_OBJECT_ROCK) where flying:
-                let g = ground(o.x, o.y)
-                // Boulders report their top; ridges are part of the relief.
-                guard let boulder, simd_length(SIMD2(o.x, o.y)) < FlightGround.reach, o.z - g > 0.5 else { continue }
-                let radius = min(max((o.z - g) / 1.4, 0.4), 2.0)
-                let m = Self.transform(SIMD3(o.x, o.y, g - 0.15), yaw: Float(o.id % 7), scale: radius)
-                list.append((boulder, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
             case UInt32(ASMR_OBJECT_BIRD):
-                if flying && simd_length(SIMD2(o.x, o.y)) > FlightGround.reach { continue }
                 // The bird's voice is the bird source closest to it.
                 let level = stage.sources.filter { $0.kind == .bird }
                     .min { simd_distance($0.world, p) < simd_distance($1.world, p) }?.level ?? 0
@@ -354,7 +310,7 @@ final class SceneRenderer {
                 guard let mesh = lib[pose.spread ? "bird_flying" : "bird"] else { continue }
                 let (wing, m) = (pose.wing, pose.model)
                 list.append((mesh, Instance(model: m, info: SIMD4(Float(o.id) + 1000, flags(.object(o.id)), 0, 0), anim: SIMD4(wing, 0, 0, 0))))
-                if !moving, !flying, !pose.onGround, let pole {
+                if !moving, !pose.onGround, let pole {
                     // A dead snag to perch on, with one twig.
                     let g = ground(o.x, o.y)
                     let top = o.z - 0.1 * Self.birdScale
@@ -376,19 +332,19 @@ final class SceneRenderer {
                 break
             }
         }
-        for (x, y, s, name) in Self.grove where !flying {
+        for (x, y, s, name) in Self.grove {
             guard let mesh = lib[name] else { continue }
             let wind = localWind(y)
             let m = Self.transform(SIMD3(x, y, Terrain.height(x, y)), yaw: x * 0.7 + y, scale: s) * Self.slender
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, wind * 0.55, 6.6), anim: SIMD4(0, x + y, wind, 1))))
         }
         // The forest goes on beyond the play area, thinning out into the haze; none in the river.
-        for (x, y, s, name) in Self.distantForest where !flying {
+        for (x, y, s, name) in Self.distantForest {
             guard let mesh = lib[name], abs(x - Stage.riverAt(y, river).x) > 4 else { continue }
             let m = Self.transform(SIMD3(x, y, Terrain.farHeight(x, y) - 0.1), yaw: x + y * 0.3, scale: s) * Self.slender
             list.append((mesh, Instance(model: m, info: SIMD4(-1, 0, 0, 6.6), anim: SIMD4(0, x, localWind(y), 1))))
         }
-        if !flying, let ruin = lib["ruin"] {
+        if let ruin = lib["ruin"] {
             let r = Self.ruin
             let m = Self.transform(SIMD3(r.x, r.y, Terrain.height(r.x, r.y) - 0.05), yaw: 0.4, scale: 1)
             list.append((ruin, Instance(model: m, info: SIMD4(-1, 0, 0, 0), anim: .zero)))
@@ -435,7 +391,6 @@ final class SceneRenderer {
     private func clipInstances(_ list: inout [(Mesh, Instance)], proj: Projector, scale: Float) {
         guard let sphere = ClipProps.sphere, let box = ClipProps.box else { return }
         let scene = stage.audio.scene
-        let set = ClipSet.of(scene)
         let stone = SIMD4<Float>(-1, 0, 0, 0)
         ringCount = 0
 
@@ -475,7 +430,7 @@ final class SceneRenderer {
             let info = SIMD4<Float>(Float(id), flags(t.key), 0, 0)
             let kind = actors.kind(of: id, in: scene)
             // Where it is drawn: where it sounds, or for a sound of the place on the place itself.
-            let at = set.drawnAt(kind, raw: t.anchor)
+            let at = t.anchor
             let p = ClipSpace.map(at)
             drawn[id] = p
             let made = actors.pieces(kind, clip: clip, raw: at, trail: stage.trails[id] ?? [], time: clock, level: level,
@@ -498,7 +453,7 @@ final class SceneRenderer {
             if level > 0.05, made.pieces.contains(where: { $0.ghost == 0 }) || simd_length(t.anchor) > 1.5 { rings.append((p, level)) }
         }
         // The scene's still things (the ice, the seated listener), once the clips are known.
-        for piece in actors.scenery + set.moving(time: clock) {
+        for piece in actors.scenery {
             list.append((piece.mesh, Instance(model: piece.model, info: stone, anim: SIMD4(0, piece.ghost, 0, 0))))
         }
         let focal = proj.size.y * 0.5 / tan(proj.camera.fovY / 2)
@@ -516,7 +471,7 @@ final class SceneRenderer {
     private static func named(_ clip: ClipInfo, kind: ClipKind) -> Bool {
         if ["background", "texture", "creature", "event"].contains(clip.nameKey) { return false }
         switch kind {
-        case .bed, .generic, .tunnel, .sweep, .beam, .shimmer, .pulsar: return false
+        case .bed, .generic, .tunnel, .sweep: return false
         default: return true
         }
     }
@@ -528,33 +483,16 @@ final class SceneRenderer {
         return min(max((20 * log10(max(level, 1e-6)) + 46) / 40, 0), 1)
     }
 
-    /// Instance info of a terrain chunk: no id, and its world origin (wrapped) so the water
-    /// and sand patterns stay anchored to the world.
-    private static func anchor(_ c: FlightTerrain.Chunk) -> SIMD4<Float> {
-        SIMD4(-1, 0, Float(c.origin.x.truncatingRemainder(dividingBy: 4096)), Float(c.origin.y.truncatingRemainder(dividingBy: 4096)))
-    }
-
-    /// Precipitation over the scene (rain or snow, how much, how the air moves past the eye)
-    /// and the look of the flight relief (snow, sand, rock, how far the haze lets you see).
+    /// Precipitation over the scene (rain or snow, how much, how the air moves past the eye).
     private func precipitation(_ u: inout FrameUniforms) {
-        let f = stage.flight
-        let flying = f.mix > 0.5 && f.framed
         let rate = stage.audio.rainRate
         let temperature = stage.controls.controls.first { $0.key == "env.temperature" }?.value ?? 15
-        let snow: Float = flying ? f.frame.snow : (temperature < 0 ? 1 : 0)
-        var fog: Float = 1
-        if flying {
-            // Relief to see: further in open country, less in falling snow.
-            fog = 2.3 + 0.6 * f.frame.sea
-            if rate > 0.3 { fog *= snow > 0.5 ? 0.6 : 0.8 }
-        }
-        u.precip = SIMD4(rate, snow, 1 + (fog - 1) * min(max(f.mix, 0), 1), flying ? f.frame.sea : 0)
-        u.world = flying ? SIMD4(f.frame.snow_cover, f.frame.sand_cover, f.frame.rock_slope, 1) : .zero
-        // The air past the eye: the fall, a breeze across, and the flight (backwards).
-        let v = flying ? stage.telemetry.speed : 0
+        let snow: Float = temperature < 0 ? 1 : 0
+        u.precip = SIMD4(rate, snow, 1, 0)
+        u.world = .zero
         let fall: Float = snow > 0.5 ? 1.0 : 7.0
         let across = 1.5 * stage.telemetry.gust * (snow > 0.5 ? 1.5 : 1)
-        u.motion = SIMD4(-v, across, -fall, 0)
+        u.motion = SIMD4(0, across, -fall, 0)
     }
 
     /// Whether an engine object near this point is off stage (ASMR_OBJECT_FLAG_ABSENT).

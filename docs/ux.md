@@ -2,7 +2,7 @@
 
 ## 1. Audit of the popover before the overhaul
 
-Snapshots: `docs/ux/before/` (static, selected bird, expanded water branch, flight with gaze,
+Snapshots: `docs/ux/before/` (static, selected bird, expanded water branch, gaze,
 prompt reply, menu bar frames).
 
 **Hierarchy**
@@ -14,7 +14,7 @@ prompt reply, menu bar frames).
   sandwiched between the scene's caption and an ornament. It reads as a footnote.
 
 **Discoverability of buttons**
-- The transport (pause, fly, recenter, head tracking, quit) is five 17 pt grey line icons in
+- The transport (pause, recenter, head tracking, quit) is four 17 pt grey line icons in
   the top right corner, on top of a busy engraving, behind a radial black smudge. At 55 %
   grey they disappear into the trees. No labels, no tooltips, no visible hit area.
 - Quit sits next to recenter with the same weight: a mis-click closes the app.
@@ -24,13 +24,13 @@ prompt reply, menu bar frames).
 **Sliders (the "mush")**
 - Ten macro rows, 23 pt each, all drawn as full-width waveform barcodes. The knob is a 5 pt
   hollow diamond on a 1 pt stem; the value is only legible as "where the bright part stops".
-- Rows without sound (rain, environment, insects, fire, flight) are dotted lines — they look
+- Rows without sound (rain, environment, insects, fire) are dotted lines — they look
   disabled even though they are not.
 - Expanding a group inserts 9 child sliders inline, pushes every other row down and scrolls
   the list: the tangle in `expanded.png`. Children have no names until hovered; nine
   identical hairline scales with ticks are indistinguishable.
 - Pictograms are 18 pt engraved line art at 55 % grey; several are illegible at that size
-  (foliage, environment, flight, master).
+  (foliage, environment, master).
 
 **Legibility**
 - Body text is 11–11.5 pt grey on a striped engraving (`Click a tree…`, the selection help,
@@ -49,7 +49,7 @@ prompt reply, menu bar frames).
 - Prompt: no visible send affordance, no loading state beyond "слушаю…", errors are the same
   grey line as replies. Empty state is just the placeholder.
 - No hover / pressed / focus states anywhere except a colour change of the icon.
-- Toggles (head tracking, flight) show state only by a strike-through or a brighter line.
+- Toggles (head tracking) show state only by a strike-through or a brighter line.
 
 **Keyboard and focus**
 - All buttons are `.focusable(false)`; the only keyboard path is the scene (arrows, tab,
@@ -77,7 +77,7 @@ analysis (spectrogram).
 │                                             │
 │ ◦ selection chip / hint                     │
 ├─────────────────────────────────────────────┤
-│ ▶  ─────○ vol     ✈  ◎  ◖◗        09:00   ⏻ │  transport: one row, labels on hover
+│ ▶  ─────○ vol        ◎  ◖◗        09:00   ⏻ │  transport: one row, labels on hover
 ├─────────────────────────────────────────────┤
 │ X_ Скажите, каким быть лесу…            ⏎   │  prompt: framed, the second loudest thing
 │    reply / error / thinking line            │
@@ -87,7 +87,7 @@ analysis (spectrogram).
 │ ♪  birds   ━━━━━━━━━━━━○                   › │  the waveform is the slider's fill
 │ ⁄⁄ rain    ○                               › │
 │ ☼  time    ━━━━━━━━━○                      › │
-│ ··· more (foliage, insects, fire, flight)    │
+│ ··· more (foliage, insects, fire)            │
 ├─────────────────────────────────────────────┤
 │ ▁▂▃▂▁▁▂▅▃▂ spectrogram strip (click to open) │
 └─────────────────────────────────────────────┘
@@ -101,7 +101,7 @@ See section 3 for what was built.
 ## 3. What was built
 
 Snapshots: `docs/ux/after/` (static, selected tree, water drawer with the spectrogram open,
-flight with gaze, prompt reply at night, all levers, night). Menu bar: `docs/ux/icon/`.
+gaze, prompt reply at night, all levers, night). Menu bar: `docs/ux/icon/`.
 
 **Tokens** (`Panel/Icons.swift`)
 - Colour: `Ink.panel` 0.078 grey (the strips' shaders use the same value), `raised` 0.13
@@ -118,14 +118,14 @@ flight with gaze, prompt reply at night, all levers, night). Menu bar: `docs/ux/
 - Scene: no overlays except one chip bottom-left: the selection (name, position, keys) or,
   while the pointer is over the scene, how to select.
 - Transport row: play/pause (filled when paused: the one thing to do), volume (the master
-  group, moved out of the list), fly, head tracking, recenter; quit is a quiet power icon on the
+  group, moved out of the list), head tracking, recenter; quit is a quiet power icon on the
   far right. Toggles that are on sit in a raised frame. Hovering a button writes its name and
   key into the status slot on the right, which otherwise shows where the head looks and the hour.
 - Prompt: a framed field that starts with the "X_" of the menu bar mark (cursor blinks while
   focused). Send button appears when there is text; three dots while the model thinks. The
   line under it: an example (empty state), "Слушаю…", the model's answer with "⌘Z отменить",
   or an error with a "!" mark.
-- Levers: water, wind, birds, rain, time and weather (flight joins first while flying); the
+- Levers: water, wind, birds, rain, time and weather; the
   rest behind "N more" with their pictograms. A lever is pictogram + slider (waveform fill up
   to the value) + chevron; name and value appear on hover. Generic: any new group the engine
   adds lands behind "more"; at least four levers are always shown.
@@ -144,7 +144,7 @@ mixed in rather than added, so they stay violet over any grey. Fewer texture rea
 engraving (halo 8 taps instead of 16, beam 24 steps instead of 28).
 
 **Keyboard**: the scene keeps the keyboard (arrows, ⇧↑↓, ⌥, tab, space); buttons hand it
-back after a click. New: F fly, H head tracking, C recenter, return or / to the prompt, esc
+back after a click. New: H head tracking, C recenter, return or / to the prompt, esc
 in the prompt back to the scene, esc with nothing selected closes the drawer, ⌘← closes it
 too, ⌘Q quits. Transport buttons are focusable and draw a 1.5 pt ring.
 
@@ -165,7 +165,7 @@ A-S-M-R-X, the cursor stays blue and blinks.
 
 ## 4. Second pass: sound vs world, Russian, the mark
 
-Before: `docs/ux/after/` (section 3). After: `docs/ux/v2/` (static, selected, flight, water
+Before: `docs/ux/after/` (section 3). After: `docs/ux/v2/` (static, selected, water
 drawer, all levers, night, mix drawer, and `without-levels` for a core without level controls).
 The snapshots with a sound section were taken with `ASMR_PREVIEW_LEVELS=1` (inert 0 dB stand-ins,
 see below) until the core's level controls are merged.
@@ -184,17 +184,13 @@ given the screen's contents scale) when built. Animation still runs on hover onl
   Double-click the rail: 0 dB. Last cell: the mix's clarity ("Ясность"), which opens the mix
   drawer. A group's `*.gain` leaves its drawer once the group has a level. Without level
   controls the section keeps only the mix.
-- **МИР — что происходит в лесу** (in flight: "полёт над лесом"). The macro levers, each with
+- **МИР — что происходит в лесу**. The macro levers, each with
   pictogram, name of what it physically sets ("Течение воды", "Скорость ветра", "Сила дождя",
-  "Время суток", "Скорость полёта"…), the waveform slider, the value with units ("4.8 м/с",
+  "Время суток", …), the waveform slider, the value with units ("4.8 м/с",
   "0 мм/ч", "09:00", "×1.0") and the chevron to its drawer. Nothing is hover-only any more.
 - Master volume stays in the transport.
 
-**Transport**: where the listener is, a three-segment switch "Дома | Стоим | Летим" (home scene,
-standing in the generated world, flying through it): the current mode is raised, the others are
-what a click does (hints "Остановиться здесь F", "Лететь дальше F", "Взлететь над лесом F",
-"Вернуться домой"; the current one tells the keys: "идти W A S D", "рулить A D"). F stops / flies
-on in the world and takes off from home; W A S D Q E (+⇧) walk and steer (docs/flight-mode.md). Head tracking
+**Transport**: head tracking
 is a labelled toggle "Голова" with a new pictogram (a head with an AirPod in each ear and a turn
 arc), struck through when off, a violet dot when on. The status shows the gaze as arrows
 ("← 35° ↑ 15°"); the hour moved to the world's "Время суток" lever when head tracking is on.

@@ -2,7 +2,6 @@
 # Builds asmr-core (Rust) + the macOS menu bar app and assembles build/ASMR X3000.app.
 #   scripts/build-macos.sh          build and launch
 #   OPEN=0 scripts/build-macos.sh   build only
-#   LITE=1 scripts/build-macos.sh   the light build: procedural scenes only, no sound files
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,11 +27,9 @@ pkill -x ASMRX3000 2>/dev/null || true
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
+# Local symbols are only for debugging: stripping them takes the binary from ~6.7 to ~4.4 MB.
+strip -x "$APP/Contents/MacOS/ASMRX3000"
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
-if [[ "${LITE:-0}" == "1" ]]; then
-  # Scenes.swift reads this and offers only the scenes made of physical models.
-  /usr/libexec/PlistBuddy -c "Add :ASMRProceduralOnly bool true" "$APP/Contents/Info.plist"
-fi
 # The system permission prompts (microphone, motion) follow the macOS language.
 for l in en ru; do mkdir -p "$APP/Contents/Resources/$l.lproj"; cp "$APP_PKG/Support/$l.lproj/InfoPlist.strings" "$APP/Contents/Resources/$l.lproj/"; done
 cp "$APP_PKG/Resources/models.bin" "$APP/Contents/Resources/models.bin"
@@ -41,14 +38,11 @@ cp -R "$APP_PKG/Resources/Fonts" "$APP/Contents/Resources/Fonts"
 cp -R "$APP_PKG/Resources/Onboarding" "$APP/Contents/Resources/Onboarding"
 # Strings (L10n.swift reads Localization/<lang>.lproj/*.strings itself: SwiftPM's Bundle.module does not resolve in a hand-made .app).
 cp -R "$APP_PKG/Resources/Localization" "$APP/Contents/Resources/Localization"
-# Scenes and their sound files (the scene picker; the app points ASMR_SOUNDS_DIR at sounds/).
+# Scenes (the scene picker). The app ships no sound files: all three scenes are procedural.
+# The loop below copies any .wav a scene references into sounds/ (the app points
+# ASMR_SOUNDS_DIR there); it is kept for experiments with the clip engine and is a no-op otherwise.
 mkdir -p "$APP/Contents/Resources/scenes" "$APP/Contents/Resources/sounds"
-# The scenes the picker offers (Scenes.swift; the *_real variants on field recordings are
-# kept in the repo for comparison but not shipped), and only the sound files they use.
-# The .wav files are not in git: fetch them first (assets/sounds/SOURCES.md, tools/).
-SCENES=(forest_river underwater_drift space_still lighthouse_gale night_train singing_ice tea_house body_scan cave_drips sailboat_anchor campfire_shore night_library body_scan mountain_tent demo_flyby open_country)
-# The light build carries only the procedural scenes, which need no sound files.
-[[ "${LITE:-0}" == "1" ]] && SCENES=(open_country)
+SCENES=(forest_river underwater_drift body_scan)
 for s in "${SCENES[@]}"; do cp "$ROOT/core/scenes/$s.json" "$APP/Contents/Resources/scenes/"; done
 missing=$(cd "$APP/Contents/Resources/scenes" && { grep -ho '"[^"]*\.wav"' *.json || true; } | tr -d '"' | sort -u | while read -r f; do
   if [[ -f "$ROOT/assets/sounds/$f" ]]; then

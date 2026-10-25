@@ -4,8 +4,8 @@
 //!
 //! Scenes (comma-separated, default all): `dawn` (dense default scene: dawn chorus with every
 //! bird, breeze, brook, light rain), `default` (forest_river.json as it starts), `storm` (downpour, thunder, strong wind, a few birds),
-//! `flight` (flight mode over the streamed landscape at dawn). Each is rendered twice from
-//! the same seed (`flight_still`: hovering, flight speed 0): **before** (legacy per-kind gains, no attention, ducking or dynamics) and
+//! The default set renders them all. Each is rendered twice from
+//! the same seed: **before** (legacy per-kind gains, no attention, ducking or dynamics) and
 //! **after** (calibrated levels + the sound director). The same analysis runs in both, so the
 //! numbers compare: BS.1770 loudness of the output, per-group level (LUFS share) and masking
 //! (fraction of the group's loudness hidden by everything else, Zwicker partial loudness),
@@ -213,15 +213,6 @@ fn setup(e: &Engine, scene: &str) {
         }
         // The default scene (forest_river.json) as it starts.
         "default" => {}
-        "flight" | "flight_still" => {
-            e.set_param(param::TIME_OF_DAY, 6.5);
-            e.set_param(param::BIRDS, 1.0);
-            e.set_param(param::FLIGHT, 1.0);
-            if scene == "flight_still" {
-                // Hovering: the listener has stopped (stationary refocus).
-                e.set_control(asmr_core::controls::id::FLIGHT_SPEED, 0.0);
-            }
-        }
         _ => panic!("unknown scene {scene}"),
     }
 }
@@ -374,7 +365,7 @@ fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let secs: f32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(60.0);
     let dir = args.get(2).cloned().unwrap_or_else(|| "renders/mix_ab".into());
-    let scenes: Vec<String> = args.get(3).map_or(vec!["default".into(), "dawn".into(), "storm".into(), "flight".into(), "flight_still".into()], |s| s.split(',').map(String::from).collect());
+    let scenes: Vec<String> = args.get(3).map_or(vec!["default".into(), "dawn".into(), "storm".into()], |s| s.split(',').map(String::from).collect());
     std::fs::create_dir_all(&dir)?;
     let mut md = String::new();
     let mut all = format!("# Sound director A/B ({secs:.0} s per take, 48 kHz)\n\n");

@@ -60,7 +60,7 @@ final class Meters: ObservableObject {
 
 /// Order matches the rows of the track scopes and ASMR_SCOPE_*.
 enum Track: Int, CaseIterable {
-    case water, wind, birds, flight, volume, rain, insects, fire, thunder
+    case water, wind, birds, reserved, volume, rain, insects, fire, thunder
 }
 
 /// Per-frame state shared by the scene and spectrogram renderers. Telemetry is sampled once per
@@ -108,39 +108,8 @@ final class Stage {
     /// The scene the stage was last set up for (a switch resets the camera and selection).
     private var sceneID = ""
     private(set) var telemetry = Telemetry()
-    /// Flight mode: telemetry and the shapes of the streamed water (see FlightStage.swift).
-    var flight = FlightView()
-    /// Flight mode: the relief in world-anchored chunks (FlightTerrain.swift).
-    let terrain = FlightTerrain()
-    /// Camera target height outside flight mode; in flight the view follows the herm up.
-    /// The camera the scene is drawn and picked with: the user's orbit camera, and in flight
-    /// tilted down onto the canopy and centred on the herm, so the ground streaming below and
-    /// the herm stay in view at any altitude.
-    var viewCamera: OrbitCamera {
-        var c = camera
-        let m = min(max(flight.mix, 0), 1)
-        guard m > 0 else { return c }
-        let lift = min(0.2 + 0.006 * flight.altitude, 0.42)
-        c.elevation += (max(c.elevation, lift) - c.elevation) * m
-        c.target.x *= 1 - m
-        c.target.z -= 0.55 * flight.drop * m
-        // The relief runs on into the haze: see much further.
-        c.far += 520 * m
-        // Never inside a hill: rise over the slopes between the camera and the herm.
-        if flight.active {
-            for _ in 0..<16 {
-                let e = c.eye
-                var clear = true
-                for t: Float in [1.0, 0.75, 0.5, 0.3] {
-                    let p = c.target + (e - c.target) * t
-                    if let g = terrain.height(p.x, p.y, water: true), p.z < g + 2.5 { clear = false; break }
-                }
-                if clear || c.elevation > 1.3 { break }
-                c.elevation += 0.06
-            }
-        }
-        return c
-    }
+    /// The camera the scene is drawn and picked with: the user's orbit camera.
+    var viewCamera: OrbitCamera { camera }
 
     /// Spectrogram history: `columns` columns of `bands` floats, column-major.
     private(set) var history = [Float](repeating: 0, count: Stage.columns * Stage.bands)
@@ -199,7 +168,6 @@ final class Stage {
         telemetry = audio.readTelemetry(spectrum: &spectrum, windField: &wind, sources: &sources)
         if audio.scene.entry.id != sceneID { sceneChanged() }
         audio.readObjects(&objects)
-        readFlight()
         audio.readControls(&controlBuffer)
         if controlBuffer != controls.controls { controls.controls = controlBuffer }
         rebuildThings()
@@ -345,8 +313,6 @@ final class Stage {
             let p = SIMD3(o.x, o.y, o.z)
             let movable = o.flags & UInt32(ASMR_OBJECT_FLAG_MOVABLE) != 0 && o.flags & UInt32(ASMR_OBJECT_FLAG_MOVING) == 0
             if o.flags & UInt32(ASMR_OBJECT_FLAG_ABSENT) != 0 { continue }
-            // In flight the landscape streams past: only what is on the disc can be pointed at.
-            if flight.active && (o.kind == UInt32(ASMR_OBJECT_RIVER) || simd_length(SIMD2(p.x, p.y)) > Terrain.radius) { continue }
             switch o.kind {
             case UInt32(ASMR_OBJECT_RIVER):
                 // The engine reports the river's centroid; its extent comes from the water emitters.
@@ -358,7 +324,7 @@ final class Stage {
                 }
                 riverSum = p
             case UInt32(ASMR_OBJECT_TREE):
-                let g = flight.active ? p.z : Terrain.height(p.x, p.y)
+                let g = Terrain.height(p.x, p.y)
                 things.append(Thing(key: .object(o.id), kind: .tree, ids: [o.id], anchor: SIMD3(p.x, p.y, g), movable: movable,
                                     boxMin: SIMD3(p.x - 2.0, p.y - 2.0, g), boxMax: SIMD3(p.x + 2.0, p.y + 2.0, g + Self.treeHeight)))
             case UInt32(ASMR_OBJECT_BIRD):
@@ -498,7 +464,6 @@ final class Stage {
 
     /// River sources as (x, y, z, level), sorted by y. Level comes from the source telemetry.
     func riverPoints() -> [SIMD4<Float>] {
-        if flight.active { return flight.river }
         var pts: [SIMD4<Float>] = []
         // Only the river's own segments: other water sources (drips, a waterfall) sit elsewhere.
         let centre = objects.first { $0.kind == UInt32(ASMR_OBJECT_RIVER) }.map { SIMD2($0.x, $0.y) }

@@ -45,6 +45,9 @@ pub enum HrtfModel {
     Analytic = 1,
 }
 
+/// Speed of sound in sea water near the surface (~15 °C, 35 ‰), m/s.
+const SEAWATER_SOUND_SPEED: f32 = 1480.0;
+
 /// Weather, ground and forest. Units: deg C, % RH, kPa, trunks per hectare, metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Environment {
@@ -60,6 +63,10 @@ pub struct Environment {
     /// Listener ear height above the ground.
     pub ear_height: f32,
     pub hrtf: HrtfModel,
+    /// Sources and listener are under water: sound travels at ~1480 m/s along the paths
+    /// (propagation delay, so Doppler is 4.3× smaller than in air). The head-related parts
+    /// (near-field filters, HRTF) stay in air terms: the scene is heard as if by a diver.
+    pub underwater: bool,
 }
 
 impl Default for Environment {
@@ -74,6 +81,7 @@ impl Default for Environment {
             reverb: 1.0,
             ear_height: 1.5,
             hrtf: HrtfModel::Measured,
+            underwater: false,
         }
     }
 }
@@ -492,7 +500,7 @@ impl Acoustics {
         self.env = Some(env);
         let ctx = &mut self.ctx;
         let c = air::speed_of_sound(env.temperature_c as f64);
-        ctx.speed_of_sound = c as f32;
+        ctx.speed_of_sound = if env.underwater { SEAWATER_SOUND_SPEED } else { c as f32 };
         ctx.nfc.set_speed_of_sound(c);
         ctx.ground = env.ground;
         ctx.ground_z = -env.ear_height;

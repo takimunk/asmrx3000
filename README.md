@@ -13,7 +13,7 @@
 - **Direction.** The world runs its own course: the clock moves, and weather spells come and go (a shower, a thunderstorm, mist at dawn). You steer it rather than set it: fairer or wetter, calmer or livelier, steadier or more eventful. You can also call up a spell, and anything you set by hand is left to you. See [direction](docs/direction.md).
 - **Living birds.** Every bird has its own territory, song posts, feeding, flight style and neighbours to answer. See [director](docs/director.md).
 - **Talk to it.** "Quieter river, night", "let it rain soon", by text or by voice. See [prompt-control](docs/prompt-control.md).
-- **Places.** A forest by a stream, under water, aboard a station in orbit, and flight over generated landscapes. See [flight-mode](docs/flight-mode.md).
+- **Places.** Three scenes, all procedural: a forest by a river, under water, and a body scan. No sound files are shipped; every sound is synthesised.
 
 ## Build
 
@@ -46,5 +46,4 @@ docs/        design notes and research
 
 - If macOS "Spatialize Stereo" is on for the app, turn it off. The engine spatialises itself.
 - The build is signed ad hoc. After a rebuild macOS may ask for Motion & Fitness access again.
-- Sound files for the clip scenes are not in git; see [assets/sounds/SOURCES.md](assets/sounds/SOURCES.md).
 - `ASMRX3000 --snapshot out.png [--scene file.json] [--expand group] [--more] [--set key=value]` renders the panel to a PNG without an audio device.

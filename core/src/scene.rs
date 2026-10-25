@@ -26,8 +26,9 @@ use crate::sources::{Bird, Controls, Flyer, Generator, ModelConfig, ModelKind, S
 
 /// The default scene: forest by a river.
 pub const DEFAULT_SCENE_JSON: &str = include_str!("../scenes/forest_river.json");
-/// Spatial-audio demonstration: fly-bys, a flock changing trees, an approach/recede, circling.
-pub const DEMO_SCENE_JSON: &str = include_str!("../scenes/demo_flyby.json");
+/// Test fixture (not a shipped scene): fly-bys, a flock changing trees, an approach/recede, circling.
+#[cfg(test)]
+pub const DEMO_SCENE_JSON: &str = include_str!("director/fixtures/demo_flyby.json");
 
 pub const MAX_OBJECTS: usize = 64;
 
@@ -54,9 +55,6 @@ pub struct SceneDesc {
     /// Folder that relative clip file paths resolve against (clips.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets: Option<String>,
-    /// Flight mode settings (docs/flight-mode.md); `"start": true` begins in the air.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flight: Option<crate::flight::FlightDesc>,
     /// Panel rows of the clip groups (names, icons, parameters shown); see clips.rs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<crate::clips::GroupUi>,
@@ -499,10 +497,6 @@ pub enum ObjectKind {
     Bird = 2,
     /// A generic physical source (`EntityDesc::Source`).
     Source = 3,
-    /// Flight mode: a lake (shape = shore outline).
-    Lake = 4,
-    /// Flight mode: a boulder or a ridge (shape = ridge line); z = its top.
-    Rock = 5,
 }
 
 pub mod object_flags {

@@ -4,7 +4,7 @@ import Metal
 import simd
 
 /// Short names on the stage for the sounds of a clip scene: the one under the pointer, and the
-/// two loudest things sounding now ("foghorn", "freighter"). Lowercase, in the panel's face and
+/// two loudest things sounding now ("humpback", "tingsha"). Lowercase, in the panel's face and
 /// its graphite grey, each on a hairline leader from the thing up to a short underline, like a
 /// note pencilled on a plan. A name fades in when its sound rises and stays a few seconds after,
 /// so the labels do not flicker with the sound. Effects (wind, rain, glows) and sounds with no
@@ -165,7 +165,7 @@ final class ClipLabels {
             draws.append((nil, first, verts.count / 8 - first))
             let tFirst = verts.count / 8
             let o = SIMD2(p.rect.x + 2, p.rect.y)
-            // A soft dark edge under the letters keeps them legible over lines and stars.
+            // A soft dark edge under the letters keeps them legible over lines and the water.
             let shade = SIMD4<Float>(0, 0, 0, a * 0.5)
             for d in [SIMD2<Float>(0.7, 0), SIMD2(-0.7, 0), SIMD2(0, 0.7), SIMD2(0, -0.7)] {
                 let q = o + d

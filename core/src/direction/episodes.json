@@ -37,14 +37,14 @@
         { "label": "steady rain", "minutes": [20, 70], "rain": [1.5, 5.0], "wind": [2.0, 5.0], "gust": [1.0, 1.2], "humidity": [0.96, 0.99], "temp": [-3.5, -2.5], "birds": [0.2, 0.3] },
         { "label": "rain easing", "minutes": [8, 15], "rain": [0.3, 1.0], "wind": [1.5, 3.0], "humidity": [0.95, 0.97], "temp": [-3.0, -2.0], "birds": [0.45, 0.6] } ] },
 
-    { "name": "thunderstorm", "weight": 0.25, "hours": [13.0, 21.0], "seasons": ["summer", "spring"], "after": ["overcast", "breeze", "clear", "calm"],
+    { "name": "thunderstorm", "weight": 0.12, "hours": [13.0, 21.0], "seasons": ["summer", "spring"], "after": ["overcast", "breeze", "clear", "calm"],
       "then": "after_rain", "wet": 1.0, "energy": 0.8, "drama": 1.0,
       "segments": [
         { "label": "distant thunder", "minutes": [4, 8], "storm": [0.12, 0.25], "wind": [1.0, 2.5], "humidity": [0.82, 0.88], "birds": [0.5, 0.65] },
-        { "label": "calm before the storm", "minutes": [3, 6], "storm": [0.35, 0.55], "wind": [0.4, 1.2], "gust": [0.5, 0.8], "humidity": [0.88, 0.92], "birds": [0.2, 0.3] },
-        { "label": "gust front", "minutes": [1, 2], "storm": [0.6, 0.7], "wind": [9.0, 13.0], "gust": [1.5, 1.9], "temp": [-5.5, -4.5], "birds": [0.05, 0.1], "veer": [30, 90], "ease": 12 },
-        { "label": "the cell overhead", "minutes": [5, 12], "rain": [15, 45], "storm": [0.8, 1.0], "wind": [4.0, 7.0], "humidity": [0.97, 0.99], "temp": [-7.5, -6.5], "birds": [0.0, 0.05], "ease": 30 },
-        { "label": "trailing rain", "minutes": [8, 20], "rain": [1.0, 4.0], "storm": [0.3, 0.5], "wind": [2.0, 4.0], "humidity": [0.96, 0.98], "temp": [-6.5, -5.5], "birds": [0.15, 0.25] },
+        { "label": "calm before the storm", "minutes": [3, 6], "storm": [0.3, 0.45], "wind": [0.4, 1.2], "gust": [0.5, 0.8], "humidity": [0.88, 0.92], "birds": [0.2, 0.3] },
+        { "label": "gust front", "minutes": [1, 2], "storm": [0.45, 0.55], "wind": [9.0, 13.0], "gust": [1.5, 1.9], "temp": [-5.5, -4.5], "birds": [0.05, 0.1], "veer": [30, 90], "ease": 12 },
+        { "label": "the cell overhead", "minutes": [5, 12], "rain": [15, 45], "storm": [0.55, 0.7], "wind": [4.0, 7.0], "humidity": [0.97, 0.99], "temp": [-7.5, -6.5], "birds": [0.0, 0.05], "ease": 30 },
+        { "label": "trailing rain", "minutes": [8, 20], "rain": [1.0, 4.0], "storm": [0.25, 0.4], "wind": [2.0, 4.0], "humidity": [0.96, 0.98], "temp": [-6.5, -5.5], "birds": [0.15, 0.25] },
         { "label": "storm moving away", "minutes": [5, 10], "rain": [0.0, 0.4], "storm": [0.1, 0.2], "wind": [1.0, 2.5], "humidity": [0.94, 0.96], "temp": [-5.0, -4.0], "birds": [0.45, 0.6] } ] },
 
     { "name": "after_rain", "weight": 0.0, "after": ["shower", "steady_rain", "thunderstorm", "drizzle"], "wet": 0.2, "energy": 0.3, "drama": 0.2,

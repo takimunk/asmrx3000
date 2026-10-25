@@ -2,7 +2,7 @@ import CAsmr
 import Foundation
 import simd
 
-/// Clip scenes (underwater, space…) go through the same stage as the forest (SceneRenderer:
+/// Clip scenes (underwater, body scan…) go through the same stage as the forest (SceneRenderer:
 /// shadows, G-buffer, engraving), with their own things instead of trees and the river: each
 /// sound a stone body where it is (bigger for beds, smaller for creatures and events), small
 /// beads behind the moving ones (their trail), the bird rings while one sounds, the screen as
@@ -72,13 +72,6 @@ enum ClipProps {
         return Mesh.make(v, idx)
     }()
 
-    /// A unit cube in the set's material (the train's passing poles and wires).
-    static let setBox: Mesh? = {
-        var b = MeshBuilder()
-        b.add(Prim.box, matrix_identity_float4x4, part: Part.set)
-        return b.build()
-    }()
-
     /// The bottom of the water at the scene's depth (mapped), as far as the haze.
     static func floor(at z: Float) -> Mesh? {
         GroundMesh.build(segments: 64, inner: 30, outer: 20) { _, _ in (ClipSpace.map(SIMD3(0, 0, z)).z, Part.ground) }
@@ -111,19 +104,16 @@ enum ClipProps {
 
 // MARK: - Models of the sounds
 
-/// What a clip is drawn as, decided from its files and sound model (the scene's JSON; `ClipInfo`
-/// only keeps a Russian name, which does not tell an asteroid from a satellite).
+/// What a clip is drawn as, decided from its files, group, and sound model and preset (the
+/// scene's JSON; `ClipInfo` only keeps a Russian name, which does not tell a whale from a
+/// dolphin). A clip with no files, only a procedural `sound` and a `group`, gets the same model
+/// a file clip with that word would.
 enum ClipKind: Equatable {
     case whale(length: Float), dolphin, bubbles
     /// Drift clips with procedural water: rings of streaks around the way, going past.
     case tunnel
-    case asteroid, satellite, comet, beam(length: Float), shimmer, pulsar
-    /// An orbit: a moon on a faint ring (centre, radius, height of the ring).
-    case moon(centre: SIMD3<Float>, radius: Float, height: Float)
     /// A sweep: a thin arc across the way.
     case sweep
-    /// A lighthouse lens turning with the sound that orbits it (the orbit's centre).
-    case lens(centre: SIMD3<Float>)
     /// One of the scenes' things (`Prop`, ClipObjects.swift).
     case prop(Prop)
     /// A bed that is not an object (a hull's hum, a room tone): only a small marker to point at.
@@ -133,9 +123,10 @@ enum ClipKind: Equatable {
 }
 
 /// Which model a clip gets: the first rule whose every given field matches. `files` match when
-/// a word starts one of the clip's file names or one of their `_`-separated parts ("pump" in
-/// "distant_pump_1.wav", not "owl" in "bowl_strike.wav"); `group`, `model` (the procedural
-/// sound model) and `motion` (its type) must be equal.
+/// a word starts one of the clip's names or one of their `_`-separated parts ("whale" in
+/// "whale_moan_1.wav" and in the group "whales", not "owl" in "bowl_strike.wav"); the names are
+/// the file names plus the lowercased group, sound model and sound preset. `group`, `model` (the
+/// procedural sound model) and `motion` (its type) must be equal.
 struct ClipRule {
     var group: String?
     var files: [String] = []
@@ -163,123 +154,13 @@ struct ClipRule {
         ClipRule(files: ["reef_chorus"], .prop(.coral)),
         ClipRule(group: "reef", .prop(.reef)),
         ClipRule(files: ["rain_on_surface"], .prop(.rainSurface)),
-        // Space
-        ClipRule(files: ["freighter"], .prop(.freighter)),
-        ClipRule(files: ["medium_ship"], .prop(.mediumShip)),
-        ClipRule(files: ["shuttle"], .prop(.shuttle)),
-        ClipRule(files: ["convoy"], .prop(.convoy)),
-        ClipRule(files: ["hull_hum"], .prop(.station)),
-        ClipRule(files: ["life_support", "fans"], .prop(.fan)),
-        ClipRule(files: ["pump"], .prop(.pump)),
-        ClipRule(files: ["hull_creak", "hull_tick", "panel_creak"], .prop(.panel)),
-        ClipRule(files: ["rcs"], .prop(.rcs)),
-        ClipRule(files: ["clamp"], .prop(.clamp)),
-        ClipRule(files: ["airlock", "hatch"], .prop(.hatch)),
-        ClipRule(files: ["robot_arm"], .prop(.robotArm)),
-        ClipRule(files: ["radio"], .prop(.dish)),
-        ClipRule(files: ["console", "beep"], .prop(.console)),
-        ClipRule(group: "plasma", motion: "fixed", .prop(.plasma)),
-        ClipRule(files: ["asteroid"], .asteroid),
-        ClipRule(files: ["satellite", "juno"], .satellite),
-        ClipRule(files: ["comet"], .comet),
-        ClipRule(files: ["energy_beam"], .beam(length: 2.6)),
-        ClipRule(files: ["ray_glide"], .beam(length: 3.6)),
-        ClipRule(files: ["pulsar"], .pulsar),
-        ClipRule(files: ["shimmer"], .shimmer),
-        // Lighthouse
-        ClipRule(files: ["optic"], .lens(centre: .zero)),
-        ClipRule(files: ["clockwork"], .prop(.clockwork)),
-        ClipRule(files: ["rain_on_glass", "rain_window"], .prop(.rainGlass)),
-        ClipRule(files: ["surf"], .prop(.surf)),
-        ClipRule(files: ["bell_buoy"], .prop(.buoy)),
-        ClipRule(files: ["foghorn"], .prop(.foghorn)),
-        ClipRule(files: ["pane"], .prop(.pane)),
-        ClipRule(files: ["stair"], .prop(.stairs)),
-        ClipRule(model: "thunder", .prop(.bolt)),
-        // Night train
-        ClipRule(files: ["rolling_noise"], .prop(.track)),
-        ClipRule(files: ["bogie"], .prop(.bogie)),
-        ClipRule(files: ["crossing"], .prop(.crossing)),
-        ClipRule(files: ["passing_train"], .prop(.train)),
-        ClipRule(files: ["bridge"], .prop(.bridge)),
-        ClipRule(files: ["tunnel"], .prop(.arches)),
-        ClipRule(files: ["tea_glass"], .prop(.teaGlass)),
-        ClipRule(files: ["vent"], .prop(.vent)),
-        ClipRule(files: ["horn"], .prop(.horn)),
-        ClipRule(files: ["station_pass"], .prop(.lampPosts)),
-        // Singing ice
-        ClipRule(files: ["ice_sing", "ice_crack"], .prop(.iceStar)),
-        ClipRule(files: ["ice_boom"], .prop(.boom)),
-        ClipRule(files: ["ice_run"], .prop(.zigzag)),
-        ClipRule(files: ["owl"], .prop(.owl)),
-        ClipRule(files: ["skater"], .prop(.skater)),
-        ClipRule(group: "shore", .prop(.treeLine)),
-        // Tea house
-        ClipRule(files: ["kettle"], .prop(.kettle)),
-        ClipRule(group: "kettle", .prop(.brazier)),
-        ClipRule(files: ["fukusa"], .prop(.cloth)),
-        ClipRule(files: ["ladle"], .prop(.ladle)),
-        ClipRule(files: ["whisk"], .prop(.whisk)),
-        ClipRule(files: ["tatami"], .prop(.host)),
-        ClipRule(files: ["bowl_slide"], .prop(.teaBowl)),
-        ClipRule(group: "eaves", .prop(.eaves)),
-        ClipRule(files: ["suikinkutsu"], .prop(.basin)),
-        ClipRule(files: ["shishi"], .prop(.shishi)),
-        ClipRule(files: ["furin"], .prop(.chime)),
-        ClipRule(files: ["temple_bell"], .prop(.templeBell)),
-        // Night library
-        ClipRule(files: ["hearth_crackle"], .prop(.hearth)),
-        ClipRule(files: ["hearth_embers"], .prop(.hearthEmbers)),
-        ClipRule(files: ["log_settle"], .prop(.log)),
-        ClipRule(files: ["tallwindow"], .prop(.rainGlass)),
-        ClipRule(files: ["page_turn"], .prop(.book)),
-        ClipRule(files: ["pen_scratch"], .prop(.inkPen)),
-        ClipRule(files: ["clock_tick", "clock_strike"], .prop(.longcaseClock)),
-        ClipRule(files: ["shelf_creak"], .prop(.bookcase)),
-        ClipRule(files: ["radiator"], .prop(.radiator)),
-        ClipRule(files: ["floor_creak"], .prop(.boards)),
-        ClipRule(files: ["door_far"], .prop(.door)),
         // Body scan
         ClipRule(group: "guide", .prop(.bead)),
         ClipRule(files: ["bowl_strike"], .prop(.singingBowl)),
         ClipRule(files: ["tingsha"], .prop(.tingsha)),
-        // Cave
-        ClipRule(files: ["cave_plink", "cave_deepdrip"], .prop(.pool)),
-        ClipRule(files: ["cave_slowdrip"], .prop(.stalactite)),
-        ClipRule(files: ["cave_rockdrip"], .prop(.stalagmite)),
-        ClipRule(files: ["cave_pebbles"], .prop(.pebbles)),
-        ClipRule(files: ["cave_stream", "cave_runnel"], .prop(.stream)),
-        // Yacht at anchor ("bay_halyards" before "halyard": it holds "_halyard").
-        ClipRule(files: ["bay_halyards", "bay_rigging"], .prop(.mooredYacht)),
-        ClipRule(files: ["cabin_lap", "hull_slap"], .prop(.ripples)),
-        ClipRule(files: ["hull_cluck"], .prop(.splash)),
-        ClipRule(files: ["cabin_creak"], .prop(.joinery)),
-        ClipRule(files: ["rope_creak"], .prop(.cleat)),
-        ClipRule(files: ["halyard"], .prop(.halyard)),
-        ClipRule(files: ["chain"], .prop(.chain)),
-        ClipRule(files: ["gull"], .prop(.gull)),
-        ClipRule(group: "bay", model: "water", .prop(.sea)),
-        // Campfire by the sea
-        ClipRule(files: ["campfire_crackle_ccby"], .prop(.campfire)),
-        ClipRule(files: ["campfire_crackle"], .prop(.sparks)),
-        ClipRule(files: ["campfire_flare", "campfire_bonfire"], .prop(.flames)),
-        ClipRule(group: "embers", model: "fire", .prop(.embers)),
-        ClipRule(files: ["campfire_log"], .prop(.driftLog)),
-        ClipRule(files: ["campfire_damp"], .prop(.steam)),
-        ClipRule(files: ["shore_breakers"], .prop(.sea)),
-        ClipRule(files: ["shore_wave"], .prop(.surf)),
-        ClipRule(files: ["shore_curlew"], .prop(.curlew)),
-        ClipRule(group: "grass", model: "foliage", .prop(.duneGrass)),
-        // Tent in the rain
-        ClipRule(files: ["tent_fly"], .prop(.flyRain)),
-        ClipRule(files: ["tent_flap"], .prop(.flap)),
-        ClipRule(files: ["tent_pole"], .prop(.pole)),
-        ClipRule(files: ["tent_thunder"], .prop(.bolt)),
-        ClipRule(files: ["tent_bag"], .prop(.sleepingBag)),
-        ClipRule(files: ["tent_zipper"], .prop(.zipper)),
-        ClipRule(files: ["tent_drips"], .prop(.drip)),
-        ClipRule(group: "stream", .prop(.brook)),
         // Weather from the procedural models, anywhere.
+        ClipRule(model: "thunder", .prop(.bolt)),
+        ClipRule(group: "stream", .prop(.brook)),
         ClipRule(model: "wind", .prop(.wind)),
         ClipRule(model: "rain", .prop(.rain)),
         ClipRule(group: "sea", model: "water", .prop(.sea)),
@@ -487,34 +368,6 @@ enum ClipModels {
                 u: SIMD3(1, 0, 0), v: SIMD3(0, 1, 0), part: Part.stone)
         return b.build()
     }()
-
-    static let asteroids: [Mesh] = [(UInt64(11), SIMD3<Float>(1.0, 0.8, 0.7)), (UInt64(23), SIMD3(0.85, 1.0, 0.75)), (UInt64(37), SIMD3(1.0, 0.9, 0.6))].compactMap {
-        var b = MeshBuilder()
-        b.rock(seed: $0.0, bumps: 0.34, squash: $0.1, part: Part.stone)
-        return b.build()
-    }
-
-    static let moon: Mesh? = {
-        var b = MeshBuilder()
-        b.rock(seed: 5, bumps: 0.10, squash: SIMD3(repeating: 1), part: Part.stone)
-        return b.build()
-    }()
-
-    static let comet: Mesh? = {
-        var b = MeshBuilder()
-        b.rock(seed: 3, bumps: 0.22, squash: SIMD3(1.1, 0.9, 0.9), part: Part.stone)
-        return b.build()
-    }()
-
-    /// A four-pointed star in two crossed plates.
-    static let star: Mesh? = {
-        var b = MeshBuilder()
-        let poly: [SIMD2<Float>] = [SIMD2(0, 1), SIMD2(0.16, 0.16), SIMD2(1, 0), SIMD2(0.16, -0.16),
-                                    SIMD2(0, -1), SIMD2(-0.16, -0.16), SIMD2(-1, 0), SIMD2(-0.16, 0.16)]
-        b.plate(poly, thickness: 0.06, u: SIMD3(1, 0, 0), v: SIMD3(0, 1, 0), part: Part.stone)
-        b.plate(poly, thickness: 0.06, u: SIMD3(1, 0, 0), v: SIMD3(0, 0, 1), part: Part.stone)
-        return b.build()
-    }()
 }
 
 /// Decides each clip's model and poses it frame by frame.
@@ -522,9 +375,7 @@ final class ClipActors {
     private var heading: [UInt32: SIMD3<Float>] = [:]
     private var kinds: [UInt32: ClipKind] = [:]
     private var kindsFor = ""
-    /// Meshes built in place for one clip (a track, a bridge, a surface), mapped like the stage.
-    var placed: [UInt32: Mesh] = [:]
-    /// The scene's own still things (the ice, the seated listener), for this scene.
+    /// The scene's own still things (the body-scan mat), for this scene.
     var scenery: [ClipPiece] = []
 
     // MARK: Which model
@@ -536,8 +387,7 @@ final class ClipActors {
             kindsFor = key
             kinds = Self.classify(scene)
             heading.removeAll()
-            placed.removeAll()
-            scenery = Self.scenery(kinds: Array(kinds.values), scene: scene)
+            scenery = Self.scenery(scene: scene)
         }
         return kinds[id] ?? .generic
     }
@@ -553,17 +403,16 @@ final class ClipActors {
             let group = e["group"] as? String ?? ""
             let motion = e["motion"] as? [String: Any] ?? [:]
             let type = motion["type"] as? String ?? "fixed"
-            let model = (e["sound"] as? [String: Any])?["model"] as? String ?? e["model"] as? String ?? ""
-            func f(_ k: String) -> Float? { (motion[k] as? NSNumber)?.floatValue }
-            let c = (motion["center"] as? [NSNumber])?.map(\.floatValue) ?? [0, 0, 0]
-            let centre = c.count > 2 ? SIMD3(c[0], c[1], c[2]) : .zero
+            let sound = e["sound"] as? [String: Any]
+            let model = sound?["model"] as? String ?? e["model"] as? String ?? ""
+            let preset = sound?["preset"] as? String ?? ""
+            // What the keyword rules look at: the file names, then the group, model and preset.
+            let names = files + [group, model, preset].map { $0.lowercased() }.filter { !$0.isEmpty }
             var k: ClipKind
-            if let rule = ClipRule.all.first(where: { $0.matches(group: group, files: files, model: model, motion: type) }) {
+            if let rule = ClipRule.all.first(where: { $0.matches(group: group, files: names, model: model, motion: type) }) {
                 k = rule.kind
-                if case .lens = k { k = .lens(centre: centre) }
             } else if e["tunnel"] as? Bool == true { k = .tunnel }
             else if type == "sweep" { k = .sweep }
-            else if type == "orbit" && !files.isEmpty { k = .moon(centre: centre, radius: f("radius") ?? 5, height: f("height") ?? 0) }
             else if files.isEmpty || e["class"] as? String ?? "bed" == "bed" { k = .bed }
             else { k = .generic }
             out[id] = k
@@ -578,12 +427,10 @@ final class ClipActors {
     func pieces(_ kind: ClipKind, clip: ClipInfo, raw: SIMD3<Float>, trail: [SIMD3<Float>], time t: Float, level: Float,
                 screen: (distance: Float, width: Float)) -> (pieces: [ClipPiece], extent: Float) {
         var made = posed(kind, clip: clip, raw: raw, trail: trail, time: t, level: level, screen: screen)
-        // Effects rather than things: see-through (the comet's head stays a rock).
+        // Effects rather than things: see-through.
         switch kind {
-        case .tunnel, .bubbles, .beam, .shimmer, .pulsar, .sweep:
+        case .tunnel, .bubbles, .sweep:
             for i in made.pieces.indices { made.pieces[i].ghost = ClipPiece.faint }
-        case .comet:
-            for i in made.pieces.indices.dropFirst() { made.pieces[i].ghost = ClipPiece.faint }
         default:
             break
         }
@@ -670,79 +517,6 @@ final class ClipActors {
             }
             return (out, 0.3)
 
-        case .asteroid:
-            let meshes = ClipModels.asteroids
-            guard !meshes.isEmpty else { break }
-            let m = meshes[Int(id) % meshes.count]
-            let r = (0.5 + 0.07 * Float(id % 3)) * pulse
-            let axis = simd_normalize(SIMD3<Float>(0.6, 0.3 + 0.1 * Float(id % 3), 0.7))
-            let spin = simd_quatf(angle: t * 0.5 + ph, axis: axis)
-            out.append(ClipPiece(mesh: m, model: M4.move(p) * simd_float4x4(spin) * M4.scale(r)))
-            return (out, r * 1.1)
-
-        case .satellite:
-            let tumble = M4.facing(fwd()) * M4.rotX(t * 0.35 + ph) * M4.rotY(0.4 * sin(t * 0.3 + ph))
-            let root = M4.move(p) * tumble * M4.scale(1.0 * pulse)
-            func part(_ c: SIMD3<Float>, _ s: SIMD3<Float>) { out.append(ClipPiece(mesh: box, model: root * M4.move(c) * M4.scale(s))) }
-            part(SIMD3(0, 0, 0), SIMD3(0.34, 0.26, 0.26))
-            for side: Float in [1, -1] {
-                part(SIMD3(0, side * 0.3, 0), SIMD3(0.04, 0.34, 0.04))
-                for i in 0..<3 {
-                    part(SIMD3(0, side * (0.5 + 0.25 * Float(i)), 0), SIMD3(0.36, 0.22, 0.02))
-                }
-            }
-            out.append(ClipPiece(mesh: sphere, model: root * M4.move(SIMD3(0.24, 0, 0)) * M4.scale(SIMD3(0.07, 0.16, 0.16))))
-            return (out, 1.0)
-
-        case .comet:
-            // A rock head and a tail of the trail: three thin streaks that taper and part as they age.
-            guard let head = ClipModels.comet else { break }
-            out.append(ClipPiece(mesh: head, model: M4.move(p) * M4.rotZ(t * 0.7 + ph) * M4.scale(0.28 * pulse)))
-            if trail.count > 2 {
-                let pts = trail.map { ClipSpace.map($0) } + [p]
-                let n = pts.count
-                for lane in -1...1 {
-                    for i in 0..<(n - 1) where i % 2 == 0 || lane == 0 {
-                        let age = Float(i + 1) / Float(n)
-                        let j = min(i + 2, n - 1)
-                        let off = SIMD3<Float>(0, 0.09 * Float(lane) * (1 - age) * 3, 0.04 * Float(lane) * (1 - age) * 3)
-                        bar(pts[i] + off * (1 - age), pts[j] + off * (1 - age), 0.01 + 0.075 * age * (lane == 0 ? 1 : 0.5))
-                    }
-                }
-            }
-            return (out, 0.4)
-
-        case .beam(let length):
-            let d = fwd()
-            let a = p - d * length, b = p + d * 0.15
-            bar(a, b, 0.035)
-            bar(p - d * length * 0.35, b + d * 0.1, 0.075)
-            return (out, length * 0.45)
-
-        case .shimmer:
-            if let star = ClipModels.star {
-                out.append(ClipPiece(mesh: star, model: M4.move(p) * M4.rotZ(t * 0.4 + ph) * M4.rotX(t * 0.23) * M4.scale(0.4 * pulse)))
-            }
-            return (out, 0.35)
-
-        case .pulsar:
-            ball(p, 0.13 * pulse)
-            let a = t * 1.3 + ph
-            let d = SIMD3<Float>(cos(a) * 0.9, sin(a) * 0.9, 0.35)
-            bar(p - d, p + d, 0.03)
-            return (out, 0.9)
-
-        case .moon(let centre, let radius, let height):
-            // The moon on its path: a dashed ring of the true orbit, mapped like everything else.
-            let n = 48
-            let ring = (0..<n).map { ClipSpace.map(centre + SIMD3(radius * cos(2 * .pi * Float($0) / Float(n)),
-                                                                radius * sin(2 * .pi * Float($0) / Float(n)), height)) }
-            for i in 0..<n where i % 3 != 2 { bar(ring[i], ring[(i + 1) % n], 0.016) }
-            if let m = ClipModels.moon {
-                out.append(ClipPiece(mesh: m, model: M4.move(p) * M4.rotZ(t * 0.2 + ph) * M4.scale((id % 2 == 0 ? 0.36 : 0.27) * pulse)))
-            }
-            return (out, 0.35)
-
         case .sweep:
             // A thin arc across the way, bowed towards the listener, as wide as the screen where it passes it.
             let sw = clip.sweep ?? (-40, 40, 10, 0)
@@ -760,19 +534,6 @@ final class ClipActors {
             }
             ball(ClipSpace.map(SIMD3(x, 0, sw.height)), 0.07)
             return (out, 0.4)
-
-        case .lens(let centre):
-            // The lens turns on its pedestal at the orbit's centre, its bull's-eye on the sound.
-            guard let lens = PropMeshes.lens else { break }
-            let c = ClipSpace.map(centre)
-            let a = atan2(raw.y - centre.y, raw.x - centre.x)
-            out.append(ClipPiece(mesh: lens, model: M4.move(c) * M4.rotZ(a) * M4.scale(0.75 * pulse)))
-            // Its light going out over the sea where the lens faces.
-            if let beam = PropMeshes.lightBeam {
-                out.append(ClipPiece(mesh: beam, model: M4.move(c) * M4.rotZ(a) * M4.rotY(0.05) * M4.scale(SIMD3(7, 5, 5)),
-                                     ghost: ClipPiece.veryFaint))
-            }
-            return (out, simd_distance(c, p) + 0.5)
 
         case .prop(let prop):
             let extent = propPieces(prop, clip: clip, raw: raw, time: t, level: level, fwd: fwd, out: &out)

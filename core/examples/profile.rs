@@ -1,12 +1,11 @@
 //! Where the audio thread's time goes: CPU per section of the render path (control and
 //! director, each generator kind, mix, propagation, path filters, encode, reverb, rotation,
-//! decode, flight, master) and how many emitters exist and actually sound, per scenario.
+//! decode, master) and how many emitters exist and actually sound, per scenario.
 //!
 //!   cargo run --release --example profile -- [seconds=30] [scenario …]
 //!
 //! Scenarios: `default` (the app's built-in scene as it starts), `dawn` (5:30, chorus),
-//! `night` (22:00, insects), `rain` (8 mm/h with a storm), `open` (open_country.json),
-//! `campfire` (the snapshot scene with a fire), `flight` (flight mode at 12 m/s).
+//! `night` (22:00, insects), `rain` (8 mm/h with a storm).
 //! Without names, all of them. Renders in 480-frame callbacks like the app on AirPods
 //! and skips the first 5 s (shaders aside, the director settles). Percentages are of one
 //! core in real time, i.e. what Activity Monitor would show for the audio thread alone.
@@ -15,7 +14,6 @@
 
 use std::time::Instant;
 
-use asmr_core::controls::id;
 use asmr_core::profile;
 use asmr_core::{param, Engine, SceneDesc};
 
@@ -28,7 +26,7 @@ fn main() {
     let seconds: f32 = args.first().and_then(|s| s.parse().ok()).unwrap_or(30.0);
     let mut names: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     if names.is_empty() {
-        names = vec!["default", "dawn", "night", "rain", "open", "campfire", "flight"];
+        names = vec!["default", "dawn", "night", "rain"];
     }
     prefer_performance_cores();
     for name in names {
@@ -37,10 +35,7 @@ fn main() {
 }
 
 fn run(name: &str, seconds: f32) {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
     let json = match name {
-        "open" => std::fs::read_to_string(format!("{root}/core/scenes/open_country.json")).unwrap(),
-        "campfire" => std::fs::read_to_string(format!("{root}/apps/macos/Support/snapshot_campfire.json")).unwrap(),
         _ => asmr_core::scene::DEFAULT_SCENE_JSON.to_string(),
     };
     let desc = SceneDesc::from_json(&json).unwrap_or_else(|e| panic!("{e}"));
@@ -53,11 +48,6 @@ fn run(name: &str, seconds: f32) {
         "rain" => {
             engine.set_param(param::RAIN, 8.0);
             engine.set_param(param::STORM, 0.6);
-        }
-        "flight" => {
-            engine.prepare_flight();
-            engine.set_control(id::FLIGHT_SPEED, 12.0);
-            engine.set_param(param::FLIGHT, 1.0);
         }
         _ => {}
     }
