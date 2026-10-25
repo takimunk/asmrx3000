@@ -166,8 +166,8 @@ aarch64, portable fallback elsewhere).
 
 ### Wind: refraction and turbulence (`physics/wind.rs`)
 The wind has a world-fixed direction (`env.wind_direction`, where it blows from, clockwise
-from north; x = north, y = west; flight passes the vector turned into the heading frame), and
-it acts on every path, scene and flight alike.
+from north; x = north, y = west), and
+it acts on every path.
 
 - **Refraction.** Sound travels at c + u(z)·cos φ (effective sound speed, φ between the
   propagation direction source → listener and the wind). With a logarithmic wind profile
@@ -176,7 +176,7 @@ it acts on every path, scene and flight alike.
   profile; Pierce 1981 §8.3, Embleton 1996, Salomons 2001 ch. 7):
   - **upwind** (cos φ < 0, rays bend up): a shadow zone starts at
     r_s = √(2R)(√h_s + √h_r) — 97 m at 3 m/s, 75 m at 5 m/s, 53 m at 10 m/s for 1.5 m
-    heights; a 20-m-high listener (flight over the canopy) pushes it out ~2×. Penetration
+    heights; a 20-m-high listener would push it out ~2×. Penetration
     1 − exp(−3 (r/r_s − 0.6)²) (penumbra from 0.6 r_s, full by ~1.6 r_s); excess attenuation
     depth 20 dB · x/(1+x), x = f/600 Hz: low frequencies diffract into the shadow, high ones
     do not, and the 20 dB floor stands for turbulent scattering into the shadow (measured
@@ -187,7 +187,7 @@ it acts on every path, scene and flight alike.
     (1.2-octave bump), weighted by x²/(1+x²) with x = r/(√(2R)(√h_s+√h_r)). +4.7 dB at
     500 Hz at 300 m, 6 m/s. ISO 9613-2 is written for this favourable case; its long-term
     C_met of 0–5 dB is the same order;
-  - **crosswind** nothing (R → ∞). Steep paths (flight) automatically see |cos φ| < 1.
+  - **crosswind** nothing (R → ∞). Steep paths automatically see |cos φ| < 1.
   The term is one more spectral factor of the path filter (`Context::wind_shadow_db`,
   `wind_favour_db` are fixed shapes; a path's wind EQ is shadow·S + favour·F, so per block only
   two scalars are computed and a refit happens when they move by ~0.75 dB). The speed driving
