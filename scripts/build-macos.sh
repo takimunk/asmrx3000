@@ -27,6 +27,8 @@ pkill -x ASMRX3000 2>/dev/null || true
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
+# Local symbols are only for debugging: stripping them takes the binary from ~6.7 to ~4.4 MB.
+strip -x "$APP/Contents/MacOS/ASMRX3000"
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
 # The system permission prompts (microphone, motion) follow the macOS language.
 for l in en ru; do mkdir -p "$APP/Contents/Resources/$l.lproj"; cp "$APP_PKG/Support/$l.lproj/InfoPlist.strings" "$APP/Contents/Resources/$l.lproj/"; done
