@@ -6,12 +6,17 @@
 
 mod bird;
 pub mod common;
+pub mod dolphin;
 pub mod fire;
 pub mod foliage;
 pub mod insects;
+mod marine;
 pub mod rain;
+pub mod reef;
+pub mod sea;
 pub mod thunder;
 pub mod water;
+pub mod whale;
 pub mod wind;
 mod wings;
 
@@ -19,12 +24,16 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use bird::{Bird, VoiceStyle};
+pub use dolphin::{DolphinConfig, Dolphins};
 pub use fire::{Fire, FireConfig};
 pub use foliage::{Foliage, FoliageConfig, FoliageKind};
 pub use insects::{InsectConfig, InsectKind, Insects};
 pub use rain::{Rain, RainConfig, Surface};
+pub use reef::{Reef, ReefConfig};
+pub use sea::{Sea, SeaConfig};
 pub use thunder::{Thunder, ThunderConfig};
 pub use water::{Water, WaterConfig};
+pub use whale::{Whale, WhaleConfig};
 pub use wind::{Wind, WindConfig};
 pub use wings::{WingStyle, Wings};
 
@@ -215,11 +224,30 @@ pub enum ModelKind {
     Thunder,
     Fire,
     Insects,
+    /// Humpback whale song, far away underwater (whale.rs).
+    Whale,
+    /// A dolphin pod's whistles and echolocation clicks (dolphin.rs).
+    Dolphins,
+    /// Coral reef: snapping-shrimp crackle and fish calls (reef.rs).
+    Reef,
+    /// Open water under the surface: ambient bed, bubbles, rain above (sea.rs).
+    Sea,
 }
 
 impl ModelKind {
-    pub const ALL: [ModelKind; 7] =
-        [ModelKind::Wind, ModelKind::Foliage, ModelKind::Water, ModelKind::Rain, ModelKind::Thunder, ModelKind::Fire, ModelKind::Insects];
+    pub const ALL: [ModelKind; 11] = [
+        ModelKind::Wind,
+        ModelKind::Foliage,
+        ModelKind::Water,
+        ModelKind::Rain,
+        ModelKind::Thunder,
+        ModelKind::Fire,
+        ModelKind::Insects,
+        ModelKind::Whale,
+        ModelKind::Dolphins,
+        ModelKind::Reef,
+        ModelKind::Sea,
+    ];
 
     pub fn presets(self) -> &'static [&'static str] {
         match self {
@@ -230,6 +258,10 @@ impl ModelKind {
             ModelKind::Thunder => Thunder::PRESETS,
             ModelKind::Fire => Fire::PRESETS,
             ModelKind::Insects => Insects::PRESETS,
+            ModelKind::Whale => Whale::PRESETS,
+            ModelKind::Dolphins => Dolphins::PRESETS,
+            ModelKind::Reef => Reef::PRESETS,
+            ModelKind::Sea => Sea::PRESETS,
         }
     }
 
@@ -237,11 +269,11 @@ impl ModelKind {
     pub fn source_kind(self) -> SourceKind {
         match self {
             ModelKind::Wind | ModelKind::Foliage => SourceKind::Wind,
-            ModelKind::Water => SourceKind::Water,
+            ModelKind::Water | ModelKind::Reef | ModelKind::Sea => SourceKind::Water,
             ModelKind::Rain => SourceKind::Rain,
             ModelKind::Thunder => SourceKind::Thunder,
             ModelKind::Fire => SourceKind::Fire,
-            ModelKind::Insects => SourceKind::Insect,
+            ModelKind::Insects | ModelKind::Whale | ModelKind::Dolphins => SourceKind::Insect,
         }
     }
 
@@ -254,7 +286,17 @@ impl ModelKind {
             ModelKind::Thunder => "thunder",
             ModelKind::Fire => "fire",
             ModelKind::Insects => "insects",
+            ModelKind::Whale => "whale",
+            ModelKind::Dolphins => "dolphins",
+            ModelKind::Reef => "reef",
+            ModelKind::Sea => "sea",
         }
+    }
+
+    /// Sounds made and heard under water: the engine's `medium: water` muffling (meant for
+    /// air-built models heard through the surface) is not applied to them.
+    pub fn underwater(self) -> bool {
+        matches!(self, ModelKind::Whale | ModelKind::Dolphins | ModelKind::Reef | ModelKind::Sea)
     }
 }
 
@@ -315,6 +357,10 @@ pub enum ModelConfig {
     Thunder(ThunderConfig),
     Fire(FireConfig),
     Insects(InsectConfig),
+    Whale(WhaleConfig),
+    Dolphins(DolphinConfig),
+    Reef(ReefConfig),
+    Sea(SeaConfig),
 }
 
 impl SoundDesc {
@@ -360,6 +406,26 @@ impl SoundDesc {
                 c.validate().map_err(ctx)?;
                 ModelConfig::Insects(c)
             }
+            ModelKind::Whale => {
+                let c = configure(pick(m, p, Whale::preset, WhaleConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Whale(c)
+            }
+            ModelKind::Dolphins => {
+                let c = configure(pick(m, p, Dolphins::preset, DolphinConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Dolphins(c)
+            }
+            ModelKind::Reef => {
+                let c = configure(pick(m, p, Reef::preset, ReefConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Reef(c)
+            }
+            ModelKind::Sea => {
+                let c = configure(pick(m, p, Sea::preset, SeaConfig::default(), names)?, &self.params).map_err(ctx)?;
+                c.validate().map_err(ctx)?;
+                ModelConfig::Sea(c)
+            }
         })
     }
 
@@ -379,6 +445,10 @@ impl ModelConfig {
             ModelConfig::Thunder(_) => ModelKind::Thunder,
             ModelConfig::Fire(_) => ModelKind::Fire,
             ModelConfig::Insects(_) => ModelKind::Insects,
+            ModelConfig::Whale(_) => ModelKind::Whale,
+            ModelConfig::Dolphins(_) => ModelKind::Dolphins,
+            ModelConfig::Reef(_) => ModelKind::Reef,
+            ModelConfig::Sea(_) => ModelKind::Sea,
         }
     }
 
@@ -391,6 +461,10 @@ impl ModelConfig {
             ModelConfig::Thunder(c) => Box::new(Thunder::new(sr, seed, c)),
             ModelConfig::Fire(c) => Box::new(Fire::new(sr, seed, c)),
             ModelConfig::Insects(c) => Box::new(Insects::new(sr, seed, c)),
+            ModelConfig::Whale(c) => Box::new(Whale::new(sr, seed, c)),
+            ModelConfig::Dolphins(c) => Box::new(Dolphins::new(sr, seed, c)),
+            ModelConfig::Reef(c) => Box::new(Reef::new(sr, seed, c)),
+            ModelConfig::Sea(c) => Box::new(Sea::new(sr, seed, c)),
         }
     }
 }
