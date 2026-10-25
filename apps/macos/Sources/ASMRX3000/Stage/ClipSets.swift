@@ -42,15 +42,6 @@ enum ClipSet: Equatable {
         return c
     }
 
-    /// The sky: how many stars (0...1). None of the kept places has any.
-    var stars: Float { 0 }
-
-    /// Whether a planet fills the lower sky (no kept place has one).
-    var planet: Bool { false }
-
-    /// Where a sound is drawn: where it sounds.
-    func drawnAt(_ kind: ClipKind, raw: SIMD3<Float>) -> SIMD3<Float> { raw }
-
     // MARK: Geometry
 
     /// The still part of the place, built once per scene.
@@ -67,9 +58,6 @@ enum ClipSet: Equatable {
         }
         return out
     }
-
-    /// What moves with the place, posed for time `t` (nothing in the kept places).
-    func moving(time t: Float) -> [ClipPiece] { [] }
 
     // MARK: Places
 

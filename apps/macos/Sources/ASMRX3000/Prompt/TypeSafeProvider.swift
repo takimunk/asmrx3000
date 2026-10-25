@@ -6,8 +6,8 @@ import Foundation
 /// adapter asks one Choice per control in a single request ("fan-out"): keep it, move it a
 /// little / plainly / a lot either way, or jump to a physical anchor ("gale", "03:00",
 /// "small_waterfall"). Besides the controls it asks what kind of request it is (change the
-/// scene, describe it, off topic), which topic a question is about, flight (fly / stand here / home), the
-/// landscape (presets read from the state, never hardcoded), the pace, the side for birds
+/// scene, describe it, off topic), which topic a question is about, the
+/// pace, the side for birds
 /// and what to listen to. Code turns the answers into the core's patch and writes the line
 /// for the user itself (Jev writes no prose: answers about the scene come from the core's
 /// description). Key: TYPESAFE_API_KEY or keychain account "typesafe".
@@ -63,7 +63,7 @@ struct TypeSafeProvider: PromptProvider {
 
         func collect(maxUnchanged: Double, presetMax: Double) {
             for k in knobs where !touched.contains(k.key) && !(k.loudness && physical.contains(k.group)) {
-                guard let current = k.key == "flight.on" ? Double(Knob.flightStates.firstIndex(of: scene.switches["flight.on"] ?? "off") ?? 0) : scene.values[k.key] else { continue }
+                guard let current = scene.values[k.key] else { continue }
                 let target: Knob.Target?
                 if k.key == "env.time_of_day" {
                     target = hour(answers[k.key], maxUnchanged: maxUnchanged).map { Knob.Target(value: $0, label: String(format: "%02d:%02d", Int($0), Int(($0 - $0.rounded(.down)) * 60)), relative: nil) }
@@ -76,19 +76,14 @@ struct TypeSafeProvider: PromptProvider {
                 touched.insert(k.key)
                 if k.amount { physical.insert(k.group) }
                 // Already so: say it instead of "nothing found".
-                let same = k.preset ? (k.key == "flight.on" ? target.label == (scene.switches["flight.on"] ?? "off") : scene.option(k.key) == target.label)
+                let same = k.preset ? scene.option(k.key) == target.label
                     : abs(target.value - current) < 1e-3
                 if same {
-                    already.append((k.alreadyText[target.label] != nil || k.key == "flight.biome", k.already(target)))
+                    already.append((k.alreadyText[target.label] != nil, k.already(target)))
                     continue
                 }
                 changes.append(["key": k.key, "value": k.preset ? target.label as Any : target.value])
-                // The place leads the line.
-                if k.key.hasPrefix("flight.on") || k.key == "flight.biome" {
-                    said.insert(k.describe(target, current), at: 0)
-                } else {
-                    said.append(k.describe(target, current))
-                }
+                said.append(k.describe(target, current))
             }
         }
         if intent != "off_topic" && intent != "describe" {
@@ -98,22 +93,6 @@ struct TypeSafeProvider: PromptProvider {
             if changes.isEmpty && already.isEmpty && intent == "change" {
                 collect(maxUnchanged: 0.7, presetMax: 0.5)
             }
-        }
-
-        // A landscape lives in flight mode: start flying, at a gentle pace if hovering.
-        let keys = Set(changes.compactMap { $0["key"] as? String })
-        let inWorld = (scene.switches["flight.on"] ?? "off") != "off"
-        if keys.contains("flight.biome") && !inWorld && !keys.contains("flight.on") {
-            changes.insert(["key": "flight.on", "value": "on"], at: 0)
-        }
-        // "Landing" together with a new landscape is a contradiction: a place means flying.
-        if keys.contains("flight.biome"), let i = changes.firstIndex(where: { $0["key"] as? String == "flight.on" && $0["value"] as? String == "off" }) {
-            changes[i]["value"] = "on"
-            said.removeAll { $0 == tr("going home") }
-        }
-        let flyingAfter = keys.contains("flight.on") ? changes.contains { $0["key"] as? String == "flight.on" && $0["value"] as? String == "on" } : scene.switches["flight.on"] == "on" || (!inWorld && keys.contains("flight.biome"))
-        if flyingAfter && !keys.contains("flight.speed") && (scene.values["flight.speed"] ?? 0) < 1 {
-            changes.append(["key": "flight.speed", "value": 5.0])
         }
 
         if let f = pick(answers["focus"], min: 0.7), f != "none", intent != "describe", scene.values["mix.focus.\(f)"] != nil {
@@ -146,7 +125,7 @@ struct TypeSafeProvider: PromptProvider {
             explanation = (best.isEmpty ? Array(already.prefix(1).map(\.1)) : Array(best.prefix(2))).joined(separator: ", ").capitalizedFirst + "."
         } else if intent == "off_topic" {
             kind = .nothing
-            explanation = tr("That is not about sound. I change water, weather, time, birds, place and flight.")
+            explanation = tr("That is not about sound. I change water, weather, time, birds and the sounds of the scene.")
         } else {
             kind = .unmatched
             let near = nearest(answers, knobs).map { tr(" (closest: %@)", tr($0.name)) } ?? ""
@@ -248,12 +227,12 @@ struct TypeSafeProvider: PromptProvider {
     /// The listener's language is the app's: they write in it (or the other one), and the line they
     /// get back is composed in it.
     static var context: String {
-        "The listener talks to a real-time soundscape (a forest by a river, or flight over generated landscapes). Their words are in `request` (English or Russian; the app language is \(L10n.current.englishName)), current values in `scene`, what is around now in `scene_now`. "
+        "The listener talks to a real-time soundscape (a forest by a river, an underwater drift or a body scan). Their words are in `request` (English or Russian; the app language is \(L10n.current.englishName)), current values in `scene`, what is around now in `scene_now`. "
     }
 
     static let intentInstructions = "What does the request want?"
     static let intentOptions: [String: Any] = [
-        "change": "Change the sound scene: weather, time, water, birds, loudness, place, flying (e.g. 'тише река', 'хочу ночь', 'полетели', 'в пустыню', 'убери дождь').",
+        "change": "Change the sound scene: weather, time, water, birds, loudness (e.g. 'тише река', 'хочу ночь', 'убери дождь').",
         "describe": "A question about what is around, what is heard, where things are; nothing to change (e.g. 'что вокруг?', 'где птицы?', 'что это шумит?', 'what's that sound').",
         "both": "Both: change something and describe it.",
         "off_topic": "Not about the soundscape at all (weather in a city, jokes, maths).",
@@ -262,7 +241,6 @@ struct TypeSafeProvider: PromptProvider {
     static let topicInstructions = "If the request asks about the scene, what is it about?"
     static let topicOptions: [String: Any] = [
         "all": "Everything around, the whole scene ('что вокруг?', 'опиши').",
-        "place": "Where we are, the landscape, flying.",
         "time": "Time of day, season, temperature.",
         "weather": "Rain, thunder, wind.",
         "water": "The river, lake, sea, water.",
@@ -301,12 +279,9 @@ struct TypeSafeProvider: PromptProvider {
     static let focusName = ["water": N_("water"), "wind": N_("wind"), "birds": N_("birds"), "rain": N_("rain"), "insects": N_("insects"), "fire": N_("campfire")]
 }
 
-/// One control (or switch) as a Choice: relative steps, physical anchors, or presets.
+/// One control as a Choice: relative steps, physical anchors, or presets.
 struct Knob {
     enum Step { case add(Double), times(Double) }
-    /// States of the flight.on switch, by ASMR_PARAM_FLIGHT value.
-    static let flightStates = ["off", "on", "stand"]
-
     let key: String
     let what: String
     /// English name of the control as the lines to the user say it (a key: shown through `tr`).
@@ -346,7 +321,7 @@ struct Knob {
 
     var instructions: String {
         "How should \(what) (`scene.\(key)`) change to satisfy the request? Overall moods count: 'calmer' lowers wind, rain, river flow, birds and volume a little; " +
-            "'night' means few birds and more insects; a storm brings rain and wind; a place ('пустыня', 'горы со снегом', 'море') implies its weather, temperature and life. " +
+            "'night' means few birds and more insects; a storm brings rain and wind; " +
             "Pick `unchanged` if the request implies nothing about it."
     }
 
@@ -379,14 +354,6 @@ struct Knob {
 
     func describe(_ t: Target, _ current: Double) -> String {
         let label = tr(name)
-        if key == "flight.on" {
-            switch t.label {
-            case "on": return tr("flying")
-            case "stand": return tr("standing here")
-            default: return tr("going home")
-            }
-        }
-        if key == "flight.biome" { return tr(Self.biomeName(t.label)) }
         if preset {
             let option = tr(Self.presetName[t.label] ?? t.label.replacingOccurrences(of: "_", with: " "))
             return key == "env.season" ? option : "\(label): \(option)"
@@ -399,7 +366,6 @@ struct Knob {
 
     func already(_ t: Target) -> String {
         if let s = alreadyText[t.label] { return tr(s) }
-        if key == "flight.biome" { return tr("already %@", tr(Self.biomeName(t.label))) }
         return tr("%@ already", tr(name))
     }
 
@@ -410,37 +376,8 @@ struct Knob {
         "drips": N_("drips"), "trickle": N_("trickle"),
     ]
 
-    /// The landscape's name, as a key (an unknown one reads as its id).
-    static func biomeName(_ name: String) -> String {
-        [
-            "mixed": N_("mixed forest"), "broadleaf": N_("broadleaf forest"), "taiga": N_("taiga"), "river_valley": N_("river valley"),
-            "meadows": N_("meadows"), "highlands": N_("highlands"), "desert": N_("desert"), "snowy_mountains": N_("snowy mountains"),
-            "lake_shore": N_("lake shore"), "sea_coast": N_("sea coast"), "big_river": N_("big river"),
-            "journey": N_("journey"),
-        ][name] ?? name.replacingOccurrences(of: "_", with: " ")
-    }
-
-    /// What Jev reads about a landscape preset (English and the Russian words people use).
-    static func biomeCriteria(_ name: String) -> String {
-        [
-            "mixed": "Mixed forest with brooks and lakes ('лес', 'смешанный лес').",
-            "broadleaf": "Oak, birch and aspen woods ('дубрава', 'берёзовая роща', 'лиственный лес').",
-            "taiga": "Spruce and pine taiga with lakes and rock ('тайга', 'хвойный лес', 'ельник').",
-            "river_valley": "A valley with many brooks, willows and alders ('река', 'долина', 'ручьи').",
-            "meadows": "Open meadows and fields with crickets ('луга', 'поле', 'степь').",
-            "highlands": "Highlands: ridges, rock, waterfalls ('горы', 'скалы', 'нагорье').",
-            "desert": "Desert: sand, dunes, heat, almost no trees ('пустыня', 'пески', 'дюны', 'Сахара').",
-            "snowy_mountains": "Snowy mountains: snow, frost, peaks, cold wind ('снежные горы', 'в горы, где идёт снег', 'зимние горы').",
-            "lake_shore": "A lake shore with lapping water ('озеро', 'на берегу озера', 'пруд').",
-            "sea_coast": "A sea coast with surf ('море', 'к морю', 'побережье', 'океан', 'пляж').",
-            "big_river": "A wide big river ('большая река', 'широкая река', 'на Волгу').",
-            "journey": "A journey: the landscape changes as you fly, meadows, forests, lakes, taiga, mountains ('путешествие', 'разные места', 'покажи всё', 'лети куда-нибудь').",
-        ][name] ?? "A landscape called '\(name.replacingOccurrences(of: "_", with: " "))'."
-    }
-
     /// Knobs for the controls the state has: fixed knobs, loudness of each group (its
-    /// `<group>.level` in dB when the core has one, else `<group>.gain`), flight and
-    /// landscapes (the presets from the state).
+    /// `<group>.level` in dB when the core has one, else `<group>.gain`).
     static func all(for scene: SceneState) -> [Knob] {
         var out = fixed.filter { scene.values[$0.key] != nil && ($0.key != "fire.heat" || scene.kinds.contains("fire")) }
         // (group, what it is for the model, its name for the user, the word listeners say)
@@ -461,23 +398,6 @@ struct Knob {
                                 anchors: [("muted", 0, "silent, muted"), ("normal", 1, "normal loudness")],
                                 upDown: (N_("louder"), N_("quieter"))))
             }
-        }
-        if scene.switches["flight.on"] != nil {
-            out.append(Knob(key: "flight.on", what: "where we are: flying through generated landscapes, standing still in one, or home in the forest by the river", name: N_("flight"),
-                            presets: [("on", "Start flying, fly on, or travel somewhere else: 'полетели', 'летим', 'дальше', 'перенеси меня в …', 'в пустыню', 'к морю', 'в горы'."),
-                                      ("stand", "Stop right here and stand on the ground in this landscape: 'стоп', 'остановись', 'зависни', 'постоим', 'приземлись здесь'."),
-                                      ("off", "Go home, back to the forest by the river: 'домой', 'приземлись домой', 'вернись домой'.")],
-                            alreadyText: ["on": N_("already flying"), "stand": N_("already standing"), "off": N_("already home")]))
-        }
-        if let biomes = scene.options["flight.biome"], !biomes.isEmpty {
-            out.append(Knob(key: "flight.biome", what: "the landscape to be in (a place request: desert, mountains, sea, lake, taiga…)", name: N_("place"),
-                            presets: biomes.map { ($0, biomeCriteria($0)) }))
-        }
-        if scene.values["flight.speed"] != nil {
-            out.append(Knob(key: "flight.speed", what: "the flight speed (only while flying: 'быстрее', 'медленнее'; 'стоп' / 'зависни' is flight.on stand)", name: N_("speed"),
-                            step: .times(1.6), floor: 2, range: 0...25,
-                            anchors: [("hover", 0, "hover in place"), ("walk", 1.5, "walking pace"), ("glide", 8, "gentle glide"), ("fast", 20, "fast flight")],
-                            upDown: (N_("faster"), N_("slower"))))
         }
         return out
     }

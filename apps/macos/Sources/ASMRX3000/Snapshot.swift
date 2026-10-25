@@ -6,8 +6,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// `ASMRX3000 --snapshot out.png [--select tree|bird|river|clip|none] [--seconds s] [--scenes] [--expand water|wind|none] [--more] [--sound] [--fold-world] [--settings] [--all] [--fixed] [--room pt] [--spectrogram] [--orbit 0..1]
-///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]
-///  [--flight speed] [--seed n] [--steer yaw°]`
+///  [--azimuth rad] [--set key=value ...] [--scene file.json] [--gaze yaw°,pitch°]`
 /// runs the engine for a few seconds without an audio device and writes the whole popover
 /// (Metal scene and spectrogram included) as a 2x PNG. For visual checks and CI.
 enum Snapshot {
@@ -35,7 +34,7 @@ enum Snapshot {
         model.audio.readControls(&tree)
         for (i, a) in args.enumerated() where a == "--set" && i + 1 < args.count {
             let kv = args[i + 1].split(separator: "=")
-            // A value or, for a preset, its option name (--set flight.biome=desert).
+            // A value or, for a preset, its option name (--set water.regime=slow_river).
             let c = kv.count == 2 ? tree.first(where: { $0.key == kv[0] }) : nil
             let option = c.flatMap { $0.options.firstIndex(of: String(kv[1])) }.map(Float.init)
             guard kv.count == 2, let c, let v = Float(kv[1]) ?? option else {
@@ -45,25 +44,9 @@ enum Snapshot {
             model.audio.setControl(c.id, v)
         }
 
-        // --flight <speed m/s>: fly through the streamed landscape.
-        if let seed = value("--seed").flatMap(Float.init) {
-            model.audio.setControl(UInt32(ASMR_CONTROL_FLIGHT_SEED), seed)
-        }
-        if let speed = value("--flight").flatMap(Float.init) {
-            model.audio.setControl(UInt32(ASMR_CONTROL_FLIGHT_SPEED), speed)
-            model.audio.flying = true
-        }
-
-        // --steer yaw° (+ = left): an AirPods head pose held from the 3rd second on, so flight
-        // mode steers by head (flight.steer_by_head).
-        let steer = value("--steer").flatMap(Float.init).map { $0 * .pi / 180 }
         let fps = 30.0
         let selectKind = value("--select") ?? "tree"
         for i in 0..<Int(seconds * fps) {
-            if let yaw = steer {
-                let y = Double(i) / fps < 3 ? 0 : yaw
-                model.audio.setHeadSample(HeadTracker.Sample(q: simd_quatf(angle: y, axis: SIMD3(0, 0, 1)), w: .zero, age: 0.01))
-            }
             model.audio.simulate(seconds: 1 / fps)
             stage.step(dt: 1 / fps)
             // Clips come and go: pick one shortly before the frame is taken.
@@ -117,7 +100,7 @@ enum Snapshot {
         let expand = value("--expand") ?? "none"
         let drawer = controls.macros.first { $0.key == expand || $0.key.hasPrefix(expand + ".") }?.id
         let showAll = args.contains("--more")
-        let levers = LeverPanel.levers(controls.macros, scene: model.audio.scene, flying: model.audio.flying, showAll: showAll)
+        let levers = LeverPanel.levers(controls.macros, scene: model.audio.scene, showAll: showAll)
         let rows = LeverPanel.layout(levers)
         let tracksSize = SIMD2(Float(Popover.sliderWidth), Float(Popover.leverHeight) * Float(max(levers.count, 1)))
         let hover: SIMD2<Float>? = spectrogramOpen ? SIMD2<Float>(specSize.x * 0.72, specSize.y * 0.38) : nil

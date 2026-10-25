@@ -3,9 +3,9 @@ import Foundation
 
 /// The scenes the popover offers (core/scenes/*.json, bundled into Resources/scenes), and
 /// what the app needs to know about one before and after the core builds it: whether it is a
-/// procedural forest (the forest levers, trees and river) or a clip scene (recorded or
-/// generated sounds placed and moved in space: their own levers and stage), how it looks, and
-/// a name for each clip.
+/// procedural forest (the forest levers, trees and river) or a clip scene (procedural sounds
+/// placed and moved in space: their own levers and stage), how it looks, and a name for each
+/// clip. Every scene is procedural: the app ships no sound files.
 struct SceneEntry: Identifiable, Equatable {
     /// Stored in UserDefaults ("scene").
     let id: String
@@ -29,27 +29,11 @@ struct SceneEntry: Identifiable, Equatable {
 
     static let forest = SceneEntry(id: "forest", key: N_("Forest"), file: nil)
 
-    /// The light build (`LITE=1 scripts/build-macos.sh`) ships no sound files and sets
-    /// `ASMRProceduralOnly` in Info.plist: it offers only the scenes made of physical models.
-    static let proceduralOnly = Bundle.main.object(forInfoDictionaryKey: "ASMRProceduralOnly") as? Bool ?? false
-
-    static let all: [SceneEntry] = proceduralOnly ? [
-        forest,
-        SceneEntry(id: "open_country", key: N_("Meadow by the sea"), file: "open_country.json"),
-    ] : [
+    /// The three scenes: the built-in forest, and two clip scenes of physical models.
+    static let all: [SceneEntry] = [
         forest,
         SceneEntry(id: "underwater", key: N_("Underwater"), file: "underwater_drift.json"),
-        SceneEntry(id: "space", key: N_("Space"), file: "space_still.json"),
-        SceneEntry(id: "lighthouse", key: N_("Lighthouse"), file: "lighthouse_gale.json"),
-        SceneEntry(id: "night_train", key: N_("Night train"), file: "night_train.json"),
-        SceneEntry(id: "singing_ice", key: N_("Singing ice"), file: "singing_ice.json"),
-        SceneEntry(id: "tea_house", key: N_("Tea house"), file: "tea_house.json"),
-        SceneEntry(id: "night_library", key: N_("Night library"), file: "night_library.json"),
         SceneEntry(id: "body_scan", key: N_("Body scan"), file: "body_scan.json"),
-        SceneEntry(id: "cave_drips", key: N_("Cave"), file: "cave_drips.json"),
-        SceneEntry(id: "sailboat_anchor", key: N_("Yacht at anchor"), file: "sailboat_anchor.json"),
-        SceneEntry(id: "campfire_shore", key: N_("Campfire by the sea"), file: "campfire_shore.json"),
-        SceneEntry(id: "mountain_tent", key: N_("Tent in the rain"), file: "mountain_tent.json"),
     ]
 
     static func with(id: String?) -> SceneEntry? { all.first { $0.id == id } }
@@ -57,7 +41,8 @@ struct SceneEntry: Identifiable, Equatable {
     /// The choice remembered across launches.
     static var saved: SceneEntry {
         get {
-            // The "· записи" variants are no longer offered: open their scene instead.
+            // The "· записи" variants are gone: open their scene instead. Any other id that is no
+            // longer offered (a removed scene) falls back to the forest.
             let id = UserDefaults.standard.string(forKey: "scene").map { $0.hasSuffix("_real") ? String($0.dropLast(5)) : $0 }
             return with(id: id) ?? forest
         }
@@ -100,7 +85,7 @@ struct ClipInfo {
 
 /// A scene as loaded: its JSON (nil for the built-in forest) and what the shell reads from it.
 struct SceneInfo {
-    enum Look { case forest, underwater, space, void }
+    enum Look { case forest, underwater, void }
 
     var entry: SceneEntry
     /// The JSON's name for a `--scene` file; otherwise the entry's title is shown.
@@ -156,10 +141,12 @@ struct SceneInfo {
                 let type = motion["type"] as? String ?? "fixed"
                 let cls = ClipInfo.Class(rawValue: e["class"] as? String ?? "bed") ?? .bed
                 let files = e["files"] as? [String] ?? []
+                let sound = e["sound"] as? [String: Any]
                 func f(_ k: String) -> Float? { (motion[k] as? NSNumber)?.floatValue }
                 var sweep: (Float, Float, Float, Float)?
                 if type == "sweep" { sweep = (f("from_x") ?? -40, f("to_x") ?? 40, f("width") ?? 10, f("height") ?? 0) }
-                clips[id] = ClipInfo(id: id, cls: cls, motion: type, nameKey: Scenes.name(files: files, cls: cls),
+                clips[id] = ClipInfo(id: id, cls: cls, motion: type, nameKey: Scenes.name(files: files, group: e["group"] as? String,
+                                                     model: sound?["model"] as? String, preset: sound?["preset"] as? String, cls: cls),
                                      emitters: (e["emitters"] as? NSNumber)?.intValue ?? 1,
                                      spread: (e["spread"] as? NSNumber)?.floatValue ?? 0,
                                      sweep: sweep, toScreen: motion["to_screen"] as? Bool ?? false)
@@ -183,10 +170,7 @@ struct SceneInfo {
         if clips.isEmpty {
             look = .forest
         } else if entry.id.hasPrefix("underwater") || (root["name"] as? String ?? "").lowercased().contains("underwater") {
-            // Not the medium alone: the lighthouse is muffled like water but stands on a rock.
             look = .underwater
-        } else if entry.id.hasPrefix("space") || (root["name"] as? String ?? "").lowercased().contains("space") {
-            look = .space
         } else {
             look = .void
         }
@@ -215,65 +199,19 @@ enum Scenes {
         setenv("ASMR_SOUNDS_DIR", r.path, 0)
     }
 
-    /// An English name key from the clip's files (translated when shown): the first keyword that matches.
-    static func name(files: [String], cls: ClipInfo.Class) -> String {
-        let text = files.joined(separator: " ").lowercased()
+    /// An English name key for a clip (translated when shown): the first keyword found in its
+    /// files, its group and its sound model and preset (a procedural clip has no files).
+    static func name(files: [String], group: String? = nil, model: String? = nil, preset: String? = nil, cls: ClipInfo.Class) -> String {
+        let text = (files + [group, model, preset].compactMap { $0 }).joined(separator: " ").lowercased()
         let words: [(String, String)] = [
+            // Under water.
             ("humpback_dolphin", N_("dolphins")), ("humpback", N_("humpback")), ("blue_whale", N_("blue whale")), ("fin_whale", N_("fin whale")),
             ("sperm_whale", N_("sperm whale")), ("whale", N_("whale")), ("dolphin", N_("dolphins")), ("bubbles", N_("bubbles")),
-            ("swimmer", N_("swimmer")), ("reef", N_("reef")), ("ocean", N_("ocean")), ("comet", N_("comet")), ("juno", N_("Juno flyby")),
-            ("pulsar", N_("pulsar")), ("chorus", N_("magnetosphere chorus")), ("whistler", N_("whistlers")),
-            ("black_hole", N_("black hole")), ("m87", N_("black hole")), ("sgra", N_("black hole")), ("shimmer", N_("shimmer")),
-            ("swell", N_("cosmic swell")), ("saturn", N_("Saturn")), ("voyager", N_("interstellar plasma")),
-            ("plasma", N_("plasma")), ("drone", N_("drone")),
-            // The station, its ships and docking.
-            ("hull_hum", N_("station hull")), ("life_support", N_("life support")), ("distant_pump", N_("pump")),
-            ("hull_creak", N_("hull creak")), ("hull_tick", N_("hull ticks")), ("freighter", N_("freighter")),
-            ("medium_ship", N_("ship")), ("shuttle", N_("shuttle")), ("convoy", N_("convoy")), ("rcs_", N_("thrusters")),
-            ("clamp", N_("docking clamp")), ("airlock", N_("airlock")), ("robot_arm", N_("robot arm")),
-            ("radio_hiss", N_("radio")), ("console_beep", N_("console")),
-            // The lighthouse.
-            ("optic", N_("lens")), ("clockwork", N_("clockwork")), ("rain_on_glass", N_("rain on the glass")),
-            ("surf_crash", N_("surf")), ("bell_buoy", N_("bell buoy")), ("foghorn", N_("foghorn")),
-            ("pane_rattle", N_("rattling pane")), ("stair", N_("stairs")),
-            // The night train.
-            ("car_interior", N_("carriage")), ("rolling_noise", N_("wheels on rails")), ("bogie", N_("bogie")),
-            ("crossing", N_("level crossing")), ("passing_train", N_("passing train")), ("bridge", N_("bridge")),
-            ("tunnel", N_("tunnel")), ("rain_window", N_("rain on the window")), ("tea_glass", N_("tea glass")),
-            ("panel_creak", N_("creaking panel")), ("vent_hum", N_("vent")), ("loco_horn", N_("horn")),
-            ("station_pass", N_("station")),
+            ("swimmer", N_("swimmer")), ("reef", N_("reef")), ("shrimp", N_("shrimp")), ("ocean", N_("ocean")),
+            ("rain_on_surface", N_("rain on the surface")), ("fish_grunt", N_("fish")), ("fish", N_("fish")),
+            ("current", N_("current")), ("rain", N_("rain")),
             // The body scan.
-            ("guide_", N_("guide")), ("bowl_strike", N_("singing bowl")), ("tingsha", N_("tingsha")),
-            // The tea house.
-            ("kettle", N_("kettle")), ("fukusa", N_("silk cloth")), ("ladle", N_("ladle")), ("whisk", N_("whisk")),
-            ("tatami", N_("host")), ("bowl_slide", N_("tea bowl")), ("suikinkutsu", N_("water basin")),
-            ("shishi", N_("bamboo knocker")), ("furin", N_("wind chime")), ("temple_bell", N_("temple bell")),
-            ("rain_on_surface", N_("rain on the surface")), ("fish_grunt", N_("fish")),
-            // The yacht at anchor.
-            ("cabin_lap", N_("water at the hull")), ("hull_slap", N_("slaps on the hull")), ("hull_cluck", N_("clucks under the hull")),
-            ("cabin_creak", N_("creaking cabin")), ("rope_creak", N_("snubber line")), ("halyard_tap", N_("halyard on the mast")),
-            ("halyard_clink", N_("halyard")), ("halyard_rattle", N_("halyard in a gust")), ("chain_grumble", N_("anchor chain")),
-            ("bay_halyards", N_("moored boats")), ("bay_rigging", N_("rigging in the wind")), ("yacht_gull", N_("gull")),
-            // The campfire by the sea.
-            ("campfire_crackle", N_("campfire")), ("campfire_flare", N_("flames")), ("campfire_bonfire", N_("flames")),("campfire_log", N_("log")),
-            ("campfire_damp", N_("damp driftwood")), ("shore_breakers", N_("breakers")), ("shore_wave", N_("wave")),
-            ("shore_curlew", N_("curlew")),
-            // The night library.
-            ("hearth_crackle", N_("fire")), ("hearth_embers", N_("embers")), ("log_settle", N_("settling logs")),
-            ("tallwindow_squall", N_("rain lashing the windows")), ("tallwindow", N_("rain on the windows")),
-            ("page_turn", N_("pages")), ("pen_scratch", N_("pen")), ("clock_tick", N_("clock")), ("clock_strike", N_("clock strikes")),
-            ("floor_creak", N_("floorboards")), ("shelf_creak", N_("bookcase")), ("radiator", N_("radiator")), ("door_far", N_("distant door")),
-            // The tent in the rain.
-            ("tent_fly_", N_("rain on the fly")), ("tent_drips", N_("drips off the fly")), ("tent_flap", N_("flapping fly")), ("tent_pole_creak", N_("tent pole")),
-            ("tent_thunder_roll", N_("far thunder")), ("tent_creek", N_("mountain stream")),
-            ("tent_bag_rustle", N_("sleeping bag")), ("tent_zipper", N_("zipper")),
-            // The singing ice, last: "bowl_strike" and "bowl_slide" hold "owl_".
-            ("ice_sing", N_("singing ice")), ("ice_crack", N_("crack")), ("ice_run", N_("running crack")),
-            ("ice_boom", N_("ice boom")), ("owl_", N_("owl")), ("skater", N_("skater")),
-            // The cave.
-            ("cave_plink", N_("drip into a pool")), ("cave_slowdrip", N_("slow drip")), ("cave_deepdrip", N_("far drip")),
-            ("cave_rockdrip", N_("drip on rock")), ("cave_pebbles", N_("pebbles")), ("cave_stream", N_("underground stream")),
-            ("cave_runnel", N_("runnel")),
+            ("guide", N_("guide")), ("bowl", N_("singing bowl")), ("tingsha", N_("tingsha")),
         ]
         if let hit = words.first(where: { text.contains($0.0) }) { return hit.1 }
         switch cls {

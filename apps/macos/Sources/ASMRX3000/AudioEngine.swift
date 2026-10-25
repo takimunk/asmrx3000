@@ -56,14 +56,6 @@ struct Telemetry {
     var lightning: Float = 0
     /// Leaf and ground wetness 0..1.
     var wetness: Float = 0
-    /// Flight mode: cross-fade 0..1, ears above the ground (m), distance travelled (m), turn rate.
-    var flight: Float = 0
-    var altitude: Float = 1.7
-    var odometer: Float = 0
-    var speed: Float = 0
-    var heading: Float = 0
-    var worldX: Float = 0
-    var worldY: Float = 0
     /// Sound director: short-term loudness (LUFS, before volume), dynamics gain (dB),
     /// foreground soloists and how masked they are (0..1).
     var loudness: Float = -70
@@ -81,28 +73,6 @@ final class AudioEngine: ObservableObject {
     @Published var birds: Float = 0.6 { didSet { set(ASMR_PARAM_BIRDS, birds) } }
     @Published var water: Float = 0.6 { didSet { set(ASMR_PARAM_WATER, water) } }
     @Published var orbit: Float = 0 { didSet { set(ASMR_PARAM_ORBIT, orbit) } }
-    /// Where the listener is (ASMR_PARAM_FLIGHT): home (the forest by the river), flying through
-    /// an endless generated landscape (speed: flight.speed), or standing in it (walk with WASD).
-    enum Place: Int { case home = 0, flying = 1, standing = 2 }
-    @Published var place: Place = .home { didSet { set(ASMR_PARAM_FLIGHT, Float(place.rawValue)) } }
-    /// In the generated world, flying or standing (flight levers, streamed objects). Setting it
-    /// takes off (true) or goes home (false).
-    var flying: Bool {
-        get { place != .home }
-        set { if newValue != flying { place = newValue ? .flying : .home } }
-    }
-    /// F: in the world, stop here / fly on; at home, take off.
-    func toggleFlight() { place = place == .flying ? .standing : .flying }
-
-    /// Movement keys held in the scene (ASMR_PARAM_MOVE_*): forward (W +1, S -1), strafe
-    /// (D +1, A -1), turn (E +1, Q -1), run (Shift).
-    func setMoves(forward: Float, strafe: Float, turn: Float, run: Bool) {
-        set(ASMR_PARAM_MOVE_FORWARD, forward)
-        set(ASMR_PARAM_MOVE_STRAFE, strafe)
-        set(ASMR_PARAM_MOVE_TURN, turn)
-        set(ASMR_PARAM_MOVE_RUN, run ? 1 : 0)
-    }
-
     /// The screen in front of the listener (ASMR_PARAM_SCREEN_*), metres: width, height and the
     /// distance from the eyes to its centre. Set from ScreenGeometry at launch, on display changes
     /// and by onboarding; kept here so a rebuilt core gets them too.
@@ -316,7 +286,7 @@ final class AudioEngine: ObservableObject {
                 if !macro, abs(v - r.def) > 1e-4 { flags |= UInt32(ASMR_CONTROL_FLAG_OVERRIDDEN) }
                 out.append(Control(id: base + UInt32(p), group: group, parent: macro ? nil : base, flags: flags,
                                    min: r.min, max: r.max, value: v, defaultValue: r.def,
-                                   key: "clip.\(g.id).\(clipLeaf(g, p))", unit: macro ? "dB" : p == 6 && g.model == UInt32(ASMR_CLIP_MODEL_PLASMA) ? "/min" : "x"))
+                                   key: "clip.\(g.id).\(clipLeaf(g, p))", unit: macro ? "dB" : "x"))
             }
         }
         return out
@@ -391,8 +361,6 @@ final class AudioEngine: ObservableObject {
             engine.detach(old)
             node = nil
         }
-        // Flight is the forest's generated world; a clip scene always starts at home.
-        if info.isClip || scene.isClip { place = .home }
         coreLock.lock()
         let old = core
         core = new
@@ -587,13 +555,6 @@ final class AudioEngine: ObservableObject {
             outputLevel: telemetry(ASMR_TELEMETRY_OUTPUT_LEVEL),
             lightning: telemetry(ASMR_TELEMETRY_LIGHTNING),
             wetness: telemetry(ASMR_TELEMETRY_WETNESS),
-            flight: telemetry(ASMR_TELEMETRY_FLIGHT),
-            altitude: telemetry(ASMR_TELEMETRY_FLIGHT_ALTITUDE),
-            odometer: telemetry(ASMR_TELEMETRY_FLIGHT_ODOMETER),
-            speed: telemetry(ASMR_TELEMETRY_FLIGHT_SPEED),
-            heading: telemetry(ASMR_TELEMETRY_FLIGHT_HEADING),
-            worldX: telemetry(ASMR_TELEMETRY_FLIGHT_X),
-            worldY: telemetry(ASMR_TELEMETRY_FLIGHT_Y),
             loudness: telemetry(ASMR_TELEMETRY_LOUDNESS_SHORT),
             mixGain: telemetry(ASMR_TELEMETRY_MIX_GAIN_DB),
             soloists: telemetry(ASMR_TELEMETRY_SOLOISTS),
@@ -617,27 +578,12 @@ final class AudioEngine: ObservableObject {
         out.append(contentsOf: rawObjects.prefix(Int(n)))
     }
 
-    /// Flight mode: where the listener is in the landscape and what it is (nil before flight
-    /// mode was first built). See Stage/FlightTerrain.swift.
-    func readFlightFrame() -> AsmrFlightFrame? {
-        var f = AsmrFlightFrame()
-        return asmr_get_flight_frame(core, &f) != 0 ? f : nil
-    }
-
     /// Actual rain (or snow) rate, mm/h, for the precipitation drawn over the scene.
     var rainRate: Float { telemetry(ASMR_TELEMETRY_RAIN_RATE) }
 
     /// What each scene bird is doing (species, state, flight style, wingbeat): Stage/Birds.swift.
     func readBirds(_ out: inout [AsmrBirdInfo]) -> Int {
         out.withUnsafeMutableBufferPointer { Int(asmr_get_birds(core, $0.baseAddress, UInt32($0.count))) }
-    }
-
-    /// Shape of a streamed object (river bed, lake shore, ridge line), listener-relative.
-    func readObjectPath(_ id: UInt32, into out: inout [SIMD3<Float>]) {
-        var raw = [Float](repeating: 0, count: 3 * 32)
-        let n = raw.withUnsafeMutableBufferPointer { asmr_get_object_path(core, id, $0.baseAddress, 32) }
-        out.removeAll(keepingCapacity: true)
-        for i in 0..<Int(n) { out.append(SIMD3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2])) }
     }
 
     /// The control tree: macros and their children. Values change when a macro moves, so this is
@@ -767,13 +713,6 @@ final class AudioEngine: ObservableObject {
         defer { asmr_string_free(resultPointer) }
         let result = String(cString: resultPointer)
         let parsed = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] ?? [:]
-        // A patch may switch flight on or off (the core already set the parameter): keep the
-        // published state, the transport button and rebuilds in step.
-        if let f = (parsed["switched"] as? [String: Any])?["flight.on"] as? String {
-            let to: Place = f == "on" ? .flying : f == "stand" ? .standing : .home
-            let sync = { [weak self] in if let self, self.place != to { self.place = to } }
-            if Thread.isMainThread { sync() } else { DispatchQueue.main.async(execute: sync) }
-        }
         return parsed
     }
 
@@ -837,7 +776,6 @@ final class AudioEngine: ObservableObject {
         set(ASMR_PARAM_BIRDS, birds)
         set(ASMR_PARAM_WATER, water)
         set(ASMR_PARAM_ORBIT, orbit)
-        set(ASMR_PARAM_FLIGHT, Float(place.rawValue))
         set(ASMR_PARAM_PLAYING, isPlaying ? 1 : 0)
         setHeadPose(yaw: headPose.0, pitch: headPose.1, roll: headPose.2)
         if let s = lastHead {
