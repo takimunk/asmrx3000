@@ -17,6 +17,13 @@ measured, not hand-set (`tools/synth/level_guide.py`).
 | **Feet bowl** | `large`, f0 146.8 Hz | 264 s, by the feet (1.2 m below the ears) | Grounding at the soles; between the guide's tones (no unison to beat against) |
 | **Closing bowl** | `large` (110 Hz) | 292 s, ahead | The return |
 
+**The hand-over to the legs (229–236 s).** The concept asked for 2.5 s of silence after the belly
+before the guide reappears as two. Rendered, that was the whole mix fading to digital zero for ~2 s
+and coming back with a +24 dB onset: a dropout in a guided session. It is now a breath instead of a
+hole: the belly tone (330 Hz) eases down to about −12 dB over 3 s while the two legs (165 and 220 Hz)
+rise under it over 4 s; the low point is ~12 dB under the surrounding level, never silent, and the
+re-entry rises at about 3 dB/s.
+
 Levers: **Guide** (−12..+6 dB on the guide group) and **Bowls** (−30..+4 dB on the strikes), as before.
 The rest episode (afterglow, stillness) follows the 301 s script; the last bowl rings into it.
 
@@ -131,7 +138,20 @@ With the mix's dynamics on, the leveller lifts the "around the head" stage by up
 after the quiet start (it did +3.5 LU on the previous version too): a slow swell, inside the rule, but
 the one remaining unevenness. It is the engine's leveller, not the scene.
 
+The comfort analyzer (`cargo run --release --example comfort -- 5.2 core/scenes/body_scan.json turn`):
+verdict **pass** — max momentary +6.1 LU, loudness surprise +5.8 LU, sudden onset 5.6 dB, true peak
+−20.5 dBTP, sharpness 0.49 acum, roughness 0.14 asper, presence −28 dB, hiss −53 dB, rumble −10.7 dB,
+no clicks, no floating tones; the longest prominent tone ≥ 1 kHz is the tingsha (3 s). The sustained
+tones it lists (164 / 328 / 656 Hz) are the guide by design.
+
 ### What the measurements caught (and fixed)
+
+* The silence before the legs went to digital zero and came back as a +24 dB onset (comfort
+  analyzer); now a soft dip (above).
+* The comfort analyzer's rumble check read a +31.7 dB "excess" inside the head: its reference
+  octave (500 Hz) is empty in a scene of pure 110 Hz tones, so window leakage counted as rumble
+  (the 22–89 Hz band is −91 dB re total). The reference now stays within 40 dB of the strongest
+  octave (core/src/comfort.rs); rumble reads −10.7 dB.
 
 * The guide swayed ±4 dB along the route with the model tone: the old path gains had been fitted, second
   by second, to the old loops' own beat phases. `level_guide.py` now measures with the guide's sway off,

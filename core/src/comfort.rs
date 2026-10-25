@@ -1330,9 +1330,16 @@ impl Analyzer {
         // Per-second excess over the reference tilt; a window's value is the 20th percentile
         // of its seconds: the steady background between bird phrases, not the phrases.
         let tilt = |o: usize| REF_TILT_DB_OCT * (OCTAVES[o] / 500.0).log2();
+        // The reference is the 500 Hz octave, but never more than 40 dB under the strongest
+        // octave: a scene of a few pure tones (a 110 Hz bowl, nothing at 500 Hz) has an almost
+        // empty reference band, against which mere window leakage in the other bands read as
+        // +30 dB "excess". On a broadband spectrum the 500 Hz octave stays the reference, and a
+        // real excess reads in full until its band is 40 dB over the 500 Hz octave.
         let sec_excess = |i: usize, bands: &[usize]| -> f32 {
             let o = &self.sec_stats[i].2;
-            let e: f64 = bands.iter().map(|&k| 10f64.powf((o[k] - o[4] - tilt(k)) as f64 / 10.0)).sum::<f64>() / bands.len() as f64;
+            let top = o.iter().copied().fold(f32::MIN, f32::max);
+            let r = o[4].max(top - 40.0);
+            let e: f64 = bands.iter().map(|&k| 10f64.powf((o[k] - r - tilt(k)) as f64 / 10.0)).sum::<f64>() / bands.len() as f64;
             (10.0 * e.max(1e-20).log10()) as f32
         };
         let excess = |s: usize, bands: &[usize]| -> f32 {
@@ -1742,6 +1749,32 @@ mod tests {
         let w: Vec<&Event> = rep.events.iter().filter(|e| e.kind == EventKind::Wobble).collect();
         assert!(!w.is_empty() && w.iter().all(|e| (17.9..22.0).contains(&e.t)), "{w:?}");
         assert!((w[0].rate - 3.0).abs() < 0.8, "{w:?}");
+    }
+
+    #[test]
+    fn a_pure_low_tone_is_not_rumble_but_real_rumble_is() {
+        // A clean 110 Hz tone with a faint octave and nothing else (the body scan's guide):
+        // the 500 Hz reference octave is empty, which must not turn leakage into "excess".
+        let n = (40.0 * FS) as usize;
+        let tone: Vec<f32> = (0..n)
+            .map(|k| {
+                let t = k as f32 / FS;
+                0.03 * (std::f32::consts::TAU * 110.0 * t).sin() + 0.003 * (std::f32::consts::TAU * 220.0 * t).sin()
+            })
+            .collect();
+        let rep = analyse(&tone, &tone);
+        let v = rep.check("rumble").unwrap().value;
+        assert!(v < 8.0, "rumble excess {v} dB on a pure 110 Hz tone");
+        // A pink bed (-30 dBFS) with a strong 45 Hz hum (-9 dBFS) added still fails.
+        let mut l = pink(40.0, -30.0, 11);
+        let mut r = pink(40.0, -30.0, 12);
+        for k in 0..l.len() {
+            let v = 0.5 * (std::f32::consts::TAU * 45.0 * k as f32 / FS).sin();
+            l[k] += v;
+            r[k] += v;
+        }
+        let v = analyse(&l, &r).check("rumble").unwrap().value;
+        assert!(v > 8.0, "rumble excess {v} dB missed (warn limit 8)");
     }
 
     #[test]
