@@ -54,7 +54,7 @@ struct AudioStateCheck {
         source.setControl(volumeID, 0.9)
         _ = patch(source, "master.volume", 0.3)
         _ = patch(source, "water.depth", 0.4)
-        _ = patch(source, "fire.moisture", 0.7)
+        _ = patch(source, "foliage.density", 0.35)
         let gainID = controls.first { $0.key == "water.gain" }!.id
         source.setControl(gainID, 1.5)
         source.releaseControl(gainID)
@@ -65,7 +65,7 @@ struct AudioStateCheck {
         XCTAssertEqual(control(restored, "water.depth")["value"] as! Double, 0.4, accuracy: 0.001)
         XCTAssertEqual(control(restored, "water.depth")["overridden"] as? Bool, true)
         XCTAssertEqual(control(restored, "water.speed")["overridden"] as? Bool, false)
-        XCTAssertEqual(control(restored, "fire.moisture")["value"] as! Double, 0.7, accuracy: 0.001)
+        XCTAssertEqual(control(restored, "foliage.density")["value"] as! Double, 0.35, accuracy: 0.001)
         XCTAssertEqual(control(restored, "water.gain")["value"] as! Double, 1.5, accuracy: 0.001)
         XCTAssertEqual(control(restored, "water.gain")["overridden"] as? Bool, false)
     }
