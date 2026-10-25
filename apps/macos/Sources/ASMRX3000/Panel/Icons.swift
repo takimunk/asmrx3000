@@ -79,22 +79,10 @@ enum Icon: Hashable {
     case flow, depth, character, speed, gust, rain, dot
     case sun, moon, thermometer, droplet, leaf, flame, cricket, bolt, bubbles, width, stone, tone, gain
     // Clip-scene groups.
-    case whale, dolphin, comet, beam, orbit, plasma
+    case whale, dolphin, orbit
     // Scene levers.
-    case ship, station, docking, radio, reef
+    case reef
     case course
-    // The newer scenes: lighthouse, night train, singing ice, tea house.
-    case light, lamp, tower, bell, fog, horn, rumble, rail, train, bridge, tunnel, cup, tea, ice, crack, owl, distance
-    // The cave.
-    case drip, ripple, cave, pebbles
-    // The yacht at anchor.
-    case boat, mast, anchor, gull
-    // Campfire by the sea.
-    case surf
-    // The night library.
-    case book, pen, clock, house
-    // The tent in the rain.
-    case tent
 
     /// The pictogram for a control: its group for a macro, its key for a child. `hour` is the
     /// scene's time of day, so the environment shows a sun or a moon.
@@ -119,7 +107,6 @@ enum Icon: Hashable {
             case ASMR_GROUP_ENVIRONMENT: return daylight ? .sun : .moon
             case ASMR_GROUP_INSECTS: return .cricket
             case ASMR_GROUP_FIRE: return .flame
-            case ASMR_GROUP_FLIGHT: return .flight
             case ASMR_GROUP_MIX: return .tone
             case ASMR_GROUP_DIRECTION: return .course
             default: return .volume
@@ -146,7 +133,7 @@ enum Icon: Hashable {
         case "character", "preset", "texture", "regime": return .character
         case "speed", "strength", "exposure": return .speed
         case "gust", "gustiness", "turbulence": return .gust
-        case "flight", "orbit": return .flight
+        case "orbit": return .flight
         case "rate", "intensity": return .rain
         case "time_of_day": return daylight ? .sun : .moon
         case "temperature", "warmth": return .thermometer
@@ -171,55 +158,20 @@ enum Icon: Hashable {
         }
     }
 
-    /// The pictogram a scene file names by key (the newer scenes' `icon` fields); nil when unknown.
+    /// The pictogram a scene file names by key (a scene's `icon` fields); nil when unknown.
     static func named(_ key: String) -> Icon? {
         switch key {
-        case "light": return .light
-        case "lamp": return .lamp
-        case "tower": return .tower
-        case "bell": return .bell
-        case "fog": return .fog
-        case "horn": return .horn
-        case "rumble": return .rumble
-        case "rail": return .rail
-        case "train": return .train
-        case "bridge": return .bridge
-        case "tunnel": return .tunnel
-        case "cup": return .cup
-        case "tea": return .tea
-        case "ice": return .ice
-        case "crack": return .crack
-        case "owl": return .owl
-        case "distance": return .distance
-        case "boat": return .boat
-        case "mast": return .mast
-        case "anchor": return .anchor
-        case "gull": return .gull
-        case "surf": return .surf
         case "moon": return .moon
         case "leaf", "grass": return .leaf
-        case "book": return .book
-        case "pen": return .pen
-        case "clock": return .clock
-        case "house": return .house
-        case "tent": return .tent
         case "fire": return .flame
         case "thunder", "storm": return .bolt
         case "temperature": return .thermometer
         case "speed": return .speed
         case "birds": return .birds
         case "droplet": return .droplet
-        case "ship": return .ship
-        case "station": return .station
-        case "docking": return .docking
-        case "radio": return .radio
         case "reef": return .reef
         case "rain": return .rain
         case "depth": return .depth
-        case "drip": return .drip
-        case "ripple": return .ripple
-        case "cave": return .cave
-        case "pebbles": return .pebbles
         default: return nil
         }
     }
@@ -438,27 +390,11 @@ enum Icon: Hashable {
                 Stroke(d: "M10.5 7.6 L12 4 L14.5 8.2", opacity: 0.8),
                 Stroke(d: "M12 15.4 L10.5 18.5 L14 16.6", opacity: 0.6),
             ]
-        case .comet:
-            return [
-                Stroke(d: Icon.circle(17, 7, 2.6)),
-                Stroke(d: "M14.7 8.6 L3.5 19.5 M15.6 9.8 L8.5 20 M13 6.4 L3 13", opacity: 0.7),
-            ]
-        case .beam:
-            return [
-                Stroke(d: "M3 12 H21"),
-                Stroke(d: "M6 8 L9 12 L6 16 M12 8 L15 12 L12 16", opacity: 0.75),
-                Stroke(d: "M18.5 9.5 V14.5", opacity: 0.5),
-            ]
         case .orbit:
             return [
                 Stroke(d: "M3.5 12 C3.5 7 20.5 7 20.5 12 C20.5 17 3.5 17 3.5 12 Z", opacity: 0.8),
                 Stroke(d: Icon.circle(12, 12, 2.2)),
                 Stroke(d: Icon.circle(19.6, 14.4, 1.2), opacity: 0.7),
-            ]
-        case .plasma:
-            return [
-                Stroke(d: "M3 5 C9 5 10.5 11 12.5 13.5 C14.5 16 16.5 18 21 19"),
-                Stroke(d: "M4 17 H7 M9 19.5 H11.5 M15 4.5 H18 M17 8 H20.5", opacity: 0.55),
             ]
         case .course:
             return [
@@ -466,254 +402,12 @@ enum Icon: Hashable {
                 Stroke(d: Icon.circle(4.5, 18, 1.3), opacity: 0.7),
                 Stroke(d: "M8 21 H20", opacity: 0.45),
             ]
-        case .ship:
-            return [
-                Stroke(d: "M3 15 L5 18.5 H19 L21 15 Z"),
-                Stroke(d: "M7 15 V11.5 H15 V15 M10.5 11.5 V8 H13.5 V11.5", opacity: 0.8),
-                Stroke(d: "M12 8 V4.5", opacity: 0.55),
-            ]
-        case .station:
-            return [
-                Stroke(d: Icon.circle(12, 12, 3)),
-                Stroke(d: "M12 9 V4 M12 15 V20 M9 12 H4 M15 12 H20", opacity: 0.85),
-                Stroke(d: "M3 3.5 H6.5 V6.5 H3 Z M17.5 17.5 H21 V21 H17.5 Z", opacity: 0.6),
-            ]
-        case .docking:
-            return [
-                Stroke(d: "M3 8.5 H9 V15.5 H3"),
-                Stroke(d: "M21 8.5 H15 V15.5 H21"),
-                Stroke(d: "M10.5 12 H13.5 M12 10.5 L13.5 12 L12 13.5", opacity: 0.7),
-            ]
-        case .radio:
-            return [
-                Stroke(d: Icon.circle(12, 15, 1.6)),
-                Stroke(d: "M12 16.6 V21 M8 21 H16", opacity: 0.8),
-                Stroke(d: "M8.2 11.2 C10.3 9.2 13.7 9.2 15.8 11.2 M5 8.2 C8.7 4.6 15.3 4.6 19 8.2", opacity: 0.65),
-            ]
         case .reef:
             return [
                 Stroke(d: "M3 20 H21"),
                 Stroke(d: "M7 20 V12 M7 15 L4.5 12.5 M7 13.5 L9.5 11"),
                 Stroke(d: "M13 20 V8 M13 14 L10.5 11.5 M13 11 L15.5 8.5", opacity: 0.85),
                 Stroke(d: "M18 20 V14 M18 17 L16.5 15.5 M18 16 L19.5 14.5", opacity: 0.6),
-            ]
-        case .light:
-            return [
-                Stroke(d: "M5 10 H8 V14 H5 Z"),
-                Stroke(d: "M8 11 L21 5.5 M8 12 H21.5 M8 13 L21 18.5", opacity: 0.75),
-                Stroke(d: "M3 14 V20 M3 20 H8", opacity: 0.5),
-            ]
-        case .lamp:
-            return [
-                Stroke(d: "M10 4.5 V3 H14 V4.5", opacity: 0.8),
-                Stroke(d: "M9 4.5 H15 L16.5 7.5 H7.5 Z"),
-                Stroke(d: "M8.5 7.5 V16 M15.5 7.5 V16"),
-                Stroke(d: "M7 16 H17 L16 19.5 H8 Z"),
-                Stroke(d: "M12 9.5 C13.3 11 13.3 13 12 14 C10.7 13 10.7 11 12 9.5 Z", opacity: 0.7),
-            ]
-        case .tower:
-            return [
-                Stroke(d: "M9.5 21 L10.5 9.5 H13.5 L14.5 21 M7.5 21 H16.5"),
-                Stroke(d: "M8.5 9.5 H15.5"),
-                Stroke(d: "M10.5 9.5 V6 H13.5 V9.5 M10 6 L12 3.5 L14 6", opacity: 0.85),
-                Stroke(d: "M10 14 H14 M9.7 17.5 H14.3", opacity: 0.55),
-            ]
-        case .bell:
-            return [
-                Stroke(d: "M12 4.5 C8.6 4.5 7.5 7.8 7.5 10.8 C7.5 14 6 15.6 5 17 H19 C18 15.6 16.5 14 16.5 10.8 C16.5 7.8 15.4 4.5 12 4.5 Z"),
-                Stroke(d: "M10.5 19.5 C10.8 20.8 13.2 20.8 13.5 19.5", opacity: 0.8),
-                Stroke(d: "M12 2.5 V4.5", opacity: 0.6),
-            ]
-        case .fog:
-            return [
-                Stroke(d: "M3 8 C6 6.5 8 9.5 11 8 C14 6.5 16 9.5 21 8"),
-                Stroke(d: "M5 12.5 H19", opacity: 0.8),
-                Stroke(d: "M3 17 H10 M13 17 H21", opacity: 0.55),
-            ]
-        case .horn:
-            return [
-                Stroke(d: "M3 10.5 H7 L17 5.5 V18.5 L7 13.5 H3 Z"),
-                Stroke(d: "M8 13.7 L9 18 H11.4 L10.6 14.8", opacity: 0.7),
-                Stroke(d: "M19.5 9.5 Q21 12 19.5 14.5", opacity: 0.8),
-                Stroke(d: "M21.5 7 Q24 12 21.5 17", opacity: 0.5),
-            ]
-        case .tent:
-            // A small dome tent on the ground, its pole crossing the top, rain slanting onto it.
-            let y = (t / 0.9).truncatingRemainder(dividingBy: 1) * 2.5
-            return [
-                Stroke(d: "M3.5 20 C4.5 12 8 9.5 12 9.5 C16 9.5 19.5 12 20.5 20"),
-                Stroke(d: "M2 20 H22", opacity: 0.6),
-                Stroke(d: "M12 9.5 C10 13 9.6 16.5 10 20 M12 9.5 C14 13 14.4 16.5 14 20", opacity: 0.65),
-                Stroke(d: "M8 \(f(1.5 + y)) L7 \(f(4.5 + y)) M13 \(f(1 + y)) L12 \(f(4 + y)) M18 \(f(1.5 + y)) L17 \(f(4.5 + y))", opacity: 0.55),
-            ]
-        case .rumble:
-            return [
-                Stroke(d: "M3 12 L5.5 8 L8 16 L10.5 8 L13 16 L15.5 8 L18 16 L20.5 12"),
-                Stroke(d: "M3 20 H21", opacity: 0.5),
-                Stroke(d: "M3 4 H21", opacity: 0.35),
-            ]
-        case .rail:
-            return [
-                Stroke(d: "M9 3 L5 21 M15 3 L19 21"),
-                Stroke(d: "M8.2 8 H15.8 M6.8 14 H17.2 M5.8 19 H18.2", opacity: 0.7),
-            ]
-        case .train:
-            return [
-                Stroke(d: "M7 4 H17 V16 H7 Z"),
-                Stroke(d: "M9 6.5 H15 V10.5 H9 Z", opacity: 0.8),
-                Stroke(d: "M9 13.4 H9.6 M14.4 13.4 H15"),
-                Stroke(d: "M8.5 16 L6.5 20 M15.5 16 L17.5 20 M5 20 H19", opacity: 0.7),
-            ]
-        case .bridge:
-            return [
-                Stroke(d: "M2 16 H22"),
-                Stroke(d: "M7 5 V16 M17 5 V16"),
-                Stroke(d: "M2 14 L7 5 C9 10 15 10 17 5 L22 14", opacity: 0.85),
-                Stroke(d: "M10.5 9.6 V16 M13.5 9.6 V16", opacity: 0.55),
-            ]
-        case .tunnel:
-            return [
-                Stroke(d: "M4 20 V11 C4 3 20 3 20 11 V20"),
-                Stroke(d: "M8 20 V12.5 C8 8.5 16 8.5 16 12.5 V20", opacity: 0.7),
-                Stroke(d: "M10 20 L11 15.5 M14 20 L13 15.5", opacity: 0.5),
-            ]
-        case .cup:
-            return [
-                Stroke(d: "M5 11 H17 V14 C17 17.5 14.5 19.5 11 19.5 C7.5 19.5 5 17.5 5 14 Z"),
-                Stroke(d: "M17 12 H18.5 C20.8 12 20.8 16 18 16 H16.7", opacity: 0.85),
-                Stroke(d: "M4 21.5 H18", opacity: 0.55),
-                Stroke(d: "M9 8.5 C8 7 10 5.8 9 4 M13 8.5 C12 7 14 5.8 13 4", opacity: 0.65),
-            ]
-        case .tea:
-            return [
-                Stroke(d: "M4 11 H20 C20 16 16.5 19.5 12 19.5 C7.5 19.5 4 16 4 11 Z"),
-                Stroke(d: "M9.5 21.5 H14.5", opacity: 0.7),
-                Stroke(d: "M7 13.8 C9 15 15 15 17 13.8", opacity: 0.45),
-                Stroke(d: "M9 8 C8 6.5 10 5.5 9 3.8 M15 8 C14 6.5 16 5.5 15 3.8", opacity: 0.65),
-            ]
-        case .ice:
-            return [
-                Stroke(d: "M12 3 V21 M4.4 7.5 L19.6 16.5 M4.4 16.5 L19.6 7.5"),
-                Stroke(d: "M9.6 4.8 L12 7.2 L14.4 4.8 M9.6 19.2 L12 16.8 L14.4 19.2", opacity: 0.7),
-            ]
-        case .crack:
-            return [
-                Stroke(d: "M12 2.5 L10 8 L14 11 L9.5 14.5 L12.5 17 L11 21.5"),
-                Stroke(d: "M14 11 L18.5 12.5 M9.5 14.5 L5.5 15.5", opacity: 0.65),
-            ]
-        case .owl:
-            return [
-                Stroke(d: "M6.5 8 C5.6 13 6.2 18 8.6 20.5 H15.4 C17.8 18 18.4 13 17.5 8"),
-                Stroke(d: "M6.8 9 L6 4.5 L10 6.5 M17.2 9 L18 4.5 L14 6.5", opacity: 0.85),
-                Stroke(d: "M7.5 10 C7.5 6.6 16.5 6.6 16.5 10", opacity: 0.5),
-                Stroke(d: "M9.5 8.6 C8.3 8.6 7.7 9.5 7.7 10.4 C7.7 11.5 8.5 12.2 9.5 12.2 C10.6 12.2 11.3 11.4 11.3 10.4 C11.3 9.5 10.6 8.6 9.5 8.6 Z M14.5 8.6 C13.4 8.6 12.7 9.5 12.7 10.4 C12.7 11.4 13.4 12.2 14.5 12.2 C15.5 12.2 16.3 11.5 16.3 10.4 C16.3 9.5 15.7 8.6 14.5 8.6 Z"),
-                Stroke(d: "M11.3 13 L12 14.4 L12.7 13", opacity: 0.8),
-            ]
-        case .drip:
-            return [
-                Stroke(d: "M8 2.5 H16 L12.6 8 H11.4 Z", opacity: 0.8),
-                Stroke(d: "M12 10.2 C12 10.2 10.4 12.4 10.4 13.5 C10.4 14.4 11.1 15.1 12 15.1 C12.9 15.1 13.6 14.4 13.6 13.5 C13.6 12.4 12 10.2 12 10.2 Z"),
-                Stroke(d: "M5.5 19.5 C5.5 18.1 18.5 18.1 18.5 19.5 C18.5 20.9 5.5 20.9 5.5 19.5 Z", opacity: 0.6),
-            ]
-        case .ripple:
-            return [
-                Stroke(d: "M12 3.5 C12 3.5 10.9 5 10.9 5.8 C10.9 6.4 11.4 6.9 12 6.9 C12.6 6.9 13.1 6.4 13.1 5.8 C13.1 5 12 3.5 12 3.5 Z", opacity: 0.8),
-                Stroke(d: "M10.4 15 C10.4 14.4 13.6 14.4 13.6 15 C13.6 15.6 10.4 15.6 10.4 15 Z"),
-                Stroke(d: "M6.5 15 C6.5 13.3 17.5 13.3 17.5 15 C17.5 16.7 6.5 16.7 6.5 15 Z", opacity: 0.75),
-                Stroke(d: "M2.5 15 C2.5 12 21.5 12 21.5 15 C21.5 18 2.5 18 2.5 15 Z", opacity: 0.45),
-            ]
-        case .cave:
-            return [
-                Stroke(d: "M3 20 C3.4 15 2.8 11 5 8 C7.5 4.6 16.5 4.6 19 8 C21.2 11 20.6 15 21 20"),
-                Stroke(d: "M8 6.4 L9 10.2 L10.2 5.6 M14 5.6 L15 9.2 L16.2 6.4", opacity: 0.7),
-                Stroke(d: "M2 20 H22", opacity: 0.7),
-                Stroke(d: "M9.5 20 C9.5 18.8 14.5 18.8 14.5 20", opacity: 0.5),
-            ]
-        case .pebbles:
-            return [
-                Stroke(d: "M3.5 19.6 C3.5 17.7 6 16.7 7.7 17.3 C9.3 17.9 9.7 19.6 8.3 20.3 C6.8 21 3.5 20.9 3.5 19.6 Z"),
-                Stroke(d: "M11 19.9 C11 18.3 13 17.5 14.4 18 C15.8 18.5 16 19.9 14.9 20.5 C13.6 21.1 11 21.1 11 19.9 Z"),
-                Stroke(d: "M15.6 12.4 C15.6 11.3 17 10.8 17.9 11.2 C18.8 11.6 18.9 12.6 18.1 13 C17.3 13.4 15.6 13.4 15.6 12.4 Z", opacity: 0.85),
-                Stroke(d: "M12.6 8.6 C12.6 8.1 13.4 8 13.4 8.6 C13.4 9.1 12.6 9.2 12.6 8.6 Z M10.6 4.6 C10.6 4.1 11.4 4 11.4 4.6 C11.4 5.1 10.6 5.2 10.6 4.6 Z", opacity: 0.7),
-            ]
-        case .distance:
-            return [
-                Stroke(d: "M2 11 H22", opacity: 0.6),
-                Stroke(d: "M3 20 L10.5 11.5 M21 20 L13.5 11.5"),
-                Stroke(d: "M12 20 V18.5 M12 16.5 V14.5", opacity: 0.7),
-                Stroke(d: "M12 6 V9 M10.5 7.5 H13.5", opacity: 0.45),
-            ]
-        case .boat:
-            // A small sailing yacht's hull from the side, its cabin top and the mast's foot.
-            return [
-                Stroke(d: "M2.5 13 H21.5 L19.5 17.5 C16 18.6 8 18.6 4.5 17.5 Z"),
-                Stroke(d: "M8 13 V11 H15.5 L17 13", opacity: 0.8),
-                Stroke(d: "M12 11 V4", opacity: 0.55),
-                Stroke(d: "M3 21 C5 20 7 22 9 21 C11 20 13 22 15 21 C17 20 19 22 21 21", opacity: 0.45),
-            ]
-        case .mast:
-            // A mast with its spreaders and shrouds, a halyard down its side.
-            return [
-                Stroke(d: "M12 2.5 V21.5"),
-                Stroke(d: "M8.5 9 H15.5", opacity: 0.85),
-                Stroke(d: "M12 2.5 L8.5 9 L5.5 21.5 M12 2.5 L15.5 9 L18.5 21.5", opacity: 0.55),
-                Stroke(d: "M12.8 3.5 C13.6 9 13.1 14 13.7 18.5", opacity: 0.7),
-            ]
-        case .anchor:
-            return [
-                Stroke(d: Icon.circle(12, 4.6, 1.6)),
-                Stroke(d: "M12 6.2 V20.5 M8.5 9.5 H15.5"),
-                Stroke(d: "M4.5 14.5 C5 18.5 8.5 20.5 12 20.5 C15.5 20.5 19 18.5 19.5 14.5", opacity: 0.85),
-                Stroke(d: "M3.5 16 L4.5 14.5 L6.2 15.4 M20.5 16 L19.5 14.5 L17.8 15.4", opacity: 0.7),
-            ]
-        case .gull:
-            return [
-                Stroke(d: "M2.5 11 C5.5 8 8.5 8.5 12 12.5 C15.5 8.5 18.5 8 21.5 11"),
-                Stroke(d: "M11 12.8 L12 14 L13 12.8", opacity: 0.7),
-                Stroke(d: "M4 19 C7 18 9 20 12 19 C15 18 17 20 20 19", opacity: 0.45),
-            ]
-        case .surf:
-            // A wave curling over onto a shelving beach; its wash runs up the slope and back.
-            let run = 1.6 * sin(t * 1.2)
-            return [
-                Stroke(d: "M2 13.5 C5 13.5 6.5 6 11.5 6 C15 6 16.5 8.5 15.5 10.5 C14.6 12.2 12.2 11.6 12.6 9.8"),
-                Stroke(d: "M2 17 C6 16.2 9 14.6 12.5 14.2", opacity: 0.75),
-                Stroke(d: "M3 21 L21.5 14.5", opacity: 0.55),
-                Stroke(d: "M\(f(12 + run)) 18 C\(f(14 + run)) 17.2 \(f(16 + run)) 16.5 \(f(18 + run)) 15.8", opacity: 0.6),
-            ]
-        case .book:
-            // An open book seen from above, a page lifting.
-            return [
-                Stroke(d: "M12 6.5 C9.5 5 6 4.8 3 5.5 V18.5 C6 17.8 9.5 18 12 19.5 C14.5 18 18 17.8 21 18.5 V5.5 C18 4.8 14.5 5 12 6.5 Z"),
-                Stroke(d: "M12 6.5 V19.5", opacity: 0.8),
-                Stroke(d: "M5.5 9 C7.3 8.6 9 8.8 10.3 9.4 M5.5 12 C7.3 11.6 9 11.8 10.3 12.4", opacity: 0.45),
-                Stroke(d: "M12 6.5 C14 4.3 16.5 3.6 19 3.8", opacity: 0.6),
-            ]
-        case .pen:
-            // A dip pen over its line of ink.
-            return [
-                Stroke(d: "M18.5 3.5 L20.5 5.5 L10 16 L7 17 L8 14 Z"),
-                Stroke(d: "M16.5 5.5 L18.5 7.5", opacity: 0.7),
-                Stroke(d: "M8 14 L10 16", opacity: 0.6),
-                Stroke(d: "M3 20.5 C5 19 6.5 21.5 8.5 20 C10.5 18.5 12 21 14 19.8", opacity: 0.55),
-            ]
-        case .clock:
-            // A long-case clock: hood and dial, the trunk with its pendulum.
-            return [
-                Stroke(d: "M8 21.5 V10 H16 V21.5 M7 21.5 H17"),
-                Stroke(d: "M8.5 10 V3.5 C10 2.5 14 2.5 15.5 3.5 V10"),
-                Stroke(d: Icon.circle(12, 6.5, 2.2), opacity: 0.85),
-                Stroke(d: "M12 6.5 V5.2 M12 6.5 H13.1", opacity: 0.7),
-                Stroke(d: "M12 10.5 V16.6", opacity: 0.6),
-                Stroke(d: Icon.circle(12, 17.8, 1.2), opacity: 0.6),
-            ]
-        case .house:
-            // An old house: a gable, a chimney, a lit window.
-            return [
-                Stroke(d: "M4 11 L12 4 L20 11 M6 9.5 V20.5 H18 V9.5"),
-                Stroke(d: "M15.5 6.8 V4 H17.5 V8.5", opacity: 0.8),
-                Stroke(d: "M10 20.5 V15 H14 V20.5", opacity: 0.7),
-                Stroke(d: "M8 12 H10.5 V14 H8 Z M13.5 12 H16 V14 H13.5 Z", opacity: 0.5),
             ]
         case .tree:
             let sway = sin(t * 1.5) * 0.6
@@ -736,10 +430,8 @@ extension Icon {
         case .recenter: return 2 * .pi / 3
         case .head: return .pi
         case .tree: return 2 * .pi / 1.5
-        case .surf: return 2 * .pi / 1.2
         case .wind: return 4.0 / 3.0
         case .rain: return 0.8
-        case .tent: return 0.9
         case .sun: return 12
         case .moon: return 2 * .pi / 2.1
         case .flame: return 2 * .pi
@@ -748,10 +440,7 @@ extension Icon {
         case .tone: return 2 * .pi / 3
         case .settings: return 2 * .pi / 2.4
         case .play, .pause, .headphones, .quit, .power, .chevron, .back, .more, .flow, .depth, .character, .speed, .gust, .dot,
-             .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .comet, .beam, .orbit, .plasma,
-             .ship, .station, .docking, .radio, .reef, .course,
-             .light, .lamp, .tower, .bell, .fog, .horn, .rumble, .rail, .train, .bridge, .tunnel, .cup, .tea, .ice, .crack, .owl,
-             .distance, .drip, .ripple, .cave, .pebbles, .boat, .mast, .anchor, .gull, .book, .pen, .clock, .house: return nil
+             .thermometer, .droplet, .leaf, .bolt, .width, .stone, .gain, .whale, .dolphin, .orbit, .reef, .course: return nil
         }
     }
 }
