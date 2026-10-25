@@ -23,6 +23,9 @@
 //!   dripping, a gust shakes down a shower → crickets resume, slower. Weather stores run 20×
 //!   faster so the drying fits in the take. Prints the weather and levels every 5 s.
 //!
+//! * `nodyn` (combines, e.g. `still+nodyn`) switches the mix dynamics off (leveller, comfort
+//!   compressor): for measuring a scene's own levels (tools/synth/level_guide.py).
+//!
 //! A scene file given as the 4th argument replaces the default (or demo) scene.
 
 use std::fs::File;
@@ -67,6 +70,11 @@ fn main() -> std::io::Result<()> {
     if let Some(h) = mode.strip_prefix("life:").and_then(|h| h.split(':').next()).and_then(|h| h.parse::<f32>().ok()) {
         engine.set_param(param::TIME_OF_DAY, h);
         println!("time of day {h:.2} h");
+    }
+    if mode.contains("nodyn") {
+        // Measurements of the scene itself: no leveller, comfort compressor or limiter gain.
+        engine.set_control(asmr_core::controls::id::MIX_DYNAMICS, 0.0);
+        println!("mix dynamics off");
     }
     if life && mode.ends_with(":free") {
         // A/B: no phrase limit in the mix (every bird sings when its own life says so).

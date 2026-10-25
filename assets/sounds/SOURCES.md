@@ -76,12 +76,12 @@ Generated on 2026-10-23 with fal.ai (ElevenLabs Sound Effects v2 `el2`; Stable A
 - body_scan: guide_brush_el2_1..2, guide_air_el2_1, guide_grain_el2_1..2 (take 1 = left arm and leg, take 2 = the right-leg twin), guide_warm_el2_1, bowl_strike_el2_1..3, tingsha_el2_1..2, room_tone_sa25_1.
 - tea_house: kettle_simmer_el2_2, fukusa_el2_1..3, ladle_pour_el2_1..3, whisk_el2_1..3, tatami_shift_el2_1..3, bowl_slide_el2_1..3, suikinkutsu_el2_1..3, shishi_odoshi_el2_1..2, furin_el2_1..2, temple_bell_el2_1.
 
-### Body scan guide (synthesised, replaces the generated brush/air/grain/warm takes)
-`generated/body_scan/guide_{brush,air,grain,warm}_el2_*.wav` are now clean singing-bowl tones made by
-`tools/synth/bowl_tones.py` (partials 1 : 2.71 : 5.15 : 8.3 as doublets, f0 110/165/220/330 Hz,
-24 s seamless loops, no noise). The file names are kept so the scene's path layers stay as built.
-The generated takes hissed as they moved ("like Parseltongue", in the user's words). The room tone
-and breeze beds were removed from the scene.
+### Body scan: procedural since 2026-10-25
+The body scan no longer plays any of these files: its guide, bowls and tingsha are the procedural `bowl`
+model (core/src/sources/bowl.rs), measured against CC0 / public-domain / CC BY-SA recordings listed in
+[docs/scenes/body_scan.md](../../docs/scenes/body_scan.md). The `generated/body_scan/` takes above are
+kept only as history (the guide loops were made by the since-removed `tools/synth/bowl_tones.py`). The
+generated takes hissed as they moved ("like Parseltongue", in the user's words); tones never did.
 
 ## Cave, Campfire by the sea, Tent in the rain, Yacht at anchor, Night library (assets/sounds/generated/<scene>/)
 
