@@ -13,14 +13,22 @@ if ! command -v cargo >/dev/null && [[ -f "$HOME/.cargo/env" ]]; then
   . "$HOME/.cargo/env"
 fi
 
+# The app runs on Apple silicon with macOS 13 (Ventura) or later. Both halves are built for
+# that target: Rust reads MACOSX_DEPLOYMENT_TARGET, SwiftPM takes it from Package.swift.
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "! build on an Apple silicon Mac: the app is arm64 only" >&2
+  exit 1
+fi
+export MACOSX_DEPLOYMENT_TARGET=13.0
+
 echo "▸ asmr-core (rust, release)"
 cargo build --manifest-path "$ROOT/core/Cargo.toml" --release
 
 echo "▸ macOS shell (swift, release)"
-BIN_DIR="$(swift build --package-path "$APP_PKG" -c release --show-bin-path)"
+BIN_DIR="$(swift build --package-path "$APP_PKG" -c release --arch arm64 --show-bin-path)"
 # SwiftPM does not track the Rust static library, so force a relink.
 rm -f "$BIN_DIR/ASMRX3000"
-swift build --package-path "$APP_PKG" -c release
+swift build --package-path "$APP_PKG" -c release --arch arm64
 
 echo "▸ bundle"
 pkill -x ASMRX3000 2>/dev/null || true
@@ -29,6 +37,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ASMRX3000" "$APP/Contents/MacOS/ASMRX3000"
 # Local symbols are only for debugging: stripping them takes the binary from ~6.7 to ~4.4 MB.
 strip -x "$APP/Contents/MacOS/ASMRX3000"
+# Guard the targets: arm64 only, loadable on macOS 13.
+archs="$(lipo -archs "$APP/Contents/MacOS/ASMRX3000")"
+minos="$(vtool -show-build "$APP/Contents/MacOS/ASMRX3000" | awk '/minos/ {print $2}')"
+if [[ "$archs" != "arm64" || "$minos" != "13.0" ]]; then
+  echo "! binary is $archs, minos $minos (expected arm64, 13.0)" >&2
+  exit 1
+fi
 cp "$APP_PKG/Support/Info.plist" "$APP/Contents/Info.plist"
 # The system permission prompts (microphone, motion) follow the macOS language.
 for l in en ru; do mkdir -p "$APP/Contents/Resources/$l.lproj"; cp "$APP_PKG/Support/$l.lproj/InfoPlist.strings" "$APP/Contents/Resources/$l.lproj/"; done

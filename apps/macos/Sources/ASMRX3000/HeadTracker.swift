@@ -10,13 +10,22 @@ import simd
 /// gyroscope rate, mapped into the engine frame (+x forward, +y left, +z up) -> recentred about
 /// the vertical only (gravity stays absolute) -> `onSample` straight from the motion queue (the
 /// engine side is lock-free), so a busy main thread never delays the pose.
-final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDelegate {
+///
+/// CMHeadphoneMotionManager exists on macOS 14 and later only: on Ventura the tracker stays
+/// off for good (`supported` is false) and the app plays without head tracking.
+final class HeadTracker: NSObject, ObservableObject {
+    static var supported: Bool {
+        if #available(macOS 14, *) { return true }
+        return false
+    }
+
     @Published private(set) var connected = false
     @Published private(set) var active = false
     /// Remembered across launches ("headEnabled"): continuing onboarding without head tracking
     /// turns it off, and the app then does not ask for motion access at the next launch.
-    @Published var enabled = UserDefaults.standard.object(forKey: "headEnabled") as? Bool ?? true {
+    @Published var enabled = HeadTracker.supported && (UserDefaults.standard.object(forKey: "headEnabled") as? Bool ?? true) {
         didSet {
+            if !Self.supported, enabled { enabled = false; return }
             UserDefaults.standard.set(enabled, forKey: "headEnabled")
             if enabled { deferred = false }
             enabled ? start() : stop()
@@ -67,7 +76,10 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         didSet { UserDefaults.standard.set(driftCorrection, forKey: "headDriftCorrection") }
     }
 
-    private let manager = CMHeadphoneMotionManager()
+    /// A MotionLink on macOS 14+, nil before.
+    private var link: AnyObject?
+    @available(macOS 14, *)
+    private var manager: CMHeadphoneMotionManager? { (link as? MotionLink)?.manager }
     private let queue: OperationQueue = {
         let q = OperationQueue()
         q.name = "asmr.headtracker"
@@ -86,15 +98,22 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         // Snapshot runs come from a shell, where TCC would attribute motion access to the
         // terminal and abort the process.
         guard !CommandLine.arguments.contains("--snapshot"), !CommandLine.arguments.contains("--bench") else { return }
-        manager.delegate = self
+        guard #available(macOS 14, *) else { return }
+        link = MotionLink(owner: self)
         denied = Self.authorization == .denied || Self.authorization == .restricted
         deferred = Self.authorization == .notDetermined && Onboarding.pending
         start()
     }
 
-    var available: Bool { manager.isDeviceMotionAvailable }
+    var available: Bool {
+        guard #available(macOS 14, *), let manager else { return false }
+        return manager.isDeviceMotionAvailable
+    }
 
-    static var authorization: CMAuthorizationStatus { CMHeadphoneMotionManager.authorizationStatus() }
+    static var authorization: CMAuthorizationStatus {
+        guard #available(macOS 14, *) else { return .restricted }
+        return CMHeadphoneMotionManager.authorizationStatus()
+    }
 
     /// Starts tracking now, which makes the system ask for motion access the first time.
     func requestAccess() {
@@ -104,6 +123,7 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
     }
 
     func start() {
+        guard #available(macOS 14, *), let manager else { return }
         guard enabled, !deferred, manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
         manager.startDeviceMotionUpdates(to: queue) { [weak self] motion, error in
             guard let self else { return }
@@ -121,7 +141,7 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
     }
 
     func stop() {
-        manager.stopDeviceMotionUpdates()
+        if #available(macOS 14, *) { manager?.stopDeviceMotionUpdates() }
         queue.addOperation { [weak self] in
             self?.recenterPending = true
             self?.onSample?(Sample(q: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), w: .zero, age: 0))
@@ -137,14 +157,14 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         queue.addOperation { [weak self] in self?.recenterPending = true }
     }
 
-    func headphoneMotionManagerDidConnect(_ manager: CMHeadphoneMotionManager) {
+    fileprivate func didConnect() {
         DispatchQueue.main.async {
             self.connected = true
             self.start()
         }
     }
 
-    func headphoneMotionManagerDidDisconnect(_ manager: CMHeadphoneMotionManager) {
+    fileprivate func didDisconnect() {
         queue.addOperation { [weak self] in
             self?.recenterPending = true
             self?.onSample?(Sample(q: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), w: .zero, age: 0))
@@ -227,4 +247,22 @@ final class HeadTracker: NSObject, ObservableObject, CMHeadphoneMotionManagerDel
         while x < -.pi { x += 2 * .pi }
         return x
     }
+}
+
+/// Owns the motion manager and forwards its delegate calls (the manager and its delegate
+/// protocol are macOS 14+, the tracker itself is not).
+@available(macOS 14, *)
+private final class MotionLink: NSObject, CMHeadphoneMotionManagerDelegate {
+    let manager = CMHeadphoneMotionManager()
+    weak var owner: HeadTracker?
+
+    init(owner: HeadTracker) {
+        self.owner = owner
+        super.init()
+        manager.delegate = self
+    }
+
+    func headphoneMotionManagerDidConnect(_ manager: CMHeadphoneMotionManager) { owner?.didConnect() }
+
+    func headphoneMotionManagerDidDisconnect(_ manager: CMHeadphoneMotionManager) { owner?.didDisconnect() }
 }

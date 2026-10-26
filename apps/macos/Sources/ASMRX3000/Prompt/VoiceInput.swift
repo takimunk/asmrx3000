@@ -78,7 +78,13 @@ final class VoiceRecorder: NSObject, AVCaptureFileOutputRecordingDelegate, @unch
     }
 
     static func device() -> AVCaptureDevice? {
-        let all = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified).devices
+        let types: [AVCaptureDevice.DeviceType]
+        if #available(macOS 14, *) {
+            types = [.microphone, .external]
+        } else {
+            types = [.builtInMicrophone, .externalUnknown]
+        }
+        let all = AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .audio, position: .unspecified).devices
         let builtIn = Int32(bitPattern: kAudioDeviceTransportTypeBuiltIn)
         return all.first { $0.transportType == builtIn } ?? AVCaptureDevice.default(for: .audio) ?? all.first
     }
