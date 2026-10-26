@@ -252,8 +252,8 @@ enum Keys {
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
             let key = event.charactersIgnoringModifiers?.lowercased()
             switch key {
-            case "h": stage.head.enabled.toggle()
-            case "c": stage.head.recenter()
+            case "h" where HeadTracker.supported: stage.head.enabled.toggle()
+            case "c" where HeadTracker.supported: stage.head.recenter()
             case "/" where !stage.isClipScene: stage.focusPrompt?()
             default: return false
             }

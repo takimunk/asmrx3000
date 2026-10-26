@@ -177,7 +177,7 @@ private struct Measure: View {
         GeometryReader { geo in
             Color.clear
                 .onAppear { changed(geo.size.height) }
-                .onChange(of: geo.size.height) { _, h in changed(h) }
+                .onChange(of: geo.size.height) { h in changed(h) }
         }
     }
 }
@@ -565,13 +565,15 @@ private struct Transport: View {
                 }
                 .padding(.trailing, Grid.x2)
             }
-            LabeledToggle(icon: .head, title: tr("Head"), on: head.enabled,
-                          name: head.enabled ? tr("Head tracking is on: turn off") : tr("Head tracking with AirPods: turn on"),
-                          key: "H", hint: $hint, action: act { head.enabled.toggle() })
-                .contextMenu { rerunOnboarding }
-            ToolButton(icon: .recenter, name: tr("Face forward from here"), key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
-                .disabled(!head.enabled)
-                .contextMenu { rerunOnboarding }
+            if HeadTracker.supported {
+                LabeledToggle(icon: .head, title: tr("Head"), on: head.enabled,
+                              name: head.enabled ? tr("Head tracking is on: turn off") : tr("Head tracking with AirPods: turn on"),
+                              key: "H", hint: $hint, action: act { head.enabled.toggle() })
+                    .contextMenu { rerunOnboarding }
+                ToolButton(icon: .recenter, name: tr("Face forward from here"), key: "C", style: .plain, hint: $hint, action: act { head.recenter() })
+                    .disabled(!head.enabled)
+                    .contextMenu { rerunOnboarding }
+            }
             Spacer(minLength: 0)
             status
             ToolButton(icon: .power, name: tr("Quit ASMR X3000"), key: "⌘Q", style: .quiet, hint: $hint) { NSApp.terminate(nil) }
@@ -657,7 +659,7 @@ private struct LabeledToggle: View {
         .buttonStyle(ToolStyle(style: on ? .on : .plain, hovering: hovering, focused: focused))
         .focusable()
         .focused($focused)
-        .focusEffectDisabled()
+        .noFocusRing()
         .onHover { h in
             hovering = h
             hint = h ? (key.map { "\(name)   \($0)" } ?? name) : nil
@@ -692,7 +694,7 @@ private struct ToolButton: View {
         .buttonStyle(ToolStyle(style: style, hovering: hovering && enabled, focused: focused))
         .focusable()
         .focused($focused)
-        .focusEffectDisabled()
+        .noFocusRing()
         .onHover { h in
             hovering = h
             hint = h ? (key.map { "\(name)   \($0)" } ?? name) : nil
@@ -887,5 +889,12 @@ private struct SpectrogramStrip: View {
         let freq = hz >= 1000 ? tr("%.2f kHz", Double(hz / 1000)) : tr("%d Hz", Int(hz.rounded()))
         let level = tr("%d dB", db).replacingOccurrences(of: "-", with: "−")
         return "\(freq)  \(level)\(frozen ? "  " + tr("frozen") : "")"
+    }
+}
+
+private extension View {
+    /// The system focus ring is off where macOS allows it (14+); the styles draw their own.
+    @ViewBuilder func noFocusRing() -> some View {
+        if #available(macOS 14, *) { focusEffectDisabled() } else { self }
     }
 }

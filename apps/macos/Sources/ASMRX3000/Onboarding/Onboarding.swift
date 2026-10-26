@@ -104,13 +104,20 @@ final class OnboardingFlow: ObservableObject {
     /// on to the screen step.
     func continueWithoutHead() {
         skippedHead = true
-        if step == .intro, CMHeadphoneMotionManager.authorizationStatus() == .notDetermined {
+        if step == .intro, HeadTracker.authorization == .notDetermined {
             head.enabled = false
         }
         go(.screen)
     }
 
-    func toIntro() { go(.intro) }
+    /// On macOS 13 there is no head tracking to set up: straight on to the screen.
+    func toIntro() {
+        guard HeadTracker.supported else {
+            skippedHead = true
+            return go(.screen)
+        }
+        go(.intro)
+    }
 
     func toCentre() { go(.centre) }
 
@@ -194,7 +201,7 @@ final class OnboardingFlow: ObservableObject {
             }
             if now.timeIntervalSince(lastAuthCheck) > 0.5 {
                 lastAuthCheck = now
-                let status = CMHeadphoneMotionManager.authorizationStatus()
+                let status = HeadTracker.authorization
                 if head.denied || status == .denied || status == .restricted {
                     go(.denied)
                     return

@@ -12,7 +12,7 @@ let rustStaticLib = rustLibDir + "/libasmr_core.a"
 
 let package = Package(
     name: "ASMRX3000",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v13)],
     targets: [
         .systemLibrary(name: "CAsmr", path: "Sources/CAsmr"),
         .executableTarget(

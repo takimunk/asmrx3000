@@ -940,6 +940,10 @@ final class AudioEngine: ObservableObject {
             personalizedHRTF = false
             return
         }
+        guard #available(macOS 14, *) else {
+            personalizedHRTF = false
+            return
+        }
         var v: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
         let status = AudioUnitGetProperty(mixer.audioUnit, kAudioUnitProperty_SpatialMixerAnyInputIsUsingPersonalizedHRTF, kAudioUnitScope_Global, 0, &v, &size)

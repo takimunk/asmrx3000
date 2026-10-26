@@ -17,7 +17,7 @@
 
 ## Build
 
-Requirements: macOS 14+, Xcode, and Rust (rustup). Head tracking needs AirPods Pro, Max, or 3rd generation and later.
+Requirements: a Mac with Apple silicon, macOS 13 (Ventura) or later, Xcode, and Rust (rustup). Head tracking needs macOS 14 or later and AirPods Pro, Max, or 3rd generation and later; on Ventura the app plays without it.
 
 ```bash
 scripts/build-macos.sh
